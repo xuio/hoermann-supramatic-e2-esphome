@@ -42,6 +42,9 @@ ethernet:
 uart:
   id: uart_bus
   baud_rate: 19200
+  data_bits: 8
+  parity: NONE
+  stop_bits: 1
   rx_pin: ${rs485_rx_pin}
   tx_pin: ${rs485_tx_pin}
 

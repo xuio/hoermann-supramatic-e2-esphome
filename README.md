@@ -17,7 +17,7 @@ It does not implement HomeKit on the ESP32, does not use cloud services, does no
 - Network: onboard W5500 Ethernet over SPI, DHCP by default.
 - Bus interface: Waveshare TTL TO RS485 (C) galvanically isolated half-duplex adapter. Its official wiki documents 3.3 V to 5 V TTL power/signals, half-duplex RS-485, TTL `RXD/TXD/VCC/GND`, RS-485 `A+/B-/PE`, isolation, and a selectable 120 ohm terminator: <https://www.waveshare.com/wiki/TTL_TO_RS485_%28C%29>.
 
-Do not connect ESP32 GPIO directly to the Hörmann bus. Do not connect the opener 24 V line directly to the ESP32. With PoE power, leave BUS pin 2 disconnected.
+Do not connect ESP32 GPIO directly to the Hörmann bus. Do not connect the opener 24 V line directly to the ESP32. With PoE power, use only the Waveshare PoE module/ESP32-S3-POE-ETH variant with an IEEE 802.3af switch or injector. Do not use passive PoE, and leave BUS pin 2 disconnected.
 
 ## Wiring
 
@@ -48,7 +48,7 @@ Suggested wiring for the Waveshare TTL TO RS485 (C) isolated adapter:
 | Adapter B- | BUS pin 5 |
 | Adapter PE | BUS pin 3 |
 
-Do not tie ESP32 GND to BUS pin 3 when using the isolated adapter; use the adapter PE terminal as the RS-485-side reference. The adapter has no documented DE, /RE, or RTS pin, so the default YAML omits `rts_pin` and relies on the adapter's hardware auto-direction.
+Do not tie ESP32 GND to BUS pin 3 when using the isolated adapter; use the adapter PE terminal as the RS-485-side signal reference. On this adapter, `PE` is the isolated RS-485-side signal ground. Do not connect adapter PE to mains earth, the Ethernet shield, or ESP32 GND; for this isolated adapter, PE goes only to Hörmann BUS pin 3. The adapter has no documented DE, /RE, or RTS pin, so the default YAML omits `rts_pin` and relies on the adapter's hardware auto-direction.
 
 If you use a non-isolated bare transceiver such as MAX3485/SP3485/SN65HVD72 instead, use `GPIO18` for DE and /RE tied together, connect ESP32 GND to BUS pin 3, and add this to `uapbridge_esp`:
 
@@ -58,11 +58,11 @@ rts_pin: GPIO18
 
 For first tests, power the board from USB-C or IEEE 802.3af PoE and connect only PE, DATA-, and DATA+ to the opener. If no valid traffic appears, swap A/B once as a diagnostic step because some RS-485 modules label them inconsistently.
 
-Choose exactly one board power source: USB-C, the Waveshare 802.3af PoE module/PoE variant, or a properly regulated and isolated 24 V to 5 V supply. For this PoE setup, do not use the opener's 24 V BUS pin.
+Choose exactly one board power source: USB-C, the Waveshare 802.3af PoE module/PoE variant with an IEEE 802.3af switch or injector, or a properly regulated and isolated 24 V to 5 V supply. Do not use passive PoE. For this PoE setup, do not use the opener's 24 V BUS pin.
 
 Do not use GPIO9, GPIO10, GPIO11, GPIO12, GPIO13, or GPIO14 for the RS-485 adapter; those pins are occupied by the onboard W5500 Ethernet chip. Avoid GPIO4 through GPIO7 if you may use the TF-card slot, avoid GPIO19/GPIO20 because they are USB D-/D+, avoid GPIO21 because it drives the onboard RGB LED, and avoid strapping pins such as GPIO0/GPIO45/GPIO46 unless you explicitly account for boot behavior. If you switch from the isolated adapter to a bare DE/RE transceiver, `GPIO18` is the documented direction pin when no camera is attached.
 
-The Waveshare TTL TO RS485 (C) includes an onboard 120 ohm termination option. For first tests, set that termination to `NC`/off. With all power disconnected, measure A/B resistance on the connected bus and enable termination only if this adapter is physically at an unterminated end of the RS-485 segment.
+The Waveshare TTL TO RS485 (C) includes an onboard 120 ohm termination option. For first tests, set that termination to `NC`/off. With all power disconnected, measure A/B resistance on the connected bus: about `120 ohm` means one terminator is already present, about `60 ohm` means two terminators are present, and much lower resistance suggests over-termination or a wiring fault. Enable the adapter terminator only if this adapter is physically at an unterminated end of the RS-485 segment. Do not add bias resistors unless scope traces or logs show an idle bus that is actually floating; the opener likely already biases the bus.
 
 The ESPHome Ethernet configuration uses the Waveshare/ESPHome W5500 pin map:
 
