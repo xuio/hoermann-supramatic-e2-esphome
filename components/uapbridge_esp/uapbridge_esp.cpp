@@ -42,29 +42,8 @@ void UAPBridge_esp::loop_slow() {
   this->last_call_slow = millis();
 
   ESP_LOGV(TAG, "loop_slow called - status=0x%04X", this->broadcast_status);
-  hoermann_state_t new_state = hoermann_state_unknown;
-
-  if (this->broadcast_status & hoermann_state_open) {
-    new_state = hoermann_state_open;
-  } else if (this->broadcast_status & hoermann_state_closed) {
-    new_state = hoermann_state_closed;
-  } else if ((this->broadcast_status & (hoermann_state_direction | hoermann_state_moving)) == hoermann_state_opening) {
-    new_state = hoermann_state_opening;
-  } else if ((this->broadcast_status & (hoermann_state_direction | hoermann_state_moving)) == hoermann_state_closing) {
-    new_state = hoermann_state_closing;
-  } else if (this->broadcast_status & hoermann_state_venting) {
-    new_state = hoermann_state_venting;
-  }
-
-  if (new_state != this->state) {
-    this->handle_state_change(new_state);
-  }
-
-  this->update_boolean_state("relay", this->relay_enabled, (this->broadcast_status & hoermann_state_opt_relay));
-  this->update_boolean_state("light", this->light_enabled, (this->broadcast_status & hoermann_state_light_relay));
-  this->update_boolean_state("vent", this->venting_enabled, (this->broadcast_status & hoermann_state_venting));
-  this->update_boolean_state("err", this->error_state, (this->broadcast_status & hoermann_state_error));
-  this->update_boolean_state("prewarn", this->prewarn_state, (this->broadcast_status & hoermann_state_prewarn));
+  const hoermann_state_t new_state = this->decode_status_state(this->broadcast_status);
+  this->apply_broadcast_status(this->broadcast_status);
 
   // --- Auto Error Correction ---
   const bool error_active = (this->broadcast_status & hoermann_state_error) == hoermann_state_error;
@@ -147,7 +126,7 @@ void UAPBridge_esp::process_rx_window() {
         this->tx_data[3] = UAP1_ADDR;
         this->tx_data[4] = calc_crc8(this->tx_data, 4);
         this->tx_length = 5;
-        this->send_time = millis();
+        this->transmit_prepared_response();
       } else if (this->diagnostic_mode && this->rx_data[2] == CMD_SLAVE_SCAN) {
         this->update_diagnostic_string("scan-invalid", this->rx_data, 0, 5, crc_valid);
         ESP_LOGD(TAG, "Invalid slave scan candidate len=%u crc=%s data=%s", length, crc_valid ? "ok" : "bad", print_data(this->rx_data, 0, 5));
@@ -167,6 +146,7 @@ void UAPBridge_esp::process_rx_window() {
         ESP_LOGV(TAG, "->      Broadcast");
         const uint16_t new_status = this->rx_data[2] | ((uint16_t)this->rx_data[3] << 8);
         this->broadcast_status = new_status;
+        this->apply_broadcast_status(new_status);
         this->last_valid_broadcast_ms = millis();
         if (!this->valid_broadcast) {
           this->valid_broadcast = true;
@@ -205,12 +185,13 @@ void UAPBridge_esp::process_rx_window() {
         this->tx_data[4] = (uint8_t)((this->next_action >> 8) & 0xFF);
         if (this->next_action != hoermann_action_none) {
           ESP_LOGI(TAG, "Sending one-shot HCP command: %s (0x%04X)", this->action_name(this->next_action), (unsigned int) this->next_action);
+          this->command_sequence++;
         }
         this->next_action = hoermann_action_none;
         this->command_set_at = 0;
         this->tx_data[5] = calc_crc8(this->tx_data, 5);
         this->tx_length = 6;
-        this->send_time = millis();
+        this->transmit_prepared_response();
       } else if (this->diagnostic_mode && this->rx_data[3] == CMD_SLAVE_STATUS_REQUEST) {
         this->update_diagnostic_string("status-request-invalid", this->rx_data, 1, 5, crc_valid);
         ESP_LOGD(TAG, "Invalid status request candidate len=%u crc=%s data=%s", length, crc_valid ? "ok" : "bad", print_data(this->rx_data, 1, 5));
@@ -253,6 +234,16 @@ void UAPBridge_esp::transmit() {
 
   ESP_LOGVV(TAG, "TX duration: %dms", millis() - this->send_time);
 }
+
+void UAPBridge_esp::transmit_prepared_response() {
+  if (this->tx_length == 0) {
+    return;
+  }
+  this->send_time = millis();
+  this->transmit();
+  this->send_time = 0;
+  this->tx_length = 0;
+}
 /**
  * Helper to set next Command and *not* skip Current Command before end was sent
  */
@@ -268,7 +259,6 @@ bool UAPBridge_esp::set_command(bool cond, const hoermann_action_t command, bool
     } else {
       this->next_action = command;
       this->command_set_at = millis();
-      this->command_sequence++;
       ESP_LOGI(TAG, "Queued one-shot HCP command: %s (0x%04X)", this->action_name(command), (unsigned int) command);
       return true;
     }
@@ -302,13 +292,22 @@ bool UAPBridge_esp::command_allowed(const hoermann_action_t command, bool bypass
     return false;
   }
 
-  if (this->is_movement_command(command) && (this->state == hoermann_state_unknown || this->state == hoermann_state_stopped)) {
+  const hoermann_state_t gate_state = this->decode_status_state(this->broadcast_status);
+  const bool gate_error = (this->broadcast_status & hoermann_state_error) != 0;
+  const bool gate_prewarn = (this->broadcast_status & hoermann_state_prewarn) != 0;
+
+  if (command == hoermann_action_venting && !this->allow_remote_close && gate_state == hoermann_state_open) {
+    ESP_LOGW(TAG, "Blocked venting command from open state because allow_remote_close is false");
+    return false;
+  }
+
+  if (this->is_movement_command(command) && (gate_state == hoermann_state_unknown || gate_state == hoermann_state_stopped)) {
     ESP_LOGW(TAG, "Blocked movement HCP command %s because decoded door state is %s",
              this->action_name(command), this->state_string.c_str());
     return false;
   }
 
-  if (this->is_movement_command(command) && (this->error_state || this->prewarn_state)) {
+  if (this->is_movement_command(command) && (gate_error || gate_prewarn)) {
     ESP_LOGW(TAG, "Blocked movement HCP command %s because error/prewarn is active", this->action_name(command));
     return false;
   }
@@ -337,6 +336,38 @@ bool UAPBridge_esp::bus_state_is_fresh() const {
     return true;
   }
   return millis() - this->last_valid_broadcast_ms <= this->valid_broadcast_timeout_ms;
+}
+
+UAPBridge_esp::hoermann_state_t UAPBridge_esp::decode_status_state(uint16_t status) const {
+  if (status & hoermann_state_open) {
+    return hoermann_state_open;
+  }
+  if (status & hoermann_state_closed) {
+    return hoermann_state_closed;
+  }
+  if ((status & (hoermann_state_direction | hoermann_state_moving)) == hoermann_state_opening) {
+    return hoermann_state_opening;
+  }
+  if ((status & (hoermann_state_direction | hoermann_state_moving)) == hoermann_state_closing) {
+    return hoermann_state_closing;
+  }
+  if (status & hoermann_state_venting) {
+    return hoermann_state_venting;
+  }
+  return hoermann_state_unknown;
+}
+
+void UAPBridge_esp::apply_broadcast_status(uint16_t status) {
+  const hoermann_state_t new_state = this->decode_status_state(status);
+  if (new_state != this->state) {
+    this->handle_state_change(new_state);
+  }
+
+  this->update_boolean_state("relay", this->relay_enabled, (status & hoermann_state_opt_relay) != 0);
+  this->update_boolean_state("light", this->light_enabled, (status & hoermann_state_light_relay) != 0);
+  this->update_boolean_state("vent", this->venting_enabled, (status & hoermann_state_venting) != 0);
+  this->update_boolean_state("err", this->error_state, (status & hoermann_state_error) != 0);
+  this->update_boolean_state("prewarn", this->prewarn_state, (status & hoermann_state_prewarn) != 0);
 }
 
 void UAPBridge_esp::expire_pending_command() {
@@ -384,6 +415,13 @@ bool UAPBridge_esp::action_close() {
 
 bool UAPBridge_esp::action_stop() {
   ESP_LOGD(TAG, "Action: stop called");
+  if (this->next_action != hoermann_action_none) {
+    ESP_LOGI(TAG, "Cancelled queued HCP command before it was fetched: %s (0x%04X)",
+             this->action_name(this->next_action), (unsigned int) this->next_action);
+    this->next_action = hoermann_action_none;
+    this->command_set_at = 0;
+    return true;
+  }
   if (this->use_unverified_stop_command) {
     return this->set_command(true, hoermann_action_stop);
   }

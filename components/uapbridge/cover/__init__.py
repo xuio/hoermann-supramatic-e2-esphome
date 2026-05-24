@@ -18,6 +18,12 @@ CONF_VENTING_POSITION = "venting_position"
 
 UAPBridgeCover = uapbridge_ns.class_("UAPBridgeCover", cover.Cover, cg.Component)
 
+def position_deadband(value):
+    value = cv.percentage(value)
+    if value > 0.2:
+        raise cv.Invalid("position_deadband must be 20% or less")
+    return value
+
 CONFIG_SCHEMA = cv.All(
   cover.cover_schema(UAPBridgeCover).extend({
     cv.GenerateID(): cv.declare_id(UAPBridgeCover),
@@ -26,7 +32,7 @@ CONFIG_SCHEMA = cv.All(
     cv.Optional(CONF_OPEN_DURATION, default="18s"): cv.positive_time_period_milliseconds,
     cv.Optional(CONF_CLOSE_DURATION, default="18s"): cv.positive_time_period_milliseconds,
     cv.Optional(CONF_POSITION_PUBLISH_INTERVAL, default="1s"): cv.positive_time_period_milliseconds,
-    cv.Optional(CONF_POSITION_DEADBAND, default="2%"): cv.percentage,
+    cv.Optional(CONF_POSITION_DEADBAND, default="2%"): position_deadband,
     cv.Optional(CONF_VENTING_POSITION, default="20%"): cv.percentage,
     cv.Optional(CONF_LEARN_TRAVEL_DURATIONS, default=True): cv.boolean,
   }),

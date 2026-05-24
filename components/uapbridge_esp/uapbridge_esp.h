@@ -67,10 +67,13 @@ class UAPBridge_esp : public esphome::uapbridge::UAPBridge {
     void receive();
     void process_rx_window();
     void transmit();
+    void transmit_prepared_response();
     bool set_command(bool cond, const hoermann_action_t command, bool bypass_impulse_interlock = false);
     bool command_allowed(const hoermann_action_t command, bool bypass_impulse_interlock = false);
     bool is_movement_command(const hoermann_action_t command);
     bool bus_state_is_fresh() const;
+    hoermann_state_t decode_status_state(uint16_t status) const;
+    void apply_broadcast_status(uint16_t status);
     void expire_pending_command();
     void expire_valid_broadcast();
     uint8_t calc_crc8(uint8_t *p_data, uint8_t length);
