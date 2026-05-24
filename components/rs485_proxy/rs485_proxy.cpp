@@ -121,6 +121,9 @@ void RS485Proxy::accept_client_() {
     this->client_ = std::move(new_client);
     this->authenticated_ = this->auth_token_.empty();
     this->command_buffer_len_ = 0;
+    this->last_rx_us_ = 0;
+    this->rx_sequence_ = 0;
+    this->tx_sequence_ = 0;
     this->send_hello_();
   }
 }
