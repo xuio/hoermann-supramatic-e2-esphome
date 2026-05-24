@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+"""Small client for the ESPHome RS-485 proxy mode.
+
+Default usage is passive capture:
+
+    python3 tools/hcp_proxy_client.py --host supramatic-e2-proxy.local
+
+Active TX is intentionally explicit and requires proxy firmware with
+`allow_tx: true` plus `--token`.
+"""
+
+from __future__ import annotations
+
+import argparse
+import socket
+import sys
+import time
+from collections import deque
+
+
+CRC_TABLE = [
+    0x00, 0x07, 0x0E, 0x09, 0x1C, 0x1B, 0x12, 0x15, 0x38, 0x3F, 0x36, 0x31, 0x24, 0x23, 0x2A, 0x2D,
+    0x70, 0x77, 0x7E, 0x79, 0x6C, 0x6B, 0x62, 0x65, 0x48, 0x4F, 0x46, 0x41, 0x54, 0x53, 0x5A, 0x5D,
+    0xE0, 0xE7, 0xEE, 0xE9, 0xFC, 0xFB, 0xF2, 0xF5, 0xD8, 0xDF, 0xD6, 0xD1, 0xC4, 0xC3, 0xCA, 0xCD,
+    0x90, 0x97, 0x9E, 0x99, 0x8C, 0x8B, 0x82, 0x85, 0xA8, 0xAF, 0xA6, 0xA1, 0xB4, 0xB3, 0xBA, 0xBD,
+    0xC7, 0xC0, 0xC9, 0xCE, 0xDB, 0xDC, 0xD5, 0xD2, 0xFF, 0xF8, 0xF1, 0xF6, 0xE3, 0xE4, 0xED, 0xEA,
+    0xB7, 0xB0, 0xB9, 0xBE, 0xAB, 0xAC, 0xA5, 0xA2, 0x8F, 0x88, 0x81, 0x86, 0x93, 0x94, 0x9D, 0x9A,
+    0x27, 0x20, 0x29, 0x2E, 0x3B, 0x3C, 0x35, 0x32, 0x1F, 0x18, 0x11, 0x16, 0x03, 0x04, 0x0D, 0x0A,
+    0x57, 0x50, 0x59, 0x5E, 0x4B, 0x4C, 0x45, 0x42, 0x6F, 0x68, 0x61, 0x66, 0x73, 0x74, 0x7D, 0x7A,
+    0x89, 0x8E, 0x87, 0x80, 0x95, 0x92, 0x9B, 0x9C, 0xB1, 0xB6, 0xBF, 0xB8, 0xAD, 0xAA, 0xA3, 0xA4,
+    0xF9, 0xFE, 0xF7, 0xF0, 0xE5, 0xE2, 0xEB, 0xEC, 0xC1, 0xC6, 0xCF, 0xC8, 0xDD, 0xDA, 0xD3, 0xD4,
+    0x69, 0x6E, 0x67, 0x60, 0x75, 0x72, 0x7B, 0x7C, 0x51, 0x56, 0x5F, 0x58, 0x4D, 0x4A, 0x43, 0x44,
+    0x19, 0x1E, 0x17, 0x10, 0x05, 0x02, 0x0B, 0x0C, 0x21, 0x26, 0x2F, 0x28, 0x3D, 0x3A, 0x33, 0x34,
+    0x4E, 0x49, 0x40, 0x47, 0x52, 0x55, 0x5C, 0x5B, 0x76, 0x71, 0x78, 0x7F, 0x6A, 0x6D, 0x64, 0x63,
+    0x3E, 0x39, 0x30, 0x37, 0x22, 0x25, 0x2C, 0x2B, 0x06, 0x01, 0x08, 0x0F, 0x1A, 0x1D, 0x14, 0x13,
+    0xAE, 0xA9, 0xA0, 0xA7, 0xB2, 0xB5, 0xBC, 0xBB, 0x96, 0x91, 0x98, 0x9F, 0x8A, 0x8D, 0x84, 0x83,
+    0xDE, 0xD9, 0xD0, 0xD7, 0xC2, 0xC5, 0xCC, 0xCB, 0xE6, 0xE1, 0xE8, 0xEF, 0xFA, 0xFD, 0xF4, 0xF3,
+]
+
+
+def crc8(data: bytes) -> int:
+    crc = 0xF3
+    for byte in data:
+        crc = CRC_TABLE[byte ^ crc]
+    return crc
+
+
+def hex_bytes(data: bytes) -> str:
+    return " ".join(f"{byte:02X}" for byte in data)
+
+
+def status_bits(status: int) -> str:
+    names = [
+        ("open", 0x0001),
+        ("closed", 0x0002),
+        ("relay", 0x0004),
+        ("light", 0x0008),
+        ("error", 0x0010),
+        ("direction", 0x0020),
+        ("moving", 0x0040),
+        ("venting", 0x0080),
+        ("prewarn", 0x0100),
+    ]
+    active = [name for name, mask in names if status & mask]
+    return ",".join(active) if active else "none"
+
+
+class HCPDecoder:
+    def __init__(self) -> None:
+        self.window: deque[int] = deque(maxlen=24)
+
+    def feed(self, data: bytes) -> list[str]:
+        out: list[str] = []
+        for byte in data:
+            self.window.append(byte)
+            out.extend(self._decode_tail())
+        return out
+
+    def _decode_tail(self) -> list[str]:
+        data = bytes(self.window)
+        out: list[str] = []
+        for total_len in range(4, min(len(data), 16) + 1):
+            frame = data[-total_len:]
+            payload_len = frame[1] & 0x0F
+            if payload_len + 3 != total_len:
+                continue
+            if crc8(frame) != 0:
+                continue
+            out.append(self._describe_frame(frame))
+        return out
+
+    def _describe_frame(self, frame: bytes) -> str:
+        if len(frame) == 5 and frame[0] == 0x00:
+            status = frame[2] | (frame[3] << 8)
+            return f"  decoded broadcast status=0x{status:04X} bits={status_bits(status)} frame={hex_bytes(frame)}"
+        if len(frame) == 5 and frame[0] == 0x28 and frame[2] == 0x01:
+            return f"  decoded slave-scan frame={hex_bytes(frame)}"
+        if len(frame) == 4 and frame[0] == 0x28 and frame[2] == 0x20:
+            return f"  decoded status-request frame={hex_bytes(frame)}"
+        return f"  decoded crc-ok len={len(frame)} frame={hex_bytes(frame)}"
+
+
+def send_line(sock: socket.socket, line: str) -> None:
+    sock.sendall(line.encode("ascii") + b"\n")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Connect to the ESPHome RS-485 proxy")
+    parser.add_argument("--host", required=True)
+    parser.add_argument("--port", type=int, default=6638)
+    parser.add_argument("--token")
+    parser.add_argument("--tx", help="Send raw UART bytes as hex, no HCP break")
+    parser.add_argument("--tx-break", help="Send HCP sync break followed by hex bytes")
+    parser.add_argument("--no-decode", action="store_true")
+    args = parser.parse_args()
+
+    decoder = HCPDecoder()
+    with socket.create_connection((args.host, args.port), timeout=10) as sock:
+        sock.settimeout(1)
+        if args.token:
+            send_line(sock, f"AUTH {args.token}")
+        if args.tx:
+            send_line(sock, f"TX {args.tx}")
+        if args.tx_break:
+            send_line(sock, f"TXB {args.tx_break}")
+
+        buffer = b""
+        while True:
+            try:
+                chunk = sock.recv(4096)
+            except socket.timeout:
+                continue
+            if not chunk:
+                print("connection closed", file=sys.stderr)
+                return 1
+            buffer += chunk
+            while b"\n" in buffer:
+                line_raw, buffer = buffer.split(b"\n", 1)
+                line = line_raw.decode("ascii", errors="replace").strip()
+                print(f"{time.strftime('%H:%M:%S')} {line}")
+                parts = line.split(maxsplit=3)
+                if not args.no_decode and len(parts) == 4 and parts[0] == "RX":
+                    try:
+                        data = bytes.fromhex(parts[3])
+                    except ValueError:
+                        continue
+                    for decoded in decoder.feed(data):
+                        print(decoded)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

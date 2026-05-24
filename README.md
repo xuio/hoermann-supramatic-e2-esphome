@@ -15,7 +15,7 @@ It does not implement HomeKit on the ESP32, does not use cloud services, does no
 - Bus route: plausible because index `E` is later than the usual UAP1/HCP1 compatibility threshold.
 - MCU: one Waveshare ESP32-S3-ETH board only, powered by USB-C or the Waveshare IEEE 802.3af PoE module/PoE variant.
 - Network: onboard W5500 Ethernet over SPI, DHCP by default.
-- Bus interface: Waveshare TTL TO RS485 (C) galvanically isolated half-duplex adapter.
+- Bus interface: Waveshare TTL TO RS485 (C) galvanically isolated half-duplex adapter. Its official wiki documents 3.3 V to 5 V TTL power/signals, half-duplex RS-485, TTL `RXD/TXD/VCC/GND`, RS-485 `A+/B-/PE`, isolation, and a selectable 120 ohm terminator: <https://www.waveshare.com/wiki/TTL_TO_RS485_%28C%29>.
 
 Do not connect ESP32 GPIO directly to the Hörmann bus. Do not connect the opener 24 V line directly to the ESP32. With PoE power, leave BUS pin 2 disconnected.
 
@@ -97,10 +97,13 @@ Primary config: [supramatic-e2.yaml](supramatic-e2.yaml)
 
 Minimal fallback config: [supramatic-e2-minimal.yaml](supramatic-e2-minimal.yaml)
 
+Proxy-only config: [supramatic-e2-proxy.yaml](supramatic-e2-proxy.yaml)
+
 `secrets.yaml` needs these keys:
 
 ```yaml
 api_key_supramatic_e2: "..."
+proxy_auth_token: "..." # only needed when proxy allow_tx is enabled
 ```
 
 [secrets.example.yaml](secrets.example.yaml) contains a syntactically valid placeholder for ESPHome validation. Generate a real ESPHome API encryption key before flashing hardware you will actually use.
@@ -123,6 +126,20 @@ uapbridge_esp:
 This allows receive, scan response, state decoding, open, stop, light, and venting tests while blocking remote close and the generic impulse command. After state decoding and physical safety behavior are verified at the door, set `allow_remote_close: true` to enable Home Assistant close commands. Only set `allow_remote_impulse: true` for deliberate protocol testing while physically present. Even then, the firmware requires a fresh valid HCP broadcast, a known non-stopped state, and no active error/prewarn before it accepts movement commands.
 
 Keep `auto_correction: false` for the SupraMatic E2 until the raw E2 state mapping is known. It is retained only as an upstream compatibility option and should not be used as a substitute for understanding an error or prewarn state.
+
+## Proxy Mode
+
+Flash [supramatic-e2-proxy.yaml](supramatic-e2-proxy.yaml) when you want the ESP32 to act only as an Ethernet proxy for the RS-485 bus. This mode does not load the UAP1 emulator and does not expose garage entities to Home Assistant.
+
+Proxy mode listens on TCP port `6638` and streams line-based events such as `RX <seq> <micros> <hex>` and `GAP <micros> <gap-us>`. It defaults to receive-only. Active transmission requires `allow_tx: true` and `auth_token: !secret proxy_auth_token`; `TXB <hex>` generates the HCP sync break before writing bytes.
+
+Use the helper client:
+
+```bash
+python3 tools/hcp_proxy_client.py --host supramatic-e2-proxy.local
+```
+
+See [docs/proxy-mode.md](docs/proxy-mode.md) for the full TCP protocol. Passive capture is the primary use. Fully live laptop-side UAP1 emulation over TCP may miss the opener's poll response window, so keep timing-critical status response logic on the ESP32 unless measurements prove otherwise.
 
 ## Test Checklist
 
@@ -174,6 +191,12 @@ For each state, copy the lines containing:
 If E2 state decoding differs from the E3-derived mapping, those raw status frames are the data needed to adjust the bit mapping without changing the hardware.
 
 When configuring HomeKit Bridge, include only the garage cover and optionally the garage light. Exclude venting controls, diagnostics, raw state helpers, and error/prewarn sensors from HomeKit. The default YAML does not expose a generic impulse button; add one only for deliberate protocol diagnosis.
+
+## Proxy Mode
+
+Use [supramatic-e2-proxy.yaml](supramatic-e2-proxy.yaml) when you want the ESP32 to act only as an encrypted Ethernet-to-RS485 proxy. It uses ESPHome `serial_proxy`, omits the UAP1 emulator and all garage-door entities, and is intended for laptop-side protocol capture/debugging with [tools/hcp1_proxy_client.py](tools/hcp1_proxy_client.py).
+
+Full notes are in [docs/proxy-mode.md](docs/proxy-mode.md).
 
 ## Notes
 
