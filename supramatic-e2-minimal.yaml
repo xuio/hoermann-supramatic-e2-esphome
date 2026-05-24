@@ -1,0 +1,84 @@
+substitutions:
+  name: "supramatic-e2"
+  friendly_name: "Garage Door"
+  rs485_rx_pin: GPIO16
+  rs485_tx_pin: GPIO17
+  rs485_rts_pin: GPIO18
+
+esphome:
+  name: "${name}"
+  friendly_name: "${friendly_name}"
+
+esp32:
+  board: esp32-s3-devkitc-1
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+
+external_components:
+  - source:
+      type: local
+      path: components
+
+logger:
+  level: INFO
+  hardware_uart: USB_SERIAL_JTAG
+
+api:
+  encryption:
+    key: !secret api_key_supramatic_e2
+
+ota:
+  - platform: esphome
+
+ethernet:
+  type: W5500
+  clk_pin: GPIO13
+  mosi_pin: GPIO11
+  miso_pin: GPIO12
+  cs_pin: GPIO14
+  interrupt_pin: GPIO10
+  reset_pin: GPIO9
+
+uart:
+  id: uart_bus
+  baud_rate: 19200
+  rx_pin: ${rs485_rx_pin}
+  tx_pin: ${rs485_tx_pin}
+
+uapbridge_esp:
+  id: garage_door_comp
+  uart_id: uart_bus
+  rts_pin: ${rs485_rts_pin}
+  diagnostic_mode: false
+  listen_only: false
+  valid_broadcast_timeout: 10s
+  allow_remote_close: false
+
+cover:
+  - platform: uapbridge
+    name: "${friendly_name}"
+    device_class: garage
+
+binary_sensor:
+  - platform: status
+    name: "${friendly_name} ESPHome Status"
+  - platform: uapbridge
+    got_valid_broadcast:
+      name: "${friendly_name} Valid HCP Broadcast"
+    error_state:
+      name: "${friendly_name} Error State"
+
+text_sensor:
+  - platform: uapbridge
+    name: "${friendly_name} State"
+  - platform: ethernet_info
+    ip_address:
+      name: "${friendly_name} IP Address"
+    mac_address:
+      name: "${friendly_name} MAC Address"
+
+button:
+  - platform: uapbridge
+    impulse_button:
+      name: "${friendly_name} Impulse"
