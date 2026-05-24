@@ -8,6 +8,7 @@ Use [supramatic-e2-proxy.yaml](supramatic-e2-proxy.yaml) for this mode.
 
 - `allow_tx: false` is the default. In that mode, the ESP32 only streams bus bytes to your laptop.
 - Active transmit requires `allow_tx: true` and `auth_token: !secret proxy_auth_token`.
+- Config validation requires the proxy UART to be `19200 8N1`, with RX always configured and TX configured only when `allow_tx: true`.
 - Proxy mode is unaffiliated with HomeKit and should not be left enabled with TX on a general LAN.
 - Live laptop-side UAP1 emulation may miss the drive response window because TCP/W5500/laptop scheduling latency is not deterministic. Use passive capture first. If active tests are needed, prefer short explicit `TXB` frames while physically present at the door.
 - With the Waveshare TTL TO RS485 (C), omit `rts_pin`; the adapter handles direction internally. For a bare DE/RE transceiver in proxy mode, the proxy firmware can toggle `rts_pin` around its own `TX`/`TXB` writes, but laptop-side generic serial-proxy RTS control is not automatic. Prefer an auto-direction adapter for passive monitoring.
@@ -55,3 +56,5 @@ python3 tools/hcp_proxy_client.py --host supramatic-e2-proxy.local --token "$PRO
 ```
 
 The script prints raw proxy events and decodes CRC-valid HCP candidates it recognizes: broadcasts, slave scans, and UAP1 status requests.
+
+The ESP32 treats TCP backpressure or a partial nonblocking write as a capture-client disconnect. That is intentional: dropped capture lines are worse than a visible reconnect during protocol analysis.

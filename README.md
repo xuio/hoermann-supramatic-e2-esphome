@@ -87,12 +87,13 @@ The component is vendored under [components](components). It is based on the ESP
 - `use_unverified_stop_command`, default `false`, avoids the E3-derived raw stop word and uses an impulse fallback only while the door is decoded as moving.
 - `require_fresh_broadcast_for_commands`, default `true`, blocks commands until a fresh CRC-valid HCP broadcast has been seen.
 - `command_timeout`, default `1200ms`, expires queued one-shot commands if the drive does not poll.
-- `diagnostic_mode`, logs raw frames, CRC status, decoded status bits, command queueing, command sending, and state transitions.
+- `diagnostic_mode`, default `false`, logs raw frames, CRC status, decoded status bits, command queueing, command sending, and state transitions when temporarily enabled for captures.
 - `listen_only`, when set true, receives and logs HCP frames without answering scan/status requests. Use this only for first bus capture.
 - `valid_broadcast_timeout`, default `10s`, clears the valid-broadcast diagnostic and marks state unknown if the bus goes stale.
 - `got_valid_broadcast` is set only after a CRC-valid HCP broadcast.
 - Unknown states are treated conservatively; the cover is never reported closed unless the closed bit is decoded. Toggle remains disabled; use the explicit impulse button for deliberate protocol testing.
 - Optional `time_based_position` support exposes a Shelly-style position-capable cover in Home Assistant. Position is estimated from calibrated open/close durations and corrected by decoded HCP end states.
+- `api.reboot_timeout: 0s` is set in every YAML so proxy/monitor/main firmware does not reboot just because Home Assistant or an API client is offline.
 
 Primary config: [supramatic-e2.yaml](supramatic-e2.yaml)
 
@@ -111,6 +112,14 @@ proxy_auth_token: "..." # only needed when proxy allow_tx is enabled
 ```
 
 [secrets.example.yaml](secrets.example.yaml) contains a syntactically valid placeholder for ESPHome validation. Generate a real ESPHome API encryption key before flashing hardware you will actually use.
+
+Use the pinned ESPHome version from [requirements.txt](requirements.txt) when validating or building:
+
+```bash
+cp secrets.example.yaml secrets.yaml
+uv run --python 3.12 --with-requirements requirements.txt esphome config supramatic-e2.yaml
+uv run --python 3.12 --with-requirements requirements.txt esphome compile supramatic-e2.yaml
+```
 
 ## OTA Updates
 
@@ -143,7 +152,7 @@ The primary YAML intentionally starts with:
 
 ```yaml
 uapbridge_esp:
-  diagnostic_mode: true
+  diagnostic_mode: false
   listen_only: false
   allow_remote_close: false
   allow_remote_impulse: false
@@ -152,7 +161,7 @@ uapbridge_esp:
   auto_correction: false
 ```
 
-This allows receive, scan response, state decoding, open, stop, light, and venting tests while blocking remote close and the generic impulse command. After state decoding and physical safety behavior are verified at the door, set `allow_remote_close: true` to enable Home Assistant close commands. Only set `allow_remote_impulse: true` for deliberate protocol testing while physically present. Even then, the firmware requires a fresh valid HCP broadcast, a known non-stopped state, and no active error/prewarn before it accepts movement commands.
+This allows receive, scan response, state decoding, open, stop, light, and venting tests while blocking remote close and the generic impulse command. Temporarily set `diagnostic_mode: true` only when capturing protocol logs. After state decoding and physical safety behavior are verified at the door, set `allow_remote_close: true` to enable Home Assistant close commands. Only set `allow_remote_impulse: true` for deliberate protocol testing while physically present. Even then, the firmware requires a fresh valid HCP broadcast, a known non-stopped state, and no active error/prewarn before it accepts movement commands.
 
 Keep `auto_correction: false` for the SupraMatic E2 until the raw E2 state mapping is known. It is retained only as an upstream compatibility option and should not be used as a substitute for understanding an error or prewarn state.
 
@@ -168,13 +177,13 @@ cover:
     close_duration: 18s
 ```
 
-This is an estimate, not measured position data from the opener. The firmware only reports exact `0%` after the HCP closed bit is decoded; timing alone is clamped above closed so Home Assistant is not told the door is definitely closed when it is not confirmed. Intermediate position targets require a reliable stop path. See [docs/time-based-position.md](docs/time-based-position.md).
+This is an estimate, not measured position data from the opener. Timing starts when the command is actually sent on the next HCP status response, or when HCP status reports movement. The firmware only reports exact `0%` after the HCP closed bit is decoded; timing alone is clamped above closed so Home Assistant is not told the door is definitely closed when it is not confirmed. Intermediate position targets require a reliable stop path. See [docs/time-based-position.md](docs/time-based-position.md).
 
 ## Proxy Mode
 
 Flash [supramatic-e2-proxy.yaml](supramatic-e2-proxy.yaml) when you want the ESP32 to act only as an Ethernet proxy for the RS-485 bus. This mode does not load the UAP1 emulator and does not expose garage entities to Home Assistant.
 
-Proxy mode listens on TCP port `6638` and streams line-based events such as `RX <seq> <micros> <hex>` and `GAP <micros> <gap-us>`. It defaults to receive-only. Active transmission requires `allow_tx: true` and `auth_token: !secret proxy_auth_token`; `TXB <hex>` generates the HCP sync break before writing bytes.
+Proxy mode listens on TCP port `6638` and streams line-based events such as `RX <seq> <micros> <hex>` and `GAP <micros> <gap-us>`. It validates that the UART is configured as `19200 8N1`. It defaults to receive-only. Active transmission requires `allow_tx: true` and `auth_token: !secret proxy_auth_token`; `TXB <hex>` generates the HCP sync break before writing bytes.
 
 Use the helper client:
 
@@ -231,7 +240,7 @@ Use:
 esphome logs supramatic-e2.yaml
 ```
 
-With `diagnostic_mode: true`, capture logs while moving the door through:
+Temporarily enable `diagnostic_mode: true`, or flash the monitor/proxy firmware for passive capture, then collect logs while moving the door through:
 
 - Fully closed.
 - Opening.

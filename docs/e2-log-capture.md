@@ -1,6 +1,6 @@
 # SupraMatic E2 Log Capture
 
-Set `diagnostic_mode: true` in `supramatic-e2.yaml`, then run:
+Temporarily set `diagnostic_mode: true` in `supramatic-e2.yaml`, then run:
 
 ```bash
 esphome logs supramatic-e2.yaml
