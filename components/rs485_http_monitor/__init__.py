@@ -1,5 +1,6 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
+from esphome import final_validate as fv
 from esphome.components import socket, uart
 from esphome.const import CONF_ID, CONF_PORT
 
@@ -29,12 +30,34 @@ CONFIG_SCHEMA = cv.All(
     socket.consume_sockets(1, "rs485_http_monitor", socket.SocketType.TCP_LISTEN),
 )
 
-FINAL_VALIDATE_SCHEMA = uart.final_validate_device_schema(
-    "rs485_http_monitor",
-    require_tx=False,
-    require_rx=True,
-    baud_rate=19200,
-)
+def final_validate(config):
+    validated = uart.final_validate_device_schema(
+        "rs485_http_monitor",
+        require_tx=False,
+        require_rx=True,
+        baud_rate=19200,
+        data_bits=8,
+        parity="NONE",
+        stop_bits=1,
+    )(config)
+
+    def reject_tx_pin(hub_config):
+        if uart.CONF_TX_PIN in hub_config:
+            raise cv.Invalid("rs485_http_monitor is read-only and forbids uart tx_pin")
+        return hub_config
+
+    cv.Schema(
+        {
+            cv.Required(uart.CONF_UART_ID): fv.id_declaration_match_schema(
+                reject_tx_pin
+            )
+        },
+        extra=cv.ALLOW_EXTRA,
+    )(config)
+    return validated
+
+
+FINAL_VALIDATE_SCHEMA = final_validate
 
 
 async def to_code(config):

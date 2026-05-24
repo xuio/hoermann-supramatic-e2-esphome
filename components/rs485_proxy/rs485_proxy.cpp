@@ -37,8 +37,8 @@ void RS485Proxy::dump_config() {
 
 void RS485Proxy::loop() {
   this->accept_client_();
-  this->service_client_();
   this->service_uart_();
+  this->service_client_();
 }
 
 void RS485Proxy::setup_server_() {
@@ -121,6 +121,7 @@ void RS485Proxy::accept_client_() {
     this->client_ = std::move(new_client);
     this->authenticated_ = this->auth_token_.empty();
     this->command_buffer_len_ = 0;
+    this->client_connected_ms_ = millis();
     this->last_rx_us_ = 0;
     this->rx_sequence_ = 0;
     this->tx_sequence_ = 0;
@@ -162,10 +163,6 @@ void RS485Proxy::send_line_(const std::string &line) {
 
 void RS485Proxy::service_uart_() {
   if (this->client_ == nullptr || !this->authenticated_) {
-    while (this->available() > 0) {
-      uint8_t ignored;
-      this->read_byte(&ignored);
-    }
     return;
   }
 
@@ -218,7 +215,18 @@ void RS485Proxy::flush_rx_batch_(uint8_t *data, size_t len, uint32_t timestamp_u
 }
 
 void RS485Proxy::service_client_() {
-  if (this->client_ == nullptr || !this->client_->ready()) {
+  if (this->client_ == nullptr) {
+    return;
+  }
+
+  if (!this->authenticated_ && !this->auth_token_.empty() &&
+      millis() - this->client_connected_ms_ > PROXY_AUTH_TIMEOUT_MS) {
+    ESP_LOGW(TAG, "Disconnecting unauthenticated proxy client after auth timeout");
+    this->disconnect_client_();
+    return;
+  }
+
+  if (!this->client_->ready()) {
     return;
   }
 
@@ -309,6 +317,11 @@ void RS485Proxy::handle_command_(const std::string &line) {
     if (!this->tx_is_authorized_(with_break ? "TXB" : "TX")) {
       return;
     }
+    if (!this->bus_is_idle_for_tx_()) {
+      this->send_line_("ERR bus-not-idle");
+      ESP_LOGW(TAG, "Rejected proxy TX because the RS-485 bus is not idle");
+      return;
+    }
     this->send_uart_bytes_(bytes, with_break);
     return;
   }
@@ -327,6 +340,16 @@ bool RS485Proxy::tx_is_authorized_(const char *command_name) {
     return false;
   }
   return true;
+}
+
+bool RS485Proxy::bus_is_idle_for_tx_() {
+  if (this->available() > 0) {
+    return false;
+  }
+  if (this->last_rx_us_ == 0) {
+    return true;
+  }
+  return micros() - this->last_rx_us_ > this->gap_threshold_us_;
 }
 
 bool RS485Proxy::parse_hex_(const std::string &hex, std::vector<uint8_t> *out) {

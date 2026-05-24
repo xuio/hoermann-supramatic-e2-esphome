@@ -1,5 +1,6 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
+from esphome import final_validate as fv
 from esphome import pins
 from esphome.components import socket, uart
 from esphome.const import CONF_ID, CONF_PORT
@@ -43,7 +44,7 @@ CONFIG_SCHEMA = cv.All(
 )
 
 def final_validate(config):
-    return uart.final_validate_device_schema(
+    validated = uart.final_validate_device_schema(
         "rs485_proxy",
         require_rx=True,
         require_tx=config[CONF_ALLOW_TX],
@@ -52,6 +53,21 @@ def final_validate(config):
         parity="NONE",
         stop_bits=1,
     )(config)
+    if not config[CONF_ALLOW_TX]:
+        def reject_tx_pin(hub_config):
+            if uart.CONF_TX_PIN in hub_config:
+                raise cv.Invalid("rs485_proxy forbids uart tx_pin unless allow_tx is true")
+            return hub_config
+
+        cv.Schema(
+            {
+                cv.Required(uart.CONF_UART_ID): fv.id_declaration_match_schema(
+                    reject_tx_pin
+                )
+            },
+            extra=cv.ALLOW_EXTRA,
+        )(config)
+    return validated
 
 
 FINAL_VALIDATE_SCHEMA = final_validate

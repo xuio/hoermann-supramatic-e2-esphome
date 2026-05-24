@@ -124,7 +124,7 @@ def read_http_stream(args: argparse.Namespace, decoder: HCPDecoder) -> int:
         return 2
 
     url = args.http_url or f"http://{args.host}:{args.http_port}/stream"
-    with urlopen(url, timeout=10) as response:
+    with urlopen(url, timeout=30) as response:
         for raw_line in response:
             line = raw_line.decode("ascii", errors="replace").strip()
             if line:

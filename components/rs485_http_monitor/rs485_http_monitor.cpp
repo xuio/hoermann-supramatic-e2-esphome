@@ -123,11 +123,21 @@ void RS485HTTPMonitor::accept_client_() {
     ESP_LOGD(TAG, "Accepted HTTP monitor client from %s", peername);
     this->pending_client_ = std::move(new_client);
     this->request_buffer_len_ = 0;
+    this->pending_client_started_ms_ = millis();
   }
 }
 
 void RS485HTTPMonitor::service_pending_client_() {
-  if (this->pending_client_ == nullptr || !this->pending_client_->ready()) {
+  if (this->pending_client_ == nullptr) {
+    return;
+  }
+  if (millis() - this->pending_client_started_ms_ > HTTP_MONITOR_PENDING_TIMEOUT_MS) {
+    ESP_LOGW(TAG, "Closing HTTP monitor client that did not send a request line");
+    this->pending_client_.reset();
+    this->request_buffer_len_ = 0;
+    return;
+  }
+  if (!this->pending_client_->ready()) {
     return;
   }
 
@@ -219,8 +229,7 @@ void RS485HTTPMonitor::start_stream_(std::unique_ptr<socket::Socket> client, boo
   std::string header = "HTTP/1.1 200 OK\r\nContent-Type: ";
   header += content_type;
   header += "\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\nAccess-Control-Allow-Origin: *\r\n\r\n";
-  ssize_t written = client->write(header.data(), header.size());
-  if (written < 0 || (size_t) written != header.size()) {
+  if (!this->write_all_(client.get(), header, 1000)) {
     ESP_LOGW(TAG, "Failed to write HTTP stream header: errno=%d", errno);
     return;
   }
@@ -242,7 +251,29 @@ void RS485HTTPMonitor::send_http_response_(std::unique_ptr<socket::Socket> clien
   response += std::to_string(body.size());
   response += "\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\n";
   response += body;
-  client->write(response.data(), response.size());
+  if (!this->write_all_(client.get(), response, 1000)) {
+    ESP_LOGW(TAG, "Failed to write complete HTTP response: errno=%d", errno);
+  }
+}
+
+bool RS485HTTPMonitor::write_all_(socket::Socket *client, const std::string &payload, uint32_t timeout_ms) {
+  size_t offset = 0;
+  const uint32_t started = millis();
+  while (offset < payload.size()) {
+    ssize_t written = client->write(payload.data() + offset, payload.size() - offset);
+    if (written > 0) {
+      offset += written;
+      continue;
+    }
+    if (written < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+      return false;
+    }
+    if (millis() - started > timeout_ms) {
+      return false;
+    }
+    delay(1);
+  }
+  return true;
 }
 
 void RS485HTTPMonitor::service_uart_() {
@@ -352,7 +383,7 @@ void RS485HTTPMonitor::send_stream_line_(const std::string &event_type, const st
 }
 
 void RS485HTTPMonitor::service_keepalive_() {
-  if (this->stream_client_ == nullptr || millis() - this->last_keepalive_ms_ < 15000) {
+  if (this->stream_client_ == nullptr || millis() - this->last_keepalive_ms_ < HTTP_MONITOR_KEEPALIVE_MS) {
     return;
   }
   this->last_keepalive_ms_ = millis();

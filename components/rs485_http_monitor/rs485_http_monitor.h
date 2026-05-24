@@ -12,6 +12,9 @@
 namespace esphome {
 namespace rs485_http_monitor {
 
+#define HTTP_MONITOR_KEEPALIVE_MS 5000
+#define HTTP_MONITOR_PENDING_TIMEOUT_MS 3000
+
 class RS485HTTPMonitor : public Component, public uart::UARTDevice {
  public:
   void setup() override;
@@ -35,6 +38,7 @@ class RS485HTTPMonitor : public Component, public uart::UARTDevice {
   void start_stream_(std::unique_ptr<socket::Socket> client, bool sse);
   void send_http_response_(std::unique_ptr<socket::Socket> client, const char *status, const char *content_type,
                            const std::string &body);
+  bool write_all_(socket::Socket *client, const std::string &payload, uint32_t timeout_ms);
   void send_stream_line_(const std::string &event_type, const std::string &json_data, const std::string &plain_line);
   void emit_rx_(uint8_t *data, size_t len, uint32_t timestamp_us);
   void emit_gap_(uint32_t timestamp_us, uint32_t gap_us);
@@ -55,6 +59,7 @@ class RS485HTTPMonitor : public Component, public uart::UARTDevice {
   bool stream_is_sse_{true};
   char request_buffer_[256]{};
   size_t request_buffer_len_{0};
+  uint32_t pending_client_started_ms_{0};
 
   uint32_t last_rx_us_{0};
   uint32_t rx_sequence_{0};

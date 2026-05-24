@@ -13,6 +13,8 @@
 namespace esphome {
 namespace rs485_proxy {
 
+#define PROXY_AUTH_TIMEOUT_MS 5000
+
 class RS485Proxy : public Component, public uart::UARTDevice {
  public:
   void setup() override;
@@ -37,6 +39,7 @@ class RS485Proxy : public Component, public uart::UARTDevice {
   void service_client_();
   void handle_command_(const std::string &line);
   bool tx_is_authorized_(const char *command_name);
+  bool bus_is_idle_for_tx_();
   bool parse_hex_(const std::string &hex, std::vector<uint8_t> *out);
   int hex_value_(char c);
   void send_uart_bytes_(const std::vector<uint8_t> &data, bool with_break);
@@ -55,6 +58,7 @@ class RS485Proxy : public Component, public uart::UARTDevice {
   bool authenticated_{false};
   char command_buffer_[256]{};
   size_t command_buffer_len_{0};
+  uint32_t client_connected_ms_{0};
   uint32_t last_rx_us_{0};
   uint32_t rx_sequence_{0};
   uint32_t tx_sequence_{0};
