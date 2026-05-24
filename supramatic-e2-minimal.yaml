@@ -3,7 +3,6 @@ substitutions:
   friendly_name: "Garage Door"
   rs485_rx_pin: GPIO16
   rs485_tx_pin: GPIO17
-  rs485_rts_pin: GPIO18
 
 esphome:
   name: "${name}"
@@ -49,7 +48,6 @@ uart:
 uapbridge_esp:
   id: garage_door_comp
   uart_id: uart_bus
-  rts_pin: ${rs485_rts_pin}
   diagnostic_mode: false
   listen_only: false
   valid_broadcast_timeout: 10s

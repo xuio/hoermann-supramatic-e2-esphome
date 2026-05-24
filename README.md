@@ -13,11 +13,11 @@ It does not implement HomeKit on the ESP32, does not use cloud services, does no
 - Opener: Hörmann SupraMatic E2, Series 2 / HCP1-era.
 - User unit: serial `REDACTED_SERIAL`; type plate suffix `Ei`, interpreted as index `E` plus integrated/internal receiver `i`.
 - Bus route: plausible because index `E` is later than the usual UAP1/HCP1 compatibility threshold.
-- MCU: one Waveshare ESP32-S3-ETH board only, powered by USB or the Waveshare PoE module.
+- MCU: one Waveshare ESP32-S3-ETH board only, powered by USB-C or the Waveshare IEEE 802.3af PoE module/PoE variant.
 - Network: onboard W5500 Ethernet over SPI, DHCP by default.
-- Bus interface: 3.3 V-compatible RS-485 transceiver such as MAX3485, SP3485, SN65HVD72, or equivalent.
+- Bus interface: Waveshare TTL TO RS485 (C) galvanically isolated half-duplex adapter.
 
-Do not connect ESP32 GPIO directly to the Hörmann bus. Do not connect the opener 24 V line directly to the ESP32.
+Do not connect ESP32 GPIO directly to the Hörmann bus. Do not connect the opener 24 V line directly to the ESP32. With PoE power, leave BUS pin 2 disconnected.
 
 ## Wiring
 
@@ -30,27 +30,39 @@ Expected HCP1 BUS pinout:
 | BUS pin | Function |
 | --- | --- |
 | 1 | Unused / unknown, leave open |
-| 2 | +24 V DC, optional input to 24 V -> 5 V buck converter |
-| 3 | GND, connect to ESP32 GND and RS-485 GND |
+| 2 | +24 V DC, leave disconnected when powering by USB-C or PoE |
+| 3 | BUS GND / RS-485 reference |
 | 4 | Unused / unknown, leave open |
 | 5 | RS-485 DATA- / B / D- |
 | 6 | RS-485 DATA+ / A / D+ |
 
-Suggested Waveshare ESP32-S3-ETH wiring:
+Suggested wiring for the Waveshare TTL TO RS485 (C) isolated adapter:
 
-| ESP32 / transceiver | Connection |
+| ESP32-S3-ETH / adapter | Connection |
 | --- | --- |
-| GPIO17 TX | RS-485 DI |
-| GPIO16 RX | RS-485 RO |
-| GPIO18 | RS-485 DE and /RE tied together |
-| 3.3 V | RS-485 VCC, for 3.3 V transceiver only |
-| GND | RS-485 GND and BUS pin 3 |
-| RS-485 B / D- | BUS pin 5 |
-| RS-485 A / D+ | BUS pin 6 |
+| 3V3 | Adapter VCC |
+| ESP32 GND | Adapter TTL-side GND only |
+| GPIO17 TX | Adapter RXD |
+| GPIO16 RX | Adapter TXD |
+| Adapter A+ | BUS pin 6 |
+| Adapter B- | BUS pin 5 |
+| Adapter PE | BUS pin 3 |
 
-For first tests, power the board from USB or PoE and connect only GND, DATA-, and DATA+ to the opener. If no valid traffic appears, swap A/B once as a diagnostic step because some RS-485 modules label them inconsistently.
+Do not tie ESP32 GND to BUS pin 3 when using the isolated adapter; use the adapter PE terminal as the RS-485-side reference. The adapter has no documented DE, /RE, or RTS pin, so the default YAML omits `rts_pin` and relies on the adapter's hardware auto-direction.
 
-Do not use GPIO9, GPIO10, GPIO11, GPIO12, GPIO13, or GPIO14 for the RS-485 adapter; those pins are occupied by the onboard W5500 Ethernet chip. Avoid GPIO4 through GPIO7 if you may use the TF-card slot, avoid GPIO19/GPIO20 because they are USB D-/D+, avoid GPIO21 because it drives the onboard RGB LED, and avoid strapping pins such as GPIO0/GPIO45/GPIO46 unless you explicitly account for boot behavior. The default RS-485 direction pin is GPIO18 when no camera is attached.
+If you use a non-isolated bare transceiver such as MAX3485/SP3485/SN65HVD72 instead, use `GPIO18` for DE and /RE tied together, connect ESP32 GND to BUS pin 3, and add this to `uapbridge_esp`:
+
+```yaml
+rts_pin: GPIO18
+```
+
+For first tests, power the board from USB-C or IEEE 802.3af PoE and connect only PE, DATA-, and DATA+ to the opener. If no valid traffic appears, swap A/B once as a diagnostic step because some RS-485 modules label them inconsistently.
+
+Choose exactly one board power source: USB-C, the Waveshare 802.3af PoE module/PoE variant, or a properly regulated and isolated 24 V to 5 V supply. For this PoE setup, do not use the opener's 24 V BUS pin.
+
+Do not use GPIO9, GPIO10, GPIO11, GPIO12, GPIO13, or GPIO14 for the RS-485 adapter; those pins are occupied by the onboard W5500 Ethernet chip. Avoid GPIO4 through GPIO7 if you may use the TF-card slot, avoid GPIO19/GPIO20 because they are USB D-/D+, avoid GPIO21 because it drives the onboard RGB LED, and avoid strapping pins such as GPIO0/GPIO45/GPIO46 unless you explicitly account for boot behavior. If you switch from the isolated adapter to a bare DE/RE transceiver, `GPIO18` is the documented direction pin when no camera is attached.
+
+The Waveshare TTL TO RS485 (C) includes an onboard 120 ohm termination option. For first tests, set that termination to `NC`/off. With all power disconnected, measure A/B resistance on the connected bus and enable termination only if this adapter is physically at an unterminated end of the RS-485 segment.
 
 The ESPHome Ethernet configuration uses the Waveshare/ESPHome W5500 pin map:
 
@@ -69,7 +81,7 @@ The component is vendored under [components](components). It is based on the ESP
 
 - ESP-IDF example config for the Waveshare ESP32-S3-ETH board.
 - Ethernet-only networking through the onboard W5500. Wi-Fi is intentionally not configured because ESPHome does not allow Wi-Fi and Ethernet at the same time.
-- Configurable RS-485 direction pin through `rts_pin`.
+- Optional configurable RS-485 direction pin through `rts_pin` for bare DE/RE transceivers. Omit it for the Waveshare TTL TO RS485 (C) isolated auto-direction adapter.
 - `allow_remote_close`, default `false`, blocks close commands during development.
 - `command_timeout`, default `1200ms`, expires queued one-shot commands if the drive does not poll.
 - `diagnostic_mode`, logs raw frames, CRC status, decoded status bits, command queueing, command sending, and state transitions.
@@ -110,7 +122,7 @@ Keep `auto_correction: false` for the SupraMatic E2 until the raw E2 state mappi
 
 1. Flash ESP32 and verify it boots in ESPHome/Home Assistant before connecting to the opener.
 2. Connect Ethernet and verify the device comes online via DHCP.
-3. Connect GND, DATA-, DATA+ only; power the board via USB or PoE for the first bus test.
+3. Connect PE, DATA-, DATA+ only; power the board via USB-C or PoE for the first bus test.
 4. Open ESPHome logs.
 5. Optional first capture: set `listen_only: true`, flash, power-cycle the opener, and confirm raw broadcasts before allowing the ESP32 to answer the bus. Then set `listen_only: false` and flash again for control tests.
 6. Power-cycle the SupraMatic opener.
