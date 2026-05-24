@@ -91,7 +91,8 @@ The component is vendored under [components](components). It is based on the ESP
 - `listen_only`, when set true, receives and logs HCP frames without answering scan/status requests. Use this only for first bus capture.
 - `valid_broadcast_timeout`, default `10s`, clears the valid-broadcast diagnostic and marks state unknown if the bus goes stale.
 - `got_valid_broadcast` is set only after a CRC-valid HCP broadcast.
-- Unknown states are treated conservatively; the cover is never reported closed unless the closed bit is decoded. The cover does not advertise toggle or arbitrary position support.
+- Unknown states are treated conservatively; the cover is never reported closed unless the closed bit is decoded. Toggle remains disabled; use the explicit impulse button for deliberate protocol testing.
+- Optional `time_based_position` support exposes a Shelly-style position-capable cover in Home Assistant. Position is estimated from calibrated open/close durations and corrected by decoded HCP end states.
 
 Primary config: [supramatic-e2.yaml](supramatic-e2.yaml)
 
@@ -154,6 +155,20 @@ uapbridge_esp:
 This allows receive, scan response, state decoding, open, stop, light, and venting tests while blocking remote close and the generic impulse command. After state decoding and physical safety behavior are verified at the door, set `allow_remote_close: true` to enable Home Assistant close commands. Only set `allow_remote_impulse: true` for deliberate protocol testing while physically present. Even then, the firmware requires a fresh valid HCP broadcast, a known non-stopped state, and no active error/prewarn before it accepts movement commands.
 
 Keep `auto_correction: false` for the SupraMatic E2 until the raw E2 state mapping is known. It is retained only as an upstream compatibility option and should not be used as a substitute for understanding an error or prewarn state.
+
+## Time-Based Position
+
+The main YAML enables time-based position estimation so Home Assistant can show and set cover percentages similar to a Shelly 2PM in cover mode:
+
+```yaml
+cover:
+  - platform: uapbridge
+    time_based_position: true
+    open_duration: 18s
+    close_duration: 18s
+```
+
+This is an estimate, not measured position data from the opener. The firmware only reports exact `0%` after the HCP closed bit is decoded; timing alone is clamped above closed so Home Assistant is not told the door is definitely closed when it is not confirmed. Intermediate position targets require a reliable stop path. See [docs/time-based-position.md](docs/time-based-position.md).
 
 ## Proxy Mode
 

@@ -51,12 +51,13 @@ class UAPBridge : public uart::UARTDevice, public Component {
     void set_valid_broadcast_timeout(uint32_t value) { this->valid_broadcast_timeout_ms = value; }
     uint32_t get_valid_broadcast_timeout() const { return this->valid_broadcast_timeout_ms; }
 
-    virtual void action_open() = 0;
-    virtual void action_close() = 0;
-    virtual void action_stop() = 0;
-    virtual void action_venting() = 0;
-    virtual void action_toggle_light() = 0;
-    virtual void action_impulse() = 0;
+    virtual bool action_open() = 0;
+    virtual bool action_close() = 0;
+    virtual bool action_stop() = 0;
+    virtual bool action_venting() = 0;
+    virtual bool action_toggle_light() = 0;
+    virtual bool action_impulse() = 0;
+    virtual uint32_t get_command_sequence() const { return 0; }
 
     virtual hoermann_state_t get_state() = 0;
     virtual std::string get_state_string() = 0;

@@ -79,6 +79,13 @@ cover:
   - platform: uapbridge
     name: "${friendly_name}"
     device_class: garage
+    time_based_position: true
+    open_duration: 18s
+    close_duration: 18s
+    position_publish_interval: 1s
+    position_deadband: 2%
+    venting_position: 20%
+    learn_travel_durations: true
 
 switch:
   - platform: uapbridge

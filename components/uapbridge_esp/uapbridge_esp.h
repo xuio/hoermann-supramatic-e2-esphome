@@ -40,12 +40,13 @@ class UAPBridge_esp : public esphome::uapbridge::UAPBridge {
 
     void loop() override;
 
-    void action_open();
-    void action_close();
-    void action_stop();
-    void action_venting();
-    void action_toggle_light();
-    void action_impulse();
+    bool action_open() override;
+    bool action_close() override;
+    bool action_stop() override;
+    bool action_venting() override;
+    bool action_toggle_light() override;
+    bool action_impulse() override;
+    uint32_t get_command_sequence() const override { return this->command_sequence; }
 
     hoermann_state_t get_state();
     std::string get_state_string();
@@ -66,7 +67,7 @@ class UAPBridge_esp : public esphome::uapbridge::UAPBridge {
     void receive();
     void process_rx_window();
     void transmit();
-    void set_command(bool cond, const hoermann_action_t command, bool bypass_impulse_interlock = false);
+    bool set_command(bool cond, const hoermann_action_t command, bool bypass_impulse_interlock = false);
     bool command_allowed(const hoermann_action_t command, bool bypass_impulse_interlock = false);
     bool is_movement_command(const hoermann_action_t command);
     bool bus_state_is_fresh() const;
@@ -87,6 +88,7 @@ class UAPBridge_esp : public esphome::uapbridge::UAPBridge {
     bool auto_correction_in_progress = false;
     bool last_error_bit = false;
     uint32_t command_set_at = 0;
+    uint32_t command_sequence = 0;
     uint32_t last_valid_broadcast_ms = 0;
     std::string diagnostic_string = "no HCP frame received";
     uint8_t    rx_data[5]       = {0, 0, 0, 0, 0};
