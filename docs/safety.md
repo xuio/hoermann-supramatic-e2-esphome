@@ -4,6 +4,7 @@
 - Keep `allow_remote_close: false` until broadcast state decoding and obstruction protection have been verified.
 - Keep `allow_remote_impulse: false` unless you are physically present and deliberately testing the raw impulse behavior.
 - Keep `use_unverified_stop_command: false` unless the E2 raw stop word has been confirmed on your opener.
+- With `use_unverified_stop_command: false`, the impulse-as-stop fallback requires a recent decoded moving broadcast, not just a generally fresh bus.
 - Movement commands require a fresh valid HCP broadcast, a known non-stopped state, and no active error/prewarn, evaluated from the latest decoded broadcast.
 - With `allow_remote_close: false`, venting from fully open is blocked because that movement is a partial close.
 - `listen_only: true` rejects all Home Assistant commands immediately.

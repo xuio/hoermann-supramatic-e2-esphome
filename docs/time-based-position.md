@@ -25,6 +25,7 @@ Home Assistant sees a normal cover position where `0%` is closed and `100%` is o
 - Fully open and fully close still use the native HCP open/close commands.
 - Intermediate targets move in the needed direction, estimate travel progress, then send stop at the estimated target.
 - The movement timer is armed by the Home Assistant command, but it does not start counting from the request timestamp. It starts after the one-shot HCP command is actually sent in a status response, or when decoded HCP status reports opening/closing.
+- During the short start/prewarn window after a command is sent, old opposite end-state broadcasts are ignored so an intermediate target is not discarded before movement is reported.
 - New targets in the current travel direction retarget the active estimate. A target in the opposite direction first sends stop and requires a second explicit command after the door stops.
 - The estimate is corrected to `0%`, `100%`, or the configured venting percentage when the HCP status decoder sees closed, open, or venting.
 - The firmware restores the last estimated cover position after reboot, but a restored exact closed value is clamped above `0%` until the HCP closed bit is decoded again.
@@ -37,7 +38,7 @@ Home Assistant sees a normal cover position where `0%` is closed and `100%` is o
 - The firmware will not publish exact `0%` closed from timing alone. It only publishes `0%` after the HCP closed bit is decoded.
 - `position_deadband` is limited to `20%` or less at ESPHome config validation time so a broad deadband cannot hide large position errors.
 - Downward position moves require `allow_remote_close: true`; the default YAML keeps it `false` until you have verified state decoding and obstruction protection.
-- Intermediate target stopping relies on the existing safe stop path. With the default `use_unverified_stop_command: false`, the firmware sends the impulse stop fallback only while the door is decoded as moving. If E2 moving-state decoding is wrong, an intermediate stop may be rejected and the door may continue to an end stop.
+- Intermediate target stopping relies on the existing safe stop path. With the default `use_unverified_stop_command: false`, the firmware sends the impulse stop fallback only after a recent decoded moving broadcast. If E2 moving-state decoding is wrong or stale, an intermediate stop may be rejected and the door may continue to an end stop.
 - Do not expose position control to HomeKit until open, close, stop, and state correction have been tested while physically present.
 
 ## Calibration

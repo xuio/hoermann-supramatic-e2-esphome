@@ -48,7 +48,7 @@ Suggested wiring for the Waveshare TTL TO RS485 (C) isolated adapter:
 | Adapter B- | BUS pin 5 |
 | Adapter PE | BUS pin 3 |
 
-Do not tie ESP32 GND to BUS pin 3 when using the isolated adapter; use the adapter PE terminal as the RS-485-side signal reference. On this adapter, `PE` is the isolated RS-485-side signal ground. Do not connect adapter PE to mains earth, the Ethernet shield, or ESP32 GND; for this isolated adapter, PE goes only to Hörmann BUS pin 3. The adapter has no documented DE, /RE, or RTS pin, so the default YAML omits `rts_pin` and relies on the adapter's hardware auto-direction.
+Do not tie ESP32 GND to BUS pin 3 when using the isolated adapter; use the adapter PE terminal as the RS-485-side signal reference. On this adapter, `PE` is the isolated RS-485-side signal ground. Do not connect adapter PE to mains earth, the Ethernet shield, or ESP32 GND; for this isolated adapter, PE goes only to Hörmann BUS pin 3. The adapter has no documented DE, /RE, or RTS pin, so the main control YAML omits `rts_pin` and assumes the adapter's built-in half-duplex direction handling. Verify that assumption during bring-up by confirming UAP1 scan/status responses on the bus; use a DE/RE transceiver on `GPIO18` if you need deterministic direction control.
 
 If you use a non-isolated bare transceiver such as MAX3485/SP3485/SN65HVD72 instead, use `GPIO18` for DE and /RE tied together, connect ESP32 GND to BUS pin 3, and add this to `uapbridge_esp`:
 
@@ -62,7 +62,7 @@ Choose exactly one board power source: USB-C, the Waveshare 802.3af PoE module/P
 
 Do not use GPIO9, GPIO10, GPIO11, GPIO12, GPIO13, or GPIO14 for the RS-485 adapter; those pins are occupied by the onboard W5500 Ethernet chip. Avoid GPIO4 through GPIO7 if you may use the TF-card slot, avoid GPIO19/GPIO20 because they are USB D-/D+, avoid GPIO21 because it drives the onboard RGB LED, and avoid strapping pins such as GPIO0/GPIO45/GPIO46 unless you explicitly account for boot behavior. If you switch from the isolated adapter to a bare DE/RE transceiver, `GPIO18` is the documented direction pin when no camera is attached.
 
-The Waveshare TTL TO RS485 (C) includes an onboard 120 ohm termination option. For first tests, set that termination to `NC`/off. With all power disconnected, measure A/B resistance on the connected bus: about `120 ohm` means one terminator is already present, about `60 ohm` means two terminators are present, and much lower resistance suggests over-termination or a wiring fault. Enable the adapter terminator only if this adapter is physically at an unterminated end of the RS-485 segment. Do not add bias resistors unless scope traces or logs show an idle bus that is actually floating; the opener likely already biases the bus.
+The Waveshare TTL TO RS485 (C) includes an onboard 120 ohm termination option and may ship with `120R` selected. For first tests, set that termination to `NC`/off. With all power disconnected, measure A/B resistance on the connected bus: about `120 ohm` means one terminator is already present, about `60 ohm` means two terminators are present, and much lower resistance suggests over-termination or a wiring fault. Enable the adapter terminator only if this adapter is physically at an unterminated end of the RS-485 segment. Do not add bias resistors unless scope traces or logs show an idle bus that is actually floating; the opener likely already biases the bus.
 
 The ESPHome Ethernet configuration uses the Waveshare/ESPHome W5500 pin map:
 
@@ -81,10 +81,10 @@ The component is vendored under [components](components). It is based on the ESP
 
 - ESP-IDF example config for the Waveshare ESP32-S3-ETH board.
 - Ethernet-only networking through the onboard W5500. Wi-Fi is intentionally not configured because ESPHome does not allow Wi-Fi and Ethernet at the same time.
-- Optional configurable RS-485 direction pin through `rts_pin` for bare DE/RE transceivers. Omit it for the Waveshare TTL TO RS485 (C) isolated auto-direction adapter.
+- Optional configurable RS-485 direction pin through `rts_pin` for bare DE/RE transceivers. Omit it for the Waveshare TTL TO RS485 (C) isolated adapter after validating its direction behavior on your board.
 - `allow_remote_close`, default `false`, blocks explicit close commands during development.
 - `allow_remote_impulse`, default `false`, blocks the generic impulse command because impulse can close an open door.
-- `use_unverified_stop_command`, default `false`, avoids the E3-derived raw stop word and uses an impulse fallback only while the door is decoded as moving.
+- `use_unverified_stop_command`, default `false`, avoids the E3-derived raw stop word and uses an impulse fallback only after a recent decoded moving broadcast.
 - `require_fresh_broadcast_for_commands`, default `true`, blocks commands until a fresh CRC-valid HCP broadcast has been seen.
 - `command_timeout`, default `1200ms`, expires queued one-shot commands if the drive does not poll.
 - `diagnostic_mode`, default `false`, logs raw frames, CRC status, decoded status bits, command queueing, command sending, and state transitions when temporarily enabled for captures.
@@ -183,7 +183,7 @@ This is an estimate, not measured position data from the opener. Timing starts w
 
 Flash [supramatic-e2-proxy.yaml](supramatic-e2-proxy.yaml) when you want the ESP32 to act only as an Ethernet proxy for the RS-485 bus. This mode does not load the UAP1 emulator and does not expose garage entities to Home Assistant.
 
-Proxy mode listens on TCP port `6638` and streams line-based events such as `RX <seq> <micros> <hex>` and `GAP <micros> <gap-us>`. It validates that the UART is configured as `19200 8N1`. It defaults to receive-only. Active transmission requires `allow_tx: true` and `auth_token: !secret proxy_auth_token`; `TXB <hex>` generates the HCP sync break before writing bytes.
+Proxy mode listens on TCP port `6638` and streams line-based events such as `RX <seq> <micros> <hex>` and `GAP <micros> <gap-us>`. It validates that the UART is configured as `19200 8N1`. It defaults to receive-only and the default proxy YAML does not configure a UART TX pin. Active transmission requires adding `tx_pin`, setting `allow_tx: true`, and configuring `auth_token: !secret proxy_auth_token`; `TXB <hex>` generates the HCP sync break before writing bytes. TX is rejected unless the bus has been idle for the configured gap threshold.
 
 Use the helper client:
 
@@ -195,7 +195,7 @@ See [docs/proxy-mode.md](docs/proxy-mode.md) for the full TCP protocol. Passive 
 
 ## HTTP Monitor Mode
 
-Flash [supramatic-e2-monitor.yaml](supramatic-e2-monitor.yaml) when you want a read-only browser/curl-friendly live capture. This mode does not transmit to the bus and does not load the UAP1 emulator.
+Flash [supramatic-e2-monitor.yaml](supramatic-e2-monitor.yaml) when you want a read-only browser/curl-friendly live capture. This mode does not configure a UART TX pin, does not transmit to the bus, and does not load the UAP1 emulator.
 
 Open:
 

@@ -21,7 +21,7 @@ GET /recent  Recent RX/GAP lines kept in RAM
 GET /stats   JSON counters and connection state
 ```
 
-The stream uses the same line shape as the passive TCP proxy:
+The stream sends a keepalive every five seconds and uses the same line shape as the passive TCP proxy:
 
 ```text
 HELLO rs485_http_monitor v1 baud=19200 mode=rx-only
@@ -43,6 +43,8 @@ python3 tools/hcp_proxy_client.py --host supramatic-e2-monitor.local --http-stre
 ## Safety Model
 
 - This mode has no TX command path.
+- Config validation rejects UART `tx_pin`; leave the ESP32 TX wire disconnected for a strictly passive monitor.
+- Incomplete HTTP request lines are closed after a short timeout so one client cannot block the monitor.
 - It does not emulate UAP1 and does not expose Home Assistant garage-door entities.
 - It owns the UART, so do not enable it in the same firmware as `uapbridge_esp` or `rs485_proxy`.
 - Use the same isolated Waveshare TTL TO RS485 (C) wiring as the main firmware.
