@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Small client for the ESPHome RS-485 proxy mode.
+"""Small client for the ESPHome RS-485 proxy and HTTP monitor modes.
 
 Default usage is passive capture:
 
     python3 tools/hcp_proxy_client.py --host supramatic-e2-proxy.local
+    python3 tools/hcp_proxy_client.py --host supramatic-e2-monitor.local --http-stream
 
 Active TX is intentionally explicit and requires proxy firmware with
 `allow_tx: true` plus `--token`.
@@ -16,6 +17,7 @@ import socket
 import sys
 import time
 from collections import deque
+from urllib.request import urlopen
 
 
 CRC_TABLE = [
@@ -104,17 +106,51 @@ def send_line(sock: socket.socket, line: str) -> None:
     sock.sendall(line.encode("ascii") + b"\n")
 
 
+def print_and_decode_line(line: str, decoder: HCPDecoder, no_decode: bool) -> None:
+    print(f"{time.strftime('%H:%M:%S')} {line}")
+    parts = line.split(maxsplit=3)
+    if not no_decode and len(parts) == 4 and parts[0] == "RX":
+        try:
+            data = bytes.fromhex(parts[3])
+        except ValueError:
+            return
+        for decoded in decoder.feed(data):
+            print(decoded)
+
+
+def read_http_stream(args: argparse.Namespace, decoder: HCPDecoder) -> int:
+    if args.tx or args.tx_break or args.token:
+        print("HTTP monitor mode is read-only; --token/--tx/--tx-break are only valid for TCP proxy mode", file=sys.stderr)
+        return 2
+
+    url = args.http_url or f"http://{args.host}:{args.http_port}/stream"
+    with urlopen(url, timeout=10) as response:
+        for raw_line in response:
+            line = raw_line.decode("ascii", errors="replace").strip()
+            if line:
+                print_and_decode_line(line, decoder, args.no_decode)
+    return 0
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Connect to the ESPHome RS-485 proxy")
-    parser.add_argument("--host", required=True)
+    parser = argparse.ArgumentParser(description="Connect to the ESPHome RS-485 proxy or HTTP monitor")
+    parser.add_argument("--host")
     parser.add_argument("--port", type=int, default=6638)
+    parser.add_argument("--http-stream", action="store_true", help="Read from the HTTP monitor /stream endpoint")
+    parser.add_argument("--http-port", type=int, default=8080)
+    parser.add_argument("--http-url", help="Full HTTP monitor stream URL, defaults to http://HOST:8080/stream")
     parser.add_argument("--token")
     parser.add_argument("--tx", help="Send raw UART bytes as hex, no HCP break")
     parser.add_argument("--tx-break", help="Send HCP sync break followed by hex bytes")
     parser.add_argument("--no-decode", action="store_true")
     args = parser.parse_args()
+    if not args.host and not args.http_url:
+        parser.error("--host is required unless --http-url is provided")
 
     decoder = HCPDecoder()
+    if args.http_stream or args.http_url:
+        return read_http_stream(args, decoder)
+
     with socket.create_connection((args.host, args.port), timeout=10) as sock:
         sock.settimeout(1)
         if args.token:
@@ -137,15 +173,7 @@ def main() -> int:
             while b"\n" in buffer:
                 line_raw, buffer = buffer.split(b"\n", 1)
                 line = line_raw.decode("ascii", errors="replace").strip()
-                print(f"{time.strftime('%H:%M:%S')} {line}")
-                parts = line.split(maxsplit=3)
-                if not args.no_decode and len(parts) == 4 and parts[0] == "RX":
-                    try:
-                        data = bytes.fromhex(parts[3])
-                    except ValueError:
-                        continue
-                    for decoded in decoder.feed(data):
-                        print(decoded)
+                print_and_decode_line(line, decoder, args.no_decode)
 
 
 if __name__ == "__main__":

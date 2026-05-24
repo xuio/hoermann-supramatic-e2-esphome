@@ -99,6 +99,8 @@ Minimal fallback config: [supramatic-e2-minimal.yaml](supramatic-e2-minimal.yaml
 
 Proxy-only config: [supramatic-e2-proxy.yaml](supramatic-e2-proxy.yaml)
 
+HTTP monitor-only config: [supramatic-e2-monitor.yaml](supramatic-e2-monitor.yaml)
+
 `secrets.yaml` needs these keys:
 
 ```yaml
@@ -140,6 +142,25 @@ python3 tools/hcp_proxy_client.py --host supramatic-e2-proxy.local
 ```
 
 See [docs/proxy-mode.md](docs/proxy-mode.md) for the full TCP protocol. Passive capture is the primary use. Fully live laptop-side UAP1 emulation over TCP may miss the opener's poll response window, so keep timing-critical status response logic on the ESP32 unless measurements prove otherwise.
+
+## HTTP Monitor Mode
+
+Flash [supramatic-e2-monitor.yaml](supramatic-e2-monitor.yaml) when you want a read-only browser/curl-friendly live capture. This mode does not transmit to the bus and does not load the UAP1 emulator.
+
+Open:
+
+```text
+http://supramatic-e2-monitor.local:8080/
+```
+
+Or stream plain text:
+
+```bash
+curl -N http://supramatic-e2-monitor.local:8080/stream
+python3 tools/hcp_proxy_client.py --host supramatic-e2-monitor.local --http-stream
+```
+
+The monitor also exposes `/events` as a Server-Sent Events stream, `/recent` for the in-memory capture tail, and `/stats` for JSON counters. See [docs/http-monitor-mode.md](docs/http-monitor-mode.md).
 
 ## Test Checklist
 
