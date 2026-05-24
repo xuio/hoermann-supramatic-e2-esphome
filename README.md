@@ -192,12 +192,6 @@ If E2 state decoding differs from the E3-derived mapping, those raw status frame
 
 When configuring HomeKit Bridge, include only the garage cover and optionally the garage light. Exclude venting controls, diagnostics, raw state helpers, and error/prewarn sensors from HomeKit. The default YAML does not expose a generic impulse button; add one only for deliberate protocol diagnosis.
 
-## Proxy Mode
-
-Use [supramatic-e2-proxy.yaml](supramatic-e2-proxy.yaml) when you want the ESP32 to act only as an encrypted Ethernet-to-RS485 proxy. It uses ESPHome `serial_proxy`, omits the UAP1 emulator and all garage-door entities, and is intended for laptop-side protocol capture/debugging with [tools/hcp1_proxy_client.py](tools/hcp1_proxy_client.py).
-
-Full notes are in [docs/proxy-mode.md](docs/proxy-mode.md).
-
 ## Notes
 
 - The HCP1 UART is `19200 8N1`.
