@@ -31,6 +31,13 @@ api:
 
 ota:
   - platform: esphome
+    password: !secret ota_password_supramatic_e2
+
+safe_mode:
+  disabled: false
+  num_attempts: 10
+  boot_is_good_after: 1min
+  reboot_timeout: 10min
 
 ethernet:
   type: W5500

@@ -105,10 +105,36 @@ HTTP monitor-only config: [supramatic-e2-monitor.yaml](supramatic-e2-monitor.yam
 
 ```yaml
 api_key_supramatic_e2: "..."
+ota_password_supramatic_e2: "..."
 proxy_auth_token: "..." # only needed when proxy allow_tx is enabled
 ```
 
 [secrets.example.yaml](secrets.example.yaml) contains a syntactically valid placeholder for ESPHome validation. Generate a real ESPHome API encryption key before flashing hardware you will actually use.
+
+## OTA Updates
+
+All YAML variants include ESPHome OTA over Ethernet using `ota_password_supramatic_e2`. The first flash normally still needs USB-C or another serial flashing path; after that, keep Ethernet and PoE connected and update over the network.
+
+Update the currently running main firmware:
+
+```bash
+esphome upload supramatic-e2.yaml --device supramatic-e2.local
+```
+
+Update the proxy or monitor firmware when that mode is already running:
+
+```bash
+esphome upload supramatic-e2-proxy.yaml --device supramatic-e2-proxy.local
+esphome upload supramatic-e2-monitor.yaml --device supramatic-e2-monitor.local
+```
+
+When switching modes, target the hostname of the firmware currently running on the board, not the hostname in the YAML you are about to flash. For example, if the board is currently running the main firmware and you want to switch to monitor mode:
+
+```bash
+esphome upload supramatic-e2-monitor.yaml --device supramatic-e2.local
+```
+
+After the reboot, the board will advertise the new hostname from the flashed YAML. Home Assistant entities will also change when switching between main, proxy, and monitor firmware because only the main firmware exposes the garage-door cover.
 
 ## Development Defaults
 
