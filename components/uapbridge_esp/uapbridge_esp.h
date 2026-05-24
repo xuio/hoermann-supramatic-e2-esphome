@@ -66,6 +66,9 @@ class UAPBridge_esp : public esphome::uapbridge::UAPBridge {
     void receive();
     void transmit();
     void set_command(bool cond, const hoermann_action_t command);
+    bool command_allowed(const hoermann_action_t command);
+    bool is_close_capable_command(const hoermann_action_t command);
+    bool bus_state_is_fresh() const;
     void expire_pending_command();
     void expire_valid_broadcast();
     uint8_t calc_crc8(uint8_t *p_data, uint8_t length);

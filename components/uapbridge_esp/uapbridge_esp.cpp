@@ -266,8 +266,7 @@ void UAPBridge_esp::transmit() {
  * Helper to set next Command and *not* skip Current Command before end was sent
  */
 void UAPBridge_esp::set_command(bool cond, const hoermann_action_t command) {
-  if (command == hoermann_action_close && !this->allow_remote_close) {
-    ESP_LOGW(TAG, "Blocked close command because allow_remote_close is false");
+  if (!this->command_allowed(command)) {
     return;
   }
   if (cond) {
@@ -283,6 +282,61 @@ void UAPBridge_esp::set_command(bool cond, const hoermann_action_t command) {
   } else {
     ESP_LOGD(TAG, "Skipped HCP command %s because requested state already matches decoded state", this->action_name(command));
   }
+}
+
+bool UAPBridge_esp::command_allowed(const hoermann_action_t command) {
+  if (this->listen_only) {
+    ESP_LOGW(TAG, "Blocked HCP command %s because listen_only is true", this->action_name(command));
+    return false;
+  }
+
+  if (!this->is_close_capable_command(command)) {
+    return true;
+  }
+
+  if (!this->allow_remote_close) {
+    ESP_LOGW(TAG, "Blocked close-capable HCP command %s because allow_remote_close is false", this->action_name(command));
+    return false;
+  }
+
+  if (!this->bus_state_is_fresh()) {
+    ESP_LOGW(TAG, "Blocked close-capable HCP command %s because no fresh valid HCP broadcast is available", this->action_name(command));
+    return false;
+  }
+
+  if (this->state == hoermann_state_unknown || this->state == hoermann_state_stopped) {
+    ESP_LOGW(TAG, "Blocked close-capable HCP command %s because decoded door state is %s",
+             this->action_name(command), this->state_string.c_str());
+    return false;
+  }
+
+  if (this->error_state || this->prewarn_state) {
+    ESP_LOGW(TAG, "Blocked close-capable HCP command %s because error/prewarn is active", this->action_name(command));
+    return false;
+  }
+
+  return true;
+}
+
+bool UAPBridge_esp::is_close_capable_command(const hoermann_action_t command) {
+  switch (command) {
+    case hoermann_action_close:
+    case hoermann_action_impulse:
+    case hoermann_action_venting:
+      return true;
+    default:
+      return false;
+  }
+}
+
+bool UAPBridge_esp::bus_state_is_fresh() const {
+  if (!this->valid_broadcast || this->last_valid_broadcast_ms == 0) {
+    return false;
+  }
+  if (this->valid_broadcast_timeout_ms == 0) {
+    return true;
+  }
+  return millis() - this->last_valid_broadcast_ms <= this->valid_broadcast_timeout_ms;
 }
 
 void UAPBridge_esp::expire_pending_command() {

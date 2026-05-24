@@ -80,3 +80,4 @@ button:
   - platform: uapbridge
     impulse_button:
       name: "${friendly_name} Impulse"
+      disabled_by_default: true

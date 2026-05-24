@@ -71,6 +71,7 @@ switch:
   - platform: uapbridge
     venting_switch:
       name: "${friendly_name} Venting"
+      disabled_by_default: true
 
 binary_sensor:
   - platform: status
@@ -109,5 +110,7 @@ button:
   - platform: uapbridge
     vent_button:
       name: "${friendly_name} Vent"
+      disabled_by_default: true
     impulse_button:
       name: "${friendly_name} Impulse"
+      disabled_by_default: true
