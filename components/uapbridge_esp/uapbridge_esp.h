@@ -19,6 +19,8 @@
 #define CMD_SLAVE_STATUS_REQUEST  0x20
 #define CMD_SLAVE_STATUS_RESPONSE 0x29
 
+#define STOP_FALLBACK_MOVING_TIMEOUT_MS 1000
+
 namespace esphome {
 namespace uapbridge_esp {
 
@@ -72,6 +74,7 @@ class UAPBridge_esp : public esphome::uapbridge::UAPBridge {
     bool command_allowed(const hoermann_action_t command, bool bypass_impulse_interlock = false);
     bool is_movement_command(const hoermann_action_t command);
     bool bus_state_is_fresh() const;
+    bool moving_state_is_fresh() const;
     hoermann_state_t decode_status_state(uint16_t status) const;
     void apply_broadcast_status(uint16_t status);
     void expire_pending_command();
@@ -93,6 +96,7 @@ class UAPBridge_esp : public esphome::uapbridge::UAPBridge {
     uint32_t command_set_at = 0;
     uint32_t command_sequence = 0;
     uint32_t last_valid_broadcast_ms = 0;
+    uint32_t last_moving_broadcast_ms = 0;
     std::string diagnostic_string = "no HCP frame received";
     uint8_t    rx_data[5]       = {0, 0, 0, 0, 0};
     uint8_t    tx_data[6]       = {0, 0, 0, 0, 0, 0};

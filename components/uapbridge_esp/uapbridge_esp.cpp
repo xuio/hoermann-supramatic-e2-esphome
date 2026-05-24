@@ -42,6 +42,9 @@ void UAPBridge_esp::loop_slow() {
   this->last_call_slow = millis();
 
   ESP_LOGV(TAG, "loop_slow called - status=0x%04X", this->broadcast_status);
+  if (!this->valid_broadcast) {
+    return;
+  }
   const hoermann_state_t new_state = this->decode_status_state(this->broadcast_status);
   this->apply_broadcast_status(this->broadcast_status);
 
@@ -51,15 +54,16 @@ void UAPBridge_esp::loop_slow() {
     // if error just came up
     // if an error is detected and door is open/closed then try to reset it by requesting opening/closing without movement
     ESP_LOGD(TAG, "autocorrection started");
+    bool correction_queued = false;
     if (new_state == hoermann_state_open) {
-      this->set_command(true, hoermann_action_open);
+      correction_queued = this->set_command(true, hoermann_action_open);
     } else if (new_state == hoermann_state_closed) {
-      this->set_command(true, hoermann_action_close);
+      correction_queued = this->set_command(true, hoermann_action_close);
     } else if (new_state == hoermann_state_stopped) {
       // in this state it is not possible to clear the error. But the next open or close cycle will clear it
       this->auto_correction_in_progress = false;
     }
-    this->auto_correction_in_progress = true;
+    this->auto_correction_in_progress = correction_queued;
   }
   if(this->auto_correction) {
     // HINT: i guess if light is on it is sufficent to toggle the light off to reset the error
@@ -338,6 +342,13 @@ bool UAPBridge_esp::bus_state_is_fresh() const {
   return millis() - this->last_valid_broadcast_ms <= this->valid_broadcast_timeout_ms;
 }
 
+bool UAPBridge_esp::moving_state_is_fresh() const {
+  if (!this->bus_state_is_fresh() || this->last_moving_broadcast_ms == 0) {
+    return false;
+  }
+  return millis() - this->last_moving_broadcast_ms <= STOP_FALLBACK_MOVING_TIMEOUT_MS;
+}
+
 UAPBridge_esp::hoermann_state_t UAPBridge_esp::decode_status_state(uint16_t status) const {
   if (status & hoermann_state_open) {
     return hoermann_state_open;
@@ -354,11 +365,17 @@ UAPBridge_esp::hoermann_state_t UAPBridge_esp::decode_status_state(uint16_t stat
   if (status & hoermann_state_venting) {
     return hoermann_state_venting;
   }
+  if (status == 0) {
+    return hoermann_state_stopped;
+  }
   return hoermann_state_unknown;
 }
 
 void UAPBridge_esp::apply_broadcast_status(uint16_t status) {
   const hoermann_state_t new_state = this->decode_status_state(status);
+  if (new_state == hoermann_state_opening || new_state == hoermann_state_closing) {
+    this->last_moving_broadcast_ms = millis();
+  }
   if (new_state != this->state) {
     this->handle_state_change(new_state);
   }
@@ -392,11 +409,19 @@ void UAPBridge_esp::expire_valid_broadcast() {
     ESP_LOGW(TAG, "No valid HCP broadcast for %ums; marking bus state stale", (unsigned int) this->valid_broadcast_timeout_ms);
     this->valid_broadcast = false;
     this->broadcast_status = 0;
+    this->last_moving_broadcast_ms = 0;
+    this->last_error_bit = false;
+    this->auto_correction_in_progress = false;
     if (this->next_action != hoermann_action_none) {
       ESP_LOGW(TAG, "Dropping queued HCP command %s because bus state is stale", this->action_name(this->next_action));
       this->next_action = hoermann_action_none;
       this->command_set_at = 0;
     }
+    this->update_boolean_state("relay", this->relay_enabled, false);
+    this->update_boolean_state("light", this->light_enabled, false);
+    this->update_boolean_state("vent", this->venting_enabled, false);
+    this->update_boolean_state("err", this->error_state, false);
+    this->update_boolean_state("prewarn", this->prewarn_state, false);
     this->handle_state_change(hoermann_state_unknown);
     this->data_has_changed = true;
     this->last_valid_broadcast_ms = 0;
@@ -429,9 +454,12 @@ bool UAPBridge_esp::action_stop() {
     ESP_LOGW(TAG, "Blocked stop fallback because no fresh valid HCP broadcast is available");
     return false;
   }
-  if (this->state == hoermann_state_opening || this->state == hoermann_state_closing) {
+  if ((this->state == hoermann_state_opening || this->state == hoermann_state_closing) && this->moving_state_is_fresh()) {
     ESP_LOGI(TAG, "Using impulse as stop fallback while door is moving");
     return this->set_command(true, hoermann_action_impulse, true);
+  } else if (this->state == hoermann_state_opening || this->state == hoermann_state_closing) {
+    ESP_LOGW(TAG, "Blocked stop fallback because no recent moving HCP broadcast is available");
+    return false;
   } else {
     ESP_LOGW(TAG, "Ignored stop fallback because decoded state is not moving: %s", this->state_string.c_str());
     return false;

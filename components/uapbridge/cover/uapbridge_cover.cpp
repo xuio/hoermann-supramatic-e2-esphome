@@ -277,10 +277,18 @@ void UAPBridgeCover::handle_time_based_event_() {
 
   switch (state) {
     case UAPBridge::hoermann_state_t::hoermann_state_open:
+      if (this->should_ignore_old_end_state_(state)) {
+        ESP_LOGD(TAG, "Ignoring old HCP open state while expected closing movement is starting");
+        break;
+      }
       this->finish_travel_measurement_(state);
       this->sync_known_position_(cover::COVER_OPEN, "HCP open end state");
       break;
     case UAPBridge::hoermann_state_t::hoermann_state_closed:
+      if (this->should_ignore_old_end_state_(state)) {
+        ESP_LOGD(TAG, "Ignoring old HCP closed state while expected opening movement is starting");
+        break;
+      }
       this->finish_travel_measurement_(state);
       this->sync_known_position_(cover::COVER_CLOSED, "HCP closed end state");
       break;
@@ -293,7 +301,9 @@ void UAPBridgeCover::handle_time_based_event_() {
                                  ? this->pending_target_position_
                                  : cover::COVER_OPEN;
         this->clear_pending_movement_("HCP opening state");
-        this->start_estimated_movement_(cover::COVER_OPERATION_OPENING, target, "HCP opening state");
+        this->start_estimated_movement_(cover::COVER_OPERATION_OPENING, target, "HCP opening state", true);
+      } else {
+        this->movement_start_grace_until_ms_ = 0;
       }
       break;
     case UAPBridge::hoermann_state_t::hoermann_state_closing:
@@ -302,7 +312,9 @@ void UAPBridgeCover::handle_time_based_event_() {
                                  ? this->pending_target_position_
                                  : cover::COVER_CLOSED;
         this->clear_pending_movement_("HCP closing state");
-        this->start_estimated_movement_(cover::COVER_OPERATION_CLOSING, target, "HCP closing state");
+        this->start_estimated_movement_(cover::COVER_OPERATION_CLOSING, target, "HCP closing state", true);
+      } else {
+        this->movement_start_grace_until_ms_ = 0;
       }
       break;
     case UAPBridge::hoermann_state_t::hoermann_state_stopped:
@@ -361,7 +373,8 @@ void UAPBridgeCover::clear_pending_movement_(const char *reason) {
   this->pending_operation_ = cover::COVER_OPERATION_IDLE;
 }
 
-void UAPBridgeCover::start_estimated_movement_(cover::CoverOperation operation, float target, const char *reason) {
+void UAPBridgeCover::start_estimated_movement_(cover::CoverOperation operation, float target, const char *reason,
+                                               bool movement_confirmed) {
   if (this->current_operation != cover::COVER_OPERATION_IDLE) {
     this->recompute_position_();
   }
@@ -372,11 +385,29 @@ void UAPBridgeCover::start_estimated_movement_(cover::CoverOperation operation, 
   const uint32_t now = millis();
   this->last_recompute_time_ = now;
   this->last_publish_time_ = 0;
+  this->movement_start_grace_until_ms_ = movement_confirmed ? 0 : now + 5000;
   this->begin_travel_measurement_(operation);
   ESP_LOGI(TAG, "Started estimated %s toward %.0f%%: %s",
            operation == cover::COVER_OPERATION_OPENING ? "opening" : "closing",
            this->target_position_ * 100.0f, reason);
   this->publish_if_changed_(true, false);
+}
+
+bool UAPBridgeCover::should_ignore_old_end_state_(UAPBridge::hoermann_state_t state) const {
+  if (this->pending_movement_) {
+    return (state == UAPBridge::hoermann_state_t::hoermann_state_open &&
+            this->pending_operation_ == cover::COVER_OPERATION_CLOSING) ||
+           (state == UAPBridge::hoermann_state_t::hoermann_state_closed &&
+            this->pending_operation_ == cover::COVER_OPERATION_OPENING);
+  }
+  if (this->current_operation == cover::COVER_OPERATION_IDLE || this->movement_start_grace_until_ms_ == 0 ||
+      millis() > this->movement_start_grace_until_ms_) {
+    return false;
+  }
+  return (state == UAPBridge::hoermann_state_t::hoermann_state_open &&
+          this->current_operation == cover::COVER_OPERATION_CLOSING) ||
+         (state == UAPBridge::hoermann_state_t::hoermann_state_closed &&
+          this->current_operation == cover::COVER_OPERATION_OPENING);
 }
 
 void UAPBridgeCover::recompute_position_() {
@@ -427,6 +458,7 @@ void UAPBridgeCover::complete_estimated_target_() {
     this->position = target;
     this->current_operation = cover::COVER_OPERATION_IDLE;
     this->waiting_for_end_state_ = false;
+    this->movement_start_grace_until_ms_ = 0;
     this->travel_measurement_active_ = false;
     ESP_LOGI(TAG, "Stopped at estimated intermediate position %.0f%%", target * 100.0f);
     this->publish_if_changed_(true);
@@ -451,6 +483,7 @@ void UAPBridgeCover::sync_known_position_(float position, const char *reason) {
   this->target_position_ = this->position;
   this->current_operation = cover::COVER_OPERATION_IDLE;
   this->waiting_for_end_state_ = false;
+  this->movement_start_grace_until_ms_ = 0;
   this->travel_measurement_active_ = false;
   ESP_LOGI(TAG, "Synced cover position to %.0f%% from %s", this->position * 100.0f, reason);
   this->publish_if_changed_(true);
@@ -462,6 +495,7 @@ void UAPBridgeCover::stop_estimated_movement_(const char *reason) {
   this->current_operation = cover::COVER_OPERATION_IDLE;
   this->target_position_ = this->position;
   this->waiting_for_end_state_ = false;
+  this->movement_start_grace_until_ms_ = 0;
   this->travel_measurement_active_ = false;
   ESP_LOGI(TAG, "Stopped estimated movement at %.0f%%: %s", this->position * 100.0f, reason);
   this->publish_if_changed_(true);
@@ -472,6 +506,7 @@ void UAPBridgeCover::force_non_closed_estimate_(const char *reason) {
   this->recompute_position_();
   this->current_operation = cover::COVER_OPERATION_IDLE;
   this->waiting_for_end_state_ = false;
+  this->movement_start_grace_until_ms_ = 0;
   this->travel_measurement_active_ = false;
   if (this->is_closed_target_(this->position)) {
     this->position = std::max(this->position_deadband_, 0.01f);

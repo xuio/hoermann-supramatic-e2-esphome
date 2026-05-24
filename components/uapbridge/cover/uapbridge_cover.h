@@ -43,6 +43,7 @@ class UAPBridgeCover : public cover::Cover, public Component {
     uint32_t pending_command_sequence_ = 0;
     uint32_t pending_started_ms_ = 0;
     bool waiting_for_end_state_ = false;
+    uint32_t movement_start_grace_until_ms_ = 0;
     bool travel_measurement_active_ = false;
     cover::CoverOperation travel_measurement_operation_ = cover::COVER_OPERATION_IDLE;
     uint32_t travel_measurement_started_ms_ = 0;
@@ -52,7 +53,9 @@ class UAPBridgeCover : public cover::Cover, public Component {
     void arm_pending_movement_(cover::CoverOperation operation, float target, const char *reason);
     void service_pending_movement_();
     void clear_pending_movement_(const char *reason);
-    void start_estimated_movement_(cover::CoverOperation operation, float target, const char *reason);
+    void start_estimated_movement_(cover::CoverOperation operation, float target, const char *reason,
+                                   bool movement_confirmed = false);
+    bool should_ignore_old_end_state_(UAPBridge::hoermann_state_t state) const;
     void recompute_position_();
     bool is_at_target_() const;
     void complete_estimated_target_();
