@@ -24,6 +24,7 @@ logger:
   hardware_uart: USB_SERIAL_JTAG
 
 api:
+  reboot_timeout: 0s
   encryption:
     key: !secret api_key_supramatic_e2
 

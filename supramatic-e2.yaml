@@ -30,6 +30,7 @@ logger:
     uapbridge.binary_sensor: DEBUG
 
 api:
+  reboot_timeout: 0s
   encryption:
     key: !secret api_key_supramatic_e2
 
@@ -66,7 +67,7 @@ uapbridge_esp:
   id: garage_door_comp
   uart_id: uart_bus
   auto_correction: false
-  diagnostic_mode: true
+  diagnostic_mode: false
   listen_only: false
   command_timeout: 1200ms
   valid_broadcast_timeout: 10s

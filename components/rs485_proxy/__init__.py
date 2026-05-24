@@ -42,6 +42,20 @@ CONFIG_SCHEMA = cv.All(
     socket.consume_sockets(1, "rs485_proxy", socket.SocketType.TCP_LISTEN),
 )
 
+def final_validate(config):
+    return uart.final_validate_device_schema(
+        "rs485_proxy",
+        require_rx=True,
+        require_tx=config[CONF_ALLOW_TX],
+        baud_rate=19200,
+        data_bits=8,
+        parity="NONE",
+        stop_bits=1,
+    )(config)
+
+
+FINAL_VALIDATE_SCHEMA = final_validate
+
 
 async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])

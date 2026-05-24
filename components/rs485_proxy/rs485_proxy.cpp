@@ -153,8 +153,9 @@ void RS485Proxy::send_line_(const std::string &line) {
   std::string out = line;
   out += "\n";
   ssize_t written = this->client_->write(out.data(), out.size());
-  if (written < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
-    ESP_LOGW(TAG, "TCP write failed: errno=%d", errno);
+  if (written < 0 || (size_t) written != out.size()) {
+    ESP_LOGW(TAG, "TCP write failed or partial: written=%d expected=%u errno=%d",
+             (int) written, (unsigned int) out.size(), errno);
     this->disconnect_client_();
   }
 }
