@@ -22,6 +22,9 @@ void UAPBridge::dump_config() {
   }
   ESP_LOGCONFIG(TAG, "  Auto Correction: %s", this->auto_correction ? "true" : "false");
   ESP_LOGCONFIG(TAG, "  Allow Remote Close: %s", this->allow_remote_close ? "true" : "false");
+  ESP_LOGCONFIG(TAG, "  Allow Remote Impulse: %s", this->allow_remote_impulse ? "true" : "false");
+  ESP_LOGCONFIG(TAG, "  Use Unverified Stop Command: %s", this->use_unverified_stop_command ? "true" : "false");
+  ESP_LOGCONFIG(TAG, "  Require Fresh Broadcast For Commands: %s", this->require_fresh_broadcast_for_commands ? "true" : "false");
   ESP_LOGCONFIG(TAG, "  Command Timeout: %ums", (unsigned int) this->command_timeout_ms);
   ESP_LOGCONFIG(TAG, "  Diagnostic Mode: %s", this->diagnostic_mode ? "true" : "false");
   ESP_LOGCONFIG(TAG, "  Listen Only: %s", this->listen_only ? "true" : "false");

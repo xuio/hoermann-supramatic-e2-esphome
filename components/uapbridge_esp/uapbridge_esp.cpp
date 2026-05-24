@@ -45,9 +45,6 @@ void UAPBridge_esp::loop_slow() {
       this->ignore_next_event = false;
     } else {
       ESP_LOGV(TAG, "loop_slow called - status=0x%04X", this->broadcast_status);
-      if (this->diagnostic_mode) {
-        this->log_decoded_status(this->broadcast_status);
-      }
       hoermann_state_t new_state = hoermann_state_unknown;
 
       if (this->broadcast_status & hoermann_state_open) {
@@ -60,8 +57,6 @@ void UAPBridge_esp::loop_slow() {
         new_state = hoermann_state_closing;
       } else if (this->broadcast_status & hoermann_state_venting) {
         new_state = hoermann_state_venting;
-      } else if (this->broadcast_status != 0) {
-        new_state = hoermann_state_stopped;
       }
 
       if (new_state != this->state) {
@@ -108,9 +103,6 @@ void UAPBridge_esp::loop_slow() {
 }
 
 void UAPBridge_esp::receive() {
-  uint8_t   length  = 0;
-  uint8_t   counter = 0;
-  bool   newData = false;
   while (this->available() > 0) {
 #if ESPHOME_LOGLEVEL >= ESPHOME_LOG_LEVEL_VERY_VERBOSE
     if (this->byte_cnt > 5) {
@@ -127,12 +119,15 @@ void UAPBridge_esp::receive() {
     if(this->read_byte(&this->rx_data[4])){
       //if read was successful
       this->byte_cnt++;
+      this->process_rx_window();
     }
-    newData = true;
   }
-  if (newData) {
+}
+
+void UAPBridge_esp::process_rx_window() {
+    uint8_t   length  = 0;
+    uint8_t   counter = 0;
     ESP_LOGVV(TAG, "new data received");
-    newData = false;
     // Slave scan
     // 28 82 01 80 06
     if (this->rx_data[0] == UAP1_ADDR) {
@@ -174,15 +169,16 @@ void UAPBridge_esp::receive() {
         this->update_diagnostic_string("broadcast", this->rx_data, 0, 5, true);
         ESP_LOGVV(TAG, "Broadcast: %s", print_data(this->rx_data, 0, 5));
         ESP_LOGV(TAG, "->      Broadcast");
-        this->broadcast_status = this->rx_data[2];
-        this->broadcast_status |= (uint16_t)this->rx_data[3] << 8;
+        const uint16_t new_status = this->rx_data[2] | ((uint16_t)this->rx_data[3] << 8);
+        this->broadcast_status = new_status;
         this->last_valid_broadcast_ms = millis();
         if (!this->valid_broadcast) {
           this->valid_broadcast = true;
           this->data_has_changed = true;
         }
-        if (this->diagnostic_mode) {
-          this->log_decoded_status(this->broadcast_status);
+        if (this->diagnostic_mode && new_status != this->last_logged_status) {
+          this->log_decoded_status(new_status);
+          this->last_logged_status = new_status;
         }
       } else if (this->diagnostic_mode) {
         this->update_diagnostic_string("broadcast-invalid", this->rx_data, 0, 5, crc_valid);
@@ -230,7 +226,6 @@ void UAPBridge_esp::receive() {
       ESP_LOGVV(TAG, "Just printed: %s", print_data(this->rx_data, 0, 5));
     }	
 #endif
-  }
 }
 
 void UAPBridge_esp::transmit() {
@@ -265,8 +260,8 @@ void UAPBridge_esp::transmit() {
 /**
  * Helper to set next Command and *not* skip Current Command before end was sent
  */
-void UAPBridge_esp::set_command(bool cond, const hoermann_action_t command) {
-  if (!this->command_allowed(command)) {
+void UAPBridge_esp::set_command(bool cond, const hoermann_action_t command, bool bypass_impulse_interlock) {
+  if (!this->command_allowed(command, bypass_impulse_interlock)) {
     return;
   }
   if (cond) {
@@ -284,45 +279,51 @@ void UAPBridge_esp::set_command(bool cond, const hoermann_action_t command) {
   }
 }
 
-bool UAPBridge_esp::command_allowed(const hoermann_action_t command) {
+bool UAPBridge_esp::command_allowed(const hoermann_action_t command, bool bypass_impulse_interlock) {
   if (this->listen_only) {
     ESP_LOGW(TAG, "Blocked HCP command %s because listen_only is true", this->action_name(command));
     return false;
   }
 
-  if (!this->is_close_capable_command(command)) {
-    return true;
+  if (command == hoermann_action_close && !this->allow_remote_close) {
+    ESP_LOGW(TAG, "Blocked close command because allow_remote_close is false");
+    return false;
   }
-
-  if (!this->allow_remote_close) {
-    ESP_LOGW(TAG, "Blocked close-capable HCP command %s because allow_remote_close is false", this->action_name(command));
+  if (command == hoermann_action_impulse && !this->allow_remote_impulse && !bypass_impulse_interlock) {
+    ESP_LOGW(TAG, "Blocked impulse command because allow_remote_impulse is false");
+    return false;
+  }
+  if (command == hoermann_action_stop && !this->use_unverified_stop_command) {
+    ESP_LOGW(TAG, "Blocked raw stop command because use_unverified_stop_command is false");
     return false;
   }
 
-  if (!this->bus_state_is_fresh()) {
-    ESP_LOGW(TAG, "Blocked close-capable HCP command %s because no fresh valid HCP broadcast is available", this->action_name(command));
+  if (this->require_fresh_broadcast_for_commands && !this->bus_state_is_fresh()) {
+    ESP_LOGW(TAG, "Blocked HCP command %s because no fresh valid HCP broadcast is available", this->action_name(command));
     return false;
   }
 
-  if (this->state == hoermann_state_unknown || this->state == hoermann_state_stopped) {
-    ESP_LOGW(TAG, "Blocked close-capable HCP command %s because decoded door state is %s",
+  if (this->is_movement_command(command) && (this->state == hoermann_state_unknown || this->state == hoermann_state_stopped)) {
+    ESP_LOGW(TAG, "Blocked movement HCP command %s because decoded door state is %s",
              this->action_name(command), this->state_string.c_str());
     return false;
   }
 
-  if (this->error_state || this->prewarn_state) {
-    ESP_LOGW(TAG, "Blocked close-capable HCP command %s because error/prewarn is active", this->action_name(command));
+  if (this->is_movement_command(command) && (this->error_state || this->prewarn_state)) {
+    ESP_LOGW(TAG, "Blocked movement HCP command %s because error/prewarn is active", this->action_name(command));
     return false;
   }
 
   return true;
 }
 
-bool UAPBridge_esp::is_close_capable_command(const hoermann_action_t command) {
+bool UAPBridge_esp::is_movement_command(const hoermann_action_t command) {
   switch (command) {
+    case hoermann_action_open:
     case hoermann_action_close:
     case hoermann_action_impulse:
     case hoermann_action_venting:
+    case hoermann_action_stop:
       return true;
     default:
       return false;
@@ -379,7 +380,20 @@ void UAPBridge_esp::action_close() {
 
 void UAPBridge_esp::action_stop() {
   ESP_LOGD(TAG, "Action: stop called");
-  this->set_command(true, hoermann_action_stop);
+  if (this->use_unverified_stop_command) {
+    this->set_command(true, hoermann_action_stop);
+    return;
+  }
+  if (!this->bus_state_is_fresh()) {
+    ESP_LOGW(TAG, "Blocked stop fallback because no fresh valid HCP broadcast is available");
+    return;
+  }
+  if (this->state == hoermann_state_opening || this->state == hoermann_state_closing) {
+    ESP_LOGI(TAG, "Using impulse as stop fallback while door is moving");
+    this->set_command(true, hoermann_action_impulse, true);
+  } else {
+    ESP_LOGW(TAG, "Ignored stop fallback because decoded state is not moving: %s", this->state_string.c_str());
+  }
 }
 
 void UAPBridge_esp::action_venting() {

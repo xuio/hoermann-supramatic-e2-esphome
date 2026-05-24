@@ -36,6 +36,12 @@ class UAPBridge : public uart::UARTDevice, public Component {
     void set_auto_correction(bool value) { this->auto_correction = value; }
     void set_allow_remote_close(bool value) { this->allow_remote_close = value; }
     bool get_allow_remote_close() const { return this->allow_remote_close; }
+    void set_allow_remote_impulse(bool value) { this->allow_remote_impulse = value; }
+    bool get_allow_remote_impulse() const { return this->allow_remote_impulse; }
+    void set_use_unverified_stop_command(bool value) { this->use_unverified_stop_command = value; }
+    bool get_use_unverified_stop_command() const { return this->use_unverified_stop_command; }
+    void set_require_fresh_broadcast_for_commands(bool value) { this->require_fresh_broadcast_for_commands = value; }
+    bool get_require_fresh_broadcast_for_commands() const { return this->require_fresh_broadcast_for_commands; }
     void set_command_timeout(uint32_t value) { this->command_timeout_ms = value; }
     uint32_t get_command_timeout() const { return this->command_timeout_ms; }
     void set_diagnostic_mode(bool value) { this->diagnostic_mode = value; }
@@ -78,6 +84,9 @@ class UAPBridge : public uart::UARTDevice, public Component {
     InternalGPIOPin *rts_pin_ = nullptr;
     bool auto_correction = false;
     bool allow_remote_close = false;
+    bool allow_remote_impulse = false;
+    bool use_unverified_stop_command = false;
+    bool require_fresh_broadcast_for_commands = true;
     uint32_t command_timeout_ms = 1200;
     bool diagnostic_mode = false;
     bool listen_only = false;

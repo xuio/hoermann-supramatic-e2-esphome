@@ -51,7 +51,10 @@ uapbridge_esp:
   diagnostic_mode: false
   listen_only: false
   valid_broadcast_timeout: 10s
+  require_fresh_broadcast_for_commands: true
   allow_remote_close: false
+  allow_remote_impulse: false
+  use_unverified_stop_command: false
 
 cover:
   - platform: uapbridge
@@ -75,9 +78,3 @@ text_sensor:
       name: "${friendly_name} IP Address"
     mac_address:
       name: "${friendly_name} MAC Address"
-
-button:
-  - platform: uapbridge
-    impulse_button:
-      name: "${friendly_name} Impulse"
-      disabled_by_default: true

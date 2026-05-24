@@ -64,10 +64,11 @@ class UAPBridge_esp : public esphome::uapbridge::UAPBridge {
     void loop_fast();
     void loop_slow();
     void receive();
+    void process_rx_window();
     void transmit();
-    void set_command(bool cond, const hoermann_action_t command);
-    bool command_allowed(const hoermann_action_t command);
-    bool is_close_capable_command(const hoermann_action_t command);
+    void set_command(bool cond, const hoermann_action_t command, bool bypass_impulse_interlock = false);
+    bool command_allowed(const hoermann_action_t command, bool bypass_impulse_interlock = false);
+    bool is_movement_command(const hoermann_action_t command);
     bool bus_state_is_fresh() const;
     void expire_pending_command();
     void expire_valid_broadcast();
@@ -82,6 +83,7 @@ class UAPBridge_esp : public esphome::uapbridge::UAPBridge {
     uint32_t last_call       = 0;
     uint32_t last_call_slow   = 0;
     uint16_t broadcast_status = 0;
+    uint16_t last_logged_status = 0xFFFF;
     bool ignore_next_event = false;     // will also ignore wrong edge detection after reset
     bool auto_correction_in_progress = false;
     bool last_error_bit = false;

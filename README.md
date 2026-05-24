@@ -82,7 +82,10 @@ The component is vendored under [components](components). It is based on the ESP
 - ESP-IDF example config for the Waveshare ESP32-S3-ETH board.
 - Ethernet-only networking through the onboard W5500. Wi-Fi is intentionally not configured because ESPHome does not allow Wi-Fi and Ethernet at the same time.
 - Optional configurable RS-485 direction pin through `rts_pin` for bare DE/RE transceivers. Omit it for the Waveshare TTL TO RS485 (C) isolated auto-direction adapter.
-- `allow_remote_close`, default `false`, blocks close-capable commands during development. This includes explicit close, impulse, and venting because they can cause closing depending on drive state.
+- `allow_remote_close`, default `false`, blocks explicit close commands during development.
+- `allow_remote_impulse`, default `false`, blocks the generic impulse command because impulse can close an open door.
+- `use_unverified_stop_command`, default `false`, avoids the E3-derived raw stop word and uses an impulse fallback only while the door is decoded as moving.
+- `require_fresh_broadcast_for_commands`, default `true`, blocks commands until a fresh CRC-valid HCP broadcast has been seen.
 - `command_timeout`, default `1200ms`, expires queued one-shot commands if the drive does not poll.
 - `diagnostic_mode`, logs raw frames, CRC status, decoded status bits, command queueing, command sending, and state transitions.
 - `listen_only`, when set true, receives and logs HCP frames without answering scan/status requests. Use this only for first bus capture.
@@ -111,10 +114,13 @@ uapbridge_esp:
   diagnostic_mode: true
   listen_only: false
   allow_remote_close: false
+  allow_remote_impulse: false
+  use_unverified_stop_command: false
+  require_fresh_broadcast_for_commands: true
   auto_correction: false
 ```
 
-This allows receive, scan response, state decoding, open, stop, and light testing while blocking close-capable movement. After state decoding and physical safety behavior are verified at the door, set `allow_remote_close: true` to enable close-capable Home Assistant commands. Even then, the firmware requires a fresh valid HCP broadcast, a known non-stopped state, and no active error/prewarn before it accepts close-capable commands.
+This allows receive, scan response, state decoding, open, stop, light, and venting tests while blocking remote close and the generic impulse command. After state decoding and physical safety behavior are verified at the door, set `allow_remote_close: true` to enable Home Assistant close commands. Only set `allow_remote_impulse: true` for deliberate protocol testing while physically present. Even then, the firmware requires a fresh valid HCP broadcast, a known non-stopped state, and no active error/prewarn before it accepts movement commands.
 
 Keep `auto_correction: false` for the SupraMatic E2 until the raw E2 state mapping is known. It is retained only as an upstream compatibility option and should not be used as a substitute for understanding an error or prewarn state.
 
@@ -131,11 +137,12 @@ Keep `auto_correction: false` for the SupraMatic E2 until the raw E2 state mappi
 9. Confirm slave scan and status request frames are detected.
 10. Confirm the emulator responds as UAP1 address `0x28`.
 11. Test the light command first if the opener supports it.
-12. Test impulse/stop while physically present at the door.
+12. Test stop while the door is already moving and while physically present at the door.
 13. Enable `allow_remote_close: true` only after state feedback is reliable and safety devices are verified.
 14. Test open and close while physically present at the door.
-15. Log and verify states for closed, opening, open, closing, stopped halfway, venting/partial-open, light on/off, and any error/prewarn state.
-16. Only after reliable state and safety behavior, expose the cover through Home Assistant's HomeKit Bridge.
+15. Enable and test `allow_remote_impulse: true` only if you explicitly need the generic impulse command for protocol diagnosis.
+16. Log and verify states for closed, opening, open, closing, stopped halfway, venting/partial-open, light on/off, and any error/prewarn state.
+17. Only after reliable state and safety behavior, expose the cover through Home Assistant's HomeKit Bridge.
 
 ## Capturing E2 State Logs
 
@@ -166,7 +173,7 @@ For each state, copy the lines containing:
 
 If E2 state decoding differs from the E3-derived mapping, those raw status frames are the data needed to adjust the bit mapping without changing the hardware.
 
-When configuring HomeKit Bridge, include only the garage cover and optionally the garage light. Exclude the impulse button, venting switch, diagnostics, raw state helpers, and error/prewarn sensors from HomeKit. The example YAML marks impulse and venting helper controls disabled by default so they are not accidentally exposed.
+When configuring HomeKit Bridge, include only the garage cover and optionally the garage light. Exclude venting controls, diagnostics, raw state helpers, and error/prewarn sensors from HomeKit. The default YAML does not expose a generic impulse button; add one only for deliberate protocol diagnosis.
 
 ## Notes
 
