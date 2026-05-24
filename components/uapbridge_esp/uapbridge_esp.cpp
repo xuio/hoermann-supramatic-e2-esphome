@@ -41,65 +41,61 @@ void UAPBridge_esp::loop_slow() {
   }
   this->last_call_slow = millis();
 
-    if (this->ignore_next_event) {
-      this->ignore_next_event = false;
-    } else {
-      ESP_LOGV(TAG, "loop_slow called - status=0x%04X", this->broadcast_status);
-      hoermann_state_t new_state = hoermann_state_unknown;
+  ESP_LOGV(TAG, "loop_slow called - status=0x%04X", this->broadcast_status);
+  hoermann_state_t new_state = hoermann_state_unknown;
 
-      if (this->broadcast_status & hoermann_state_open) {
-        new_state = hoermann_state_open;
-      } else if (this->broadcast_status & hoermann_state_closed) {
-        new_state = hoermann_state_closed;
-      } else if ((this->broadcast_status & (hoermann_state_direction | hoermann_state_moving)) == hoermann_state_opening) {
-        new_state = hoermann_state_opening;
-      } else if ((this->broadcast_status & (hoermann_state_direction | hoermann_state_moving)) == hoermann_state_closing) {
-        new_state = hoermann_state_closing;
-      } else if (this->broadcast_status & hoermann_state_venting) {
-        new_state = hoermann_state_venting;
-      }
+  if (this->broadcast_status & hoermann_state_open) {
+    new_state = hoermann_state_open;
+  } else if (this->broadcast_status & hoermann_state_closed) {
+    new_state = hoermann_state_closed;
+  } else if ((this->broadcast_status & (hoermann_state_direction | hoermann_state_moving)) == hoermann_state_opening) {
+    new_state = hoermann_state_opening;
+  } else if ((this->broadcast_status & (hoermann_state_direction | hoermann_state_moving)) == hoermann_state_closing) {
+    new_state = hoermann_state_closing;
+  } else if (this->broadcast_status & hoermann_state_venting) {
+    new_state = hoermann_state_venting;
+  }
 
-      if (new_state != this->state) {
-        this->handle_state_change(new_state);
-      }
+  if (new_state != this->state) {
+    this->handle_state_change(new_state);
+  }
 
-      this->update_boolean_state("relay", this->relay_enabled, (this->broadcast_status & hoermann_state_opt_relay));
-      this->update_boolean_state("light", this->light_enabled, (this->broadcast_status & hoermann_state_light_relay));
-      this->update_boolean_state("vent", this->venting_enabled, (this->broadcast_status & hoermann_state_venting));
-      this->update_boolean_state("err", this->error_state, (this->broadcast_status & hoermann_state_error));
-      this->update_boolean_state("prewarn", this->prewarn_state, (this->broadcast_status & hoermann_state_prewarn));
+  this->update_boolean_state("relay", this->relay_enabled, (this->broadcast_status & hoermann_state_opt_relay));
+  this->update_boolean_state("light", this->light_enabled, (this->broadcast_status & hoermann_state_light_relay));
+  this->update_boolean_state("vent", this->venting_enabled, (this->broadcast_status & hoermann_state_venting));
+  this->update_boolean_state("err", this->error_state, (this->broadcast_status & hoermann_state_error));
+  this->update_boolean_state("prewarn", this->prewarn_state, (this->broadcast_status & hoermann_state_prewarn));
 
-      // --- Auto Error Correction ---
-      const bool error_active = (this->broadcast_status & hoermann_state_error) == hoermann_state_error;
-      if(this->auto_correction && error_active && !this->last_error_bit) {
-        // if error just came up
-        // if an error is detected and door is open/closed then try to reset it by requesting opening/closing without movement
-        ESP_LOGD(TAG, "autocorrection started");
-        if (new_state == hoermann_state_open) {
-          this->set_command(true, hoermann_action_open);
-        } else if (new_state == hoermann_state_closed) {
-          this->set_command(true, hoermann_action_close);
-        } else if (new_state == hoermann_state_stopped) {
-          // in this state it is not possible to clear the error. But the next open or close cycle will clear it
-          this->auto_correction_in_progress = false;
-        }
-        this->auto_correction_in_progress = true;
-      }
-      if(this->auto_correction) {
-        // HINT: i guess if light is on it is sufficent to toggle the light off to reset the error
-        // HINT: propably not. this will disable the lamp after correcting the error
-        // or both
-        if (this->auto_correction_in_progress && (this->broadcast_status & hoermann_state_light_relay)) {
-          this->set_command(true, hoermann_action_toggle_light);
-          this->auto_correction_in_progress = false;
-        }
-      }
-      if (!error_active) {
-        this->auto_correction_in_progress = false;
-      }
-      this->last_error_bit = error_active;
-      // --- Auto Error Correction ---
+  // --- Auto Error Correction ---
+  const bool error_active = (this->broadcast_status & hoermann_state_error) == hoermann_state_error;
+  if(this->auto_correction && error_active && !this->last_error_bit) {
+    // if error just came up
+    // if an error is detected and door is open/closed then try to reset it by requesting opening/closing without movement
+    ESP_LOGD(TAG, "autocorrection started");
+    if (new_state == hoermann_state_open) {
+      this->set_command(true, hoermann_action_open);
+    } else if (new_state == hoermann_state_closed) {
+      this->set_command(true, hoermann_action_close);
+    } else if (new_state == hoermann_state_stopped) {
+      // in this state it is not possible to clear the error. But the next open or close cycle will clear it
+      this->auto_correction_in_progress = false;
     }
+    this->auto_correction_in_progress = true;
+  }
+  if(this->auto_correction) {
+    // HINT: i guess if light is on it is sufficent to toggle the light off to reset the error
+    // HINT: propably not. this will disable the lamp after correcting the error
+    // or both
+    if (this->auto_correction_in_progress && (this->broadcast_status & hoermann_state_light_relay)) {
+      this->set_command(true, hoermann_action_toggle_light);
+      this->auto_correction_in_progress = false;
+    }
+  }
+  if (!error_active) {
+    this->auto_correction_in_progress = false;
+  }
+  this->last_error_bit = error_active;
+  // --- Auto Error Correction ---
 }
 
 void UAPBridge_esp::receive() {
@@ -271,7 +267,6 @@ void UAPBridge_esp::set_command(bool cond, const hoermann_action_t command, bool
     } else {
       this->next_action = command;
       this->command_set_at = millis();
-      this->ignore_next_event = true;
       ESP_LOGI(TAG, "Queued one-shot HCP command: %s (0x%04X)", this->action_name(command), (unsigned int) command);
     }
   } else {
@@ -362,6 +357,11 @@ void UAPBridge_esp::expire_valid_broadcast() {
     ESP_LOGW(TAG, "No valid HCP broadcast for %ums; marking bus state stale", (unsigned int) this->valid_broadcast_timeout_ms);
     this->valid_broadcast = false;
     this->broadcast_status = 0;
+    if (this->next_action != hoermann_action_none) {
+      ESP_LOGW(TAG, "Dropping queued HCP command %s because bus state is stale", this->action_name(this->next_action));
+      this->next_action = hoermann_action_none;
+      this->command_set_at = 0;
+    }
     this->handle_state_change(hoermann_state_unknown);
     this->data_has_changed = true;
     this->last_valid_broadcast_ms = 0;

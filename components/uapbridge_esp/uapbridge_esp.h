@@ -84,7 +84,6 @@ class UAPBridge_esp : public esphome::uapbridge::UAPBridge {
     uint32_t last_call_slow   = 0;
     uint16_t broadcast_status = 0;
     uint16_t last_logged_status = 0xFFFF;
-    bool ignore_next_event = false;     // will also ignore wrong edge detection after reset
     bool auto_correction_in_progress = false;
     bool last_error_bit = false;
     uint32_t command_set_at = 0;
