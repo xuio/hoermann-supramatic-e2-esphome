@@ -165,23 +165,25 @@ esphome upload supramatic-e2-monitor.yaml --device supramatic-e2.local
 
 After the reboot, the board will advertise the new hostname from the flashed YAML. Home Assistant entities will also change when switching between main, proxy, and monitor firmware because only the main firmware exposes the garage-door cover.
 
-## Development Defaults
+## Active Test Defaults
 
-The primary YAML intentionally starts with:
+The primary YAML is currently configured for physically supervised active testing:
 
 ```yaml
 uapbridge_esp:
   diagnostic_mode: false
   listen_only: false
-  allow_remote_close: false
-  allow_remote_impulse: false
-  use_unverified_stop_command: false
+  allow_remote_close: true
+  allow_remote_impulse: true
+  use_unverified_stop_command: true
   require_fresh_broadcast_for_commands: true
   trust_light_feedback: false
   auto_correction: false
 ```
 
-This allows receive, scan response, state decoding, open, stop, light, and venting tests while blocking remote close and the generic impulse command. Temporarily set `diagnostic_mode: true` only when capturing protocol logs. After state decoding and physical safety behavior are verified at the door, set `allow_remote_close: true` to enable Home Assistant close commands. Only set `allow_remote_impulse: true` for deliberate protocol testing while physically present. Even then, the firmware requires a fresh valid HCP broadcast, a known non-stopped state, and no active error/prewarn before it accepts movement commands.
+This enables Home Assistant open, close, stop, venting, light, and generic impulse commands. Use this mode only while physically present at the door during bring-up. Temporarily set `diagnostic_mode: true` only when capturing protocol logs. Even with all commands enabled, the firmware still requires a fresh valid HCP broadcast, a known non-stopped state, and no active error/prewarn before it accepts movement commands.
+
+After command behavior and state mapping are verified, set `allow_remote_impulse: false` again unless you explicitly need the generic impulse command. If remote closing should remain disabled after testing, set `allow_remote_close: false`.
 
 In the primary E2 YAML, the light entity also uses `restore_mode: RESTORE_DEFAULT_OFF`. This avoids sending a light toggle during boot from a restored optimistic Home Assistant state. If the physical light and Home Assistant state ever get out of sync, toggle the light once from Home Assistant to realign the optimistic state.
 

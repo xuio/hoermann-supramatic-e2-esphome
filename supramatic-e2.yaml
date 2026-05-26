@@ -72,9 +72,9 @@ uapbridge_esp:
   command_timeout: 1200ms
   valid_broadcast_timeout: 10s
   require_fresh_broadcast_for_commands: true
-  allow_remote_close: false
-  allow_remote_impulse: false
-  use_unverified_stop_command: false
+  allow_remote_close: true
+  allow_remote_impulse: true
+  use_unverified_stop_command: true
   trust_light_feedback: false
   http_debug_port: 8080
   http_debug_send_gaps: true
