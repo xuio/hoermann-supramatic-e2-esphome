@@ -1,5 +1,10 @@
 #pragma once
 
+#include <deque>
+#include <memory>
+#include <string>
+
+#include "esphome/components/socket/socket.h"
 #include "esphome/core/component.h"
 #include "esphome/components/uart/uart.h"
 #include "esphome/core/helpers.h"
@@ -8,6 +13,8 @@
 
 #define CYCLE_TIME                1   // ms
 #define CYCLE_TIME_SLOW         100   // ms
+#define UAPBRIDGE_HTTP_KEEPALIVE_MS 5000
+#define UAPBRIDGE_HTTP_PENDING_TIMEOUT_MS 3000
 
 #define BROADCAST_ADDR            0x00
 #define UAP1_ADDR                 0x28
@@ -40,7 +47,10 @@ class UAPBridge_esp : public esphome::uapbridge::UAPBridge {
       hoermann_action_none          = 0x1000
     };
 
+    void setup() override;
     void loop() override;
+    void dump_config() override;
+    float get_setup_priority() const override;
 
     bool action_open() override;
     bool action_close() override;
@@ -49,6 +59,10 @@ class UAPBridge_esp : public esphome::uapbridge::UAPBridge {
     bool action_toggle_light() override;
     bool action_impulse() override;
     uint32_t get_command_sequence() const override { return this->command_sequence; }
+    void set_http_debug_port(uint16_t port) { this->http_debug_port_ = port; }
+    void set_http_debug_send_gaps(bool send_gaps) { this->http_debug_send_gaps_ = send_gaps; }
+    void set_http_debug_gap_threshold_us(uint32_t gap_threshold_us) { this->http_debug_gap_threshold_us_ = gap_threshold_us; }
+    void set_http_debug_history_size(uint16_t history_size) { this->http_debug_history_size_ = history_size; }
 
     hoermann_state_t get_state();
     std::string get_state_string();
@@ -86,6 +100,28 @@ class UAPBridge_esp : public esphome::uapbridge::UAPBridge {
     const char *action_name(hoermann_action_t command);
     void update_diagnostic_string(const char *frame_type, uint8_t *p_data, uint8_t from, uint8_t to, bool crc_valid);
     void log_decoded_status(uint16_t status);
+    bool http_debug_enabled_() const { return this->http_debug_port_ != 0; }
+    void setup_http_debug_server_();
+    void http_debug_accept_client_();
+    void http_debug_service_pending_client_();
+    void http_debug_service_keepalive_();
+    void http_debug_disconnect_stream_client_();
+    void http_debug_handle_request_(std::unique_ptr<socket::Socket> client, const std::string &request_line);
+    void http_debug_start_stream_(std::unique_ptr<socket::Socket> client, bool sse);
+    void http_debug_send_response_(std::unique_ptr<socket::Socket> client, const char *status, const char *content_type,
+                                   const std::string &body);
+    bool http_debug_write_all_(socket::Socket *client, const std::string &payload, uint32_t timeout_ms);
+    void http_debug_send_stream_line_(const std::string &event_type, const std::string &json_data,
+                                      const std::string &plain_line);
+    void http_debug_emit_rx_(const uint8_t *data, size_t len, uint32_t timestamp_us);
+    void http_debug_emit_tx_(const uint8_t *data, size_t len, uint32_t timestamp_us);
+    void http_debug_emit_gap_(uint32_t timestamp_us, uint32_t gap_us);
+    void http_debug_emit_frame_(const char *frame_type, uint8_t *p_data, uint8_t from, uint8_t to, bool crc_valid);
+    void http_debug_append_recent_(const std::string &line);
+    std::string http_debug_recent_body_();
+    std::string http_debug_stats_json_();
+    std::string http_debug_hex_encode_(const uint8_t *data, size_t len);
+    std::string http_debug_path_from_request_line_(const std::string &request_line);
     // internal function variables
     uint32_t last_call       = 0;
     uint32_t last_call_slow   = 0;
@@ -103,6 +139,26 @@ class UAPBridge_esp : public esphome::uapbridge::UAPBridge {
     uint8_t    tx_length        = 0;
     uint8_t    byte_cnt         = 0;
     uint32_t   send_time        = 0;
+    uint16_t http_debug_port_{0};
+    bool http_debug_send_gaps_{true};
+    uint32_t http_debug_gap_threshold_us_{3000};
+    uint16_t http_debug_history_size_{200};
+    std::unique_ptr<socket::ListenSocket> http_debug_server_;
+    std::unique_ptr<socket::Socket> http_debug_pending_client_;
+    std::unique_ptr<socket::Socket> http_debug_stream_client_;
+    bool http_debug_stream_is_sse_{true};
+    char http_debug_request_buffer_[256]{};
+    size_t http_debug_request_buffer_len_{0};
+    uint32_t http_debug_pending_client_started_ms_{0};
+    uint32_t http_debug_last_rx_us_{0};
+    uint32_t http_debug_rx_sequence_{0};
+    uint32_t http_debug_tx_sequence_{0};
+    uint32_t http_debug_frame_sequence_{0};
+    uint32_t http_debug_gap_sequence_{0};
+    uint32_t http_debug_rx_bytes_{0};
+    uint32_t http_debug_tx_bytes_{0};
+    uint32_t http_debug_last_keepalive_ms_{0};
+    std::deque<std::string> http_debug_recent_lines_;
     const uint8_t crc_table[256] = {
       0x00, 0x07, 0x0E, 0x09, 0x1C, 0x1B, 0x12, 0x15, 0x38, 0x3F, 0x36, 0x31, 0x24, 0x23, 0x2A, 0x2D,
       0x70, 0x77, 0x7E, 0x79, 0x6C, 0x6B, 0x62, 0x65, 0x48, 0x4F, 0x46, 0x41, 0x54, 0x53, 0x5A, 0x5D,

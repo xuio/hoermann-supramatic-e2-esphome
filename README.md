@@ -101,6 +101,7 @@ The component is vendored under [components](components). It is based on the ESP
 - `require_fresh_broadcast_for_commands`, default `true`, blocks commands until a fresh CRC-valid HCP broadcast has been seen.
 - `command_timeout`, default `1200ms`, expires queued one-shot commands if the drive does not poll.
 - `diagnostic_mode`, default `false`, logs raw frames, CRC status, decoded status bits, command queueing, command sending, and state transitions when temporarily enabled for captures.
+- `http_debug_port`, set to `8080` in the primary YAML, exposes the live UAP1 emulator monitor without adding a second UART reader. It streams raw RX, TX responses, decoded frames, gaps, stats, and recent history while the emulator continues to answer the opener.
 - `listen_only`, when set true, receives and logs HCP frames without answering scan/status requests. Use this only for first bus capture.
 - `valid_broadcast_timeout`, default `10s`, clears the valid-broadcast diagnostic and marks state unknown if the bus goes stale.
 - `got_valid_broadcast` is set only after a CRC-valid HCP broadcast.
@@ -187,6 +188,8 @@ Keep `auto_correction: false` for the SupraMatic E2 until the raw E2 state mappi
 Existing HCP1/UAP1 implementations do not send an unsolicited startup packet from the slave. The documented flow is opener-first: after opener power-up, the master sends broadcast status and slave-scan frames; once a UAP1-like slave answers its scan, the master sends status requests and expects status responses.
 
 That means normal emulation can answer scans, but it will not create bus traffic if no bytes physically reach the ESP32. If both monitor mode and normal emulation show no RX at all, focus on the physical bus path, adapter power, adapter TTL pin direction, A/B polarity, BUS socket selection, opener accessory/bus enablement, and testing immediately after opener power-cycle.
+
+Live SupraMatic E2 bring-up showed HCP traffic after an accidental A/B short was removed. This E2 emits one-byte broadcast status frames such as `00 00 01 01 C3` when the monitor includes the sync byte. The emulator accepts this format in addition to the two-byte broadcast shape used by the upstream E3-era mapping. For safety, a one-byte broadcast can confirm open/closed/moving bits in the first status byte, but unavailable second-byte bits such as prewarn remain false until an explicit E2 mapping is captured.
 
 ## Time-Based Position
 
