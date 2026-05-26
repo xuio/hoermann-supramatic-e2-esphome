@@ -1,0 +1,85 @@
+substitutions:
+  name: "supramatic-e2-monitor"
+  friendly_name: "Garage Door RS485 Monitor"
+  rs485_rx_pin: GPIO16
+  rs485_tx_idle_pin: GPIO17
+
+esphome:
+  name: "${name}"
+  friendly_name: "${friendly_name}"
+  platformio_options:
+    board_build.f_cpu: 240000000L
+
+esp32:
+  board: esp32-s3-devkitc-1
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+
+external_components:
+  - source:
+      type: local
+      path: components
+
+logger:
+  level: INFO
+  hardware_uart: USB_SERIAL_JTAG
+
+api:
+  reboot_timeout: 0s
+  encryption:
+    key: !secret api_key_supramatic_e2
+
+ota:
+  - platform: esphome
+    password: !secret ota_password_supramatic_e2
+
+safe_mode:
+  disabled: false
+  num_attempts: 10
+  boot_is_good_after: 1min
+  reboot_timeout: 10min
+
+ethernet:
+  type: W5500
+  clk_pin: GPIO13
+  mosi_pin: GPIO11
+  miso_pin: GPIO12
+  cs_pin: GPIO14
+  interrupt_pin: GPIO10
+  reset_pin: GPIO9
+
+switch:
+  - platform: gpio
+    id: rs485_tx_idle
+    pin: ${rs485_tx_idle_pin}
+    restore_mode: ALWAYS_ON
+    internal: true
+
+uart:
+  id: uart_bus
+  baud_rate: 19200
+  data_bits: 8
+  parity: NONE
+  stop_bits: 1
+  rx_pin: ${rs485_rx_pin}
+  rx_buffer_size: 2048
+
+rs485_http_monitor:
+  id: garage_rs485_http_monitor
+  uart_id: uart_bus
+  port: 8080
+  send_gaps: true
+  gap_threshold: 3ms
+  history_size: 200
+
+binary_sensor:
+  - platform: status
+    name: "${friendly_name} ESPHome Status"
+
+text_sensor:
+  - platform: ethernet_info
+    ip_address:
+      name: "${friendly_name} IP Address"
+    mac_address:
+      name: "${friendly_name} MAC Address"

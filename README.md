@@ -15,7 +15,7 @@ It does not implement HomeKit on the ESP32, does not use cloud services, does no
 - Bus route: plausible because index `E` is later than the usual UAP1/HCP1 compatibility threshold.
 - MCU: one Waveshare ESP32-S3-ETH board only, powered by USB-C or the Waveshare IEEE 802.3af PoE module/PoE variant.
 - Network: onboard W5500 Ethernet over SPI, DHCP by default.
-- Bus interface: Waveshare TTL TO RS485 (C) galvanically isolated half-duplex adapter. Its official wiki documents 3.3 V to 5 V TTL power/signals, half-duplex RS-485, TTL `RXD/TXD/VCC/GND`, RS-485 `A+/B-/PE`, isolation, and a selectable 120 ohm terminator: <https://www.waveshare.com/wiki/TTL_TO_RS485_%28C%29>.
+- Bus interface: Waveshare TTL TO RS485 (C) galvanically isolated half-duplex adapter. Its official wiki documents 3.3 V to 5 V TTL power/signals, half-duplex RS-485, TTL `RXD/TXD/VCC/GND`, RS-485 `A+/B-/PE`, isolation, and a 120 ohm terminator option enabled by soldering: <https://www.waveshare.com/wiki/TTL_TO_RS485_%28C%29>.
 
 Do not connect ESP32 GPIO directly to the Hörmann bus. Do not connect the opener 24 V line directly to the ESP32. With PoE power, use only the Waveshare PoE module/ESP32-S3-POE-ETH variant with an IEEE 802.3af switch or injector. Do not use passive PoE, and leave BUS pin 2 disconnected.
 
@@ -48,7 +48,20 @@ Suggested wiring for the Waveshare TTL TO RS485 (C) isolated adapter:
 | Adapter B- | BUS pin 5 |
 | Adapter PE | BUS pin 3 |
 
+On this adapter, `TXD` is the adapter's TTL transmit output and goes to ESP32 RX. `RXD` is the adapter's TTL receive input and goes to ESP32 TX. Do not swap these names by intuition; follow signal direction.
+
 Do not tie ESP32 GND to BUS pin 3 when using the isolated adapter; use the adapter PE terminal as the RS-485-side signal reference. On this adapter, `PE` is the isolated RS-485-side signal ground. Do not connect adapter PE to mains earth, the Ethernet shield, or ESP32 GND; for this isolated adapter, PE goes only to Hörmann BUS pin 3. The adapter has no documented DE, /RE, or RTS pin, so the main control YAML omits `rts_pin` and assumes the adapter's built-in half-duplex direction handling. Verify that assumption during bring-up by confirming UAP1 scan/status responses on the bus; use a DE/RE transceiver on `GPIO18` if you need deterministic direction control.
+
+Verified cable color map for the current RJ12 lead:
+
+| Wire color | RJ12 pin | Connect to |
+| --- | --- | --- |
+| Red | 1 | Leave open |
+| Grey | 2 | Leave open / insulate, +24 V |
+| Yellow | 3 | Adapter PE |
+| Green | 4 | Leave open |
+| Clear | 5 | Adapter B- |
+| White | 6 | Adapter A+ |
 
 If you use a non-isolated bare transceiver such as MAX3485/SP3485/SN65HVD72 instead, use `GPIO18` for DE and /RE tied together, connect ESP32 GND to BUS pin 3, and add this to `uapbridge_esp`:
 
@@ -62,7 +75,7 @@ Choose exactly one board power source: USB-C, the Waveshare 802.3af PoE module/P
 
 Do not use GPIO9, GPIO10, GPIO11, GPIO12, GPIO13, or GPIO14 for the RS-485 adapter; those pins are occupied by the onboard W5500 Ethernet chip. Avoid GPIO4 through GPIO7 if you may use the TF-card slot, avoid GPIO19/GPIO20 because they are USB D-/D+, avoid GPIO21 because it drives the onboard RGB LED, and avoid strapping pins such as GPIO0/GPIO45/GPIO46 unless you explicitly account for boot behavior. If you switch from the isolated adapter to a bare DE/RE transceiver, `GPIO18` is the documented direction pin when no camera is attached.
 
-The Waveshare TTL TO RS485 (C) includes an onboard 120 ohm termination option and may ship with `120R` selected. For first tests, set that termination to `NC`/off. With all power disconnected, measure A/B resistance on the connected bus: about `120 ohm` means one terminator is already present, about `60 ohm` means two terminators are present, and much lower resistance suggests over-termination or a wiring fault. Enable the adapter terminator only if this adapter is physically at an unterminated end of the RS-485 segment. Do not add bias resistors unless scope traces or logs show an idle bus that is actually floating; the opener likely already biases the bus.
+The Waveshare TTL TO RS485 (C) includes an onboard 120 ohm termination option enabled by soldering. Leave it open for first tests. With all power disconnected, measure A/B resistance on the connected bus: about `120 ohm` means one terminator is already present, about `60 ohm` means two terminators are present, and much lower resistance suggests over-termination or a wiring fault. Enable the adapter terminator only if this adapter is physically at an unterminated end of the RS-485 segment. Do not add bias resistors unless scope traces or logs show an idle bus that is actually floating; the opener likely already biases the bus.
 
 The ESPHome Ethernet configuration uses the Waveshare/ESPHome W5500 pin map:
 
@@ -104,6 +117,8 @@ Proxy-only config: [supramatic-e2-proxy.yaml](supramatic-e2-proxy.yaml)
 HTTP monitor-only config: [supramatic-e2-monitor.yaml](supramatic-e2-monitor.yaml)
 
 TTL-side swapped-RX monitor diagnostic: [supramatic-e2-monitor-rx17.yaml](supramatic-e2-monitor-rx17.yaml)
+
+Passive monitor with adapter TX input held idle-high: [supramatic-e2-monitor-idle-tx.yaml](supramatic-e2-monitor-idle-tx.yaml)
 
 `secrets.yaml` needs these keys:
 
@@ -167,6 +182,12 @@ This allows receive, scan response, state decoding, open, stop, light, and venti
 
 Keep `auto_correction: false` for the SupraMatic E2 until the raw E2 state mapping is known. It is retained only as an upstream compatibility option and should not be used as a substitute for understanding an error or prewarn state.
 
+## HCP Bring-Up Notes
+
+Existing HCP1/UAP1 implementations do not send an unsolicited startup packet from the slave. The documented flow is opener-first: after opener power-up, the master sends broadcast status and slave-scan frames; once a UAP1-like slave answers its scan, the master sends status requests and expects status responses.
+
+That means normal emulation can answer scans, but it will not create bus traffic if no bytes physically reach the ESP32. If both monitor mode and normal emulation show no RX at all, focus on the physical bus path, adapter power, adapter TTL pin direction, A/B polarity, BUS socket selection, opener accessory/bus enablement, and testing immediately after opener power-cycle.
+
 ## Time-Based Position
 
 The main YAML enables time-based position estimation so Home Assistant can show and set cover percentages similar to a Shelly 2PM in cover mode:
@@ -200,6 +221,10 @@ See [docs/proxy-mode.md](docs/proxy-mode.md) for the full TCP protocol. Passive 
 Flash [supramatic-e2-monitor.yaml](supramatic-e2-monitor.yaml) when you want a read-only browser/curl-friendly live capture. This mode does not configure a UART TX pin, does not transmit to the bus, and does not load the UAP1 emulator.
 
 If the adapter TTL pins may be crossed, flash [supramatic-e2-monitor-rx17.yaml](supramatic-e2-monitor-rx17.yaml). It is the same read-only monitor with UART RX moved from `GPIO16` to `GPIO17`.
+
+If the RS-485 adapter's TTL input may be floating in pure receive-only mode, flash [supramatic-e2-monitor-idle-tx.yaml](supramatic-e2-monitor-idle-tx.yaml). It keeps `GPIO17` high as an idle TX input for the adapter, but still does not configure UART TX and does not send frames.
+
+The swapped-RX monitor is only for proving a TTL-side wiring mistake. It is not the normal configuration for the verified wiring above.
 
 Open:
 
