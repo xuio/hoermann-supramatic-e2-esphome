@@ -103,6 +103,8 @@ Proxy-only config: [supramatic-e2-proxy.yaml](supramatic-e2-proxy.yaml)
 
 HTTP monitor-only config: [supramatic-e2-monitor.yaml](supramatic-e2-monitor.yaml)
 
+TTL-side swapped-RX monitor diagnostic: [supramatic-e2-monitor-rx17.yaml](supramatic-e2-monitor-rx17.yaml)
+
 `secrets.yaml` needs these keys:
 
 ```yaml
@@ -196,6 +198,8 @@ See [docs/proxy-mode.md](docs/proxy-mode.md) for the full TCP protocol. Passive 
 ## HTTP Monitor Mode
 
 Flash [supramatic-e2-monitor.yaml](supramatic-e2-monitor.yaml) when you want a read-only browser/curl-friendly live capture. This mode does not configure a UART TX pin, does not transmit to the bus, and does not load the UAP1 emulator.
+
+If the adapter TTL pins may be crossed, flash [supramatic-e2-monitor-rx17.yaml](supramatic-e2-monitor-rx17.yaml). It is the same read-only monitor with UART RX moved from `GPIO16` to `GPIO17`.
 
 Open:
 
