@@ -211,7 +211,7 @@ cover:
 
 This is an estimate, not measured position data from the opener. Timing starts when the command is actually sent on the next HCP status response, or when HCP status reports movement. The firmware only reports exact `0%` after the HCP closed bit is decoded; timing alone is clamped above closed so Home Assistant is not told the door is definitely closed when it is not confirmed. Intermediate position targets require a reliable stop path. See [docs/time-based-position.md](docs/time-based-position.md).
 
-Because Home Assistant may hide the position slider for a `device_class: garage` cover, the primary YAML also exposes `Garage Door Target Position` as a number entity. Use that slider for percentage tests. `Garage Door Open Duration` and `Garage Door Close Duration` are runtime calibration numbers in seconds; they are restored and applied on boot.
+Because Home Assistant may hide the position slider for a `device_class: garage` cover, the primary YAML also exposes `Garage Door Target Position` as a number entity. Use that slider for percentage tests. `Garage Door Open Duration` and `Garage Door Close Duration` show the automatically learned runtime calibration values in seconds; clean full open/close runs update and persist them automatically.
 
 The E2 light feedback bit is not available in the observed one-byte broadcasts. The light entity is optimistic for manual toggles, and the primary YAML enables courtesy-light estimation: when HCP state reports opening or closing, Home Assistant is told the light is on and the estimate expires after `courtesy_light_duration`.
 

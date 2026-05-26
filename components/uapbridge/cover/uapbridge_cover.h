@@ -16,8 +16,10 @@ class UAPBridgeCover : public cover::Cover, public Component {
   void control(const cover::CoverCall &call) override;
   cover::CoverTraits get_traits() override;
   void set_time_based_position(bool value) { this->time_based_position_ = value; }
-  void set_open_duration(uint32_t value) { this->open_duration_ms_ = value; }
-  void set_close_duration(uint32_t value) { this->close_duration_ms_ = value; }
+  void set_open_duration(uint32_t value);
+  uint32_t get_open_duration() const { return this->open_duration_ms_; }
+  void set_close_duration(uint32_t value);
+  uint32_t get_close_duration() const { return this->close_duration_ms_; }
   void set_position_publish_interval(uint32_t value) { this->position_publish_interval_ms_ = value; }
   void set_position_deadband(float value) { this->position_deadband_ = value; }
   void set_venting_position(float value) { this->venting_position_ = value; }
@@ -48,6 +50,8 @@ class UAPBridgeCover : public cover::Cover, public Component {
     cover::CoverOperation travel_measurement_operation_ = cover::COVER_OPERATION_IDLE;
     uint32_t travel_measurement_started_ms_ = 0;
     float travel_measurement_start_position_ = 0.5f;
+    bool setup_complete_ = false;
+    ESPPreferenceObject travel_duration_pref_;
     void control_time_based_position_(float target);
     void handle_time_based_event_();
     void arm_pending_movement_(cover::CoverOperation operation, float target, const char *reason);
@@ -63,6 +67,9 @@ class UAPBridgeCover : public cover::Cover, public Component {
     void stop_estimated_movement_(const char *reason);
     void begin_travel_measurement_(cover::CoverOperation operation);
     void finish_travel_measurement_(UAPBridge::hoermann_state_t end_state);
+    void load_travel_durations_();
+    void save_travel_durations_();
+    bool is_valid_travel_duration_(uint32_t duration_ms) const;
     void force_non_closed_estimate_(const char *reason);
     void publish_if_changed_(bool force = false, bool save = true);
     bool almost_equal_(float a, float b) const;

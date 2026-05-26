@@ -9,9 +9,23 @@ namespace esphome {
 namespace uapbridge {
 
 static const char* const TAG = "uapbridge.cover";
+static constexpr uint32_t UAPBRIDGE_TRAVEL_DURATION_PREF_VERSION = 0xA3D21001;
+static constexpr uint32_t UAPBRIDGE_TRAVEL_DURATION_MAGIC = 0x55415031;  // "UAP1"
+static constexpr uint32_t UAPBRIDGE_MIN_TRAVEL_DURATION_MS = 3000;
+static constexpr uint32_t UAPBRIDGE_MAX_TRAVEL_DURATION_MS = 120000;
+
+struct UAPBridgeTravelDurationStore {
+  uint32_t magic;
+  uint32_t open_duration_ms;
+  uint32_t close_duration_ms;
+};
 
 void UAPBridgeCover::setup() {
   if (this->time_based_position_) {
+    this->travel_duration_pref_ =
+        this->make_entity_preference<UAPBridgeTravelDurationStore>(UAPBRIDGE_TRAVEL_DURATION_PREF_VERSION);
+    this->load_travel_durations_();
+
     auto restore = this->restore_state_();
     if (restore.has_value()) {
       restore->apply(this);
@@ -27,8 +41,39 @@ void UAPBridgeCover::setup() {
       ESP_LOGI(TAG, "No restored cover position; starting estimate at 50%%");
     }
     this->target_position_ = this->position;
+    this->setup_complete_ = true;
   }
   this->parent_->add_on_state_callback([this]() { this->on_event_triggered(); });
+}
+
+void UAPBridgeCover::set_open_duration(uint32_t value) {
+  if (!this->is_valid_travel_duration_(value)) {
+    ESP_LOGW(TAG, "Ignoring invalid open travel duration: %.1fs", value / 1000.0f);
+    return;
+  }
+  if (this->open_duration_ms_ == value) {
+    return;
+  }
+  this->open_duration_ms_ = value;
+  ESP_LOGI(TAG, "Open travel duration set to %.1fs", this->open_duration_ms_ / 1000.0f);
+  if (this->setup_complete_) {
+    this->save_travel_durations_();
+  }
+}
+
+void UAPBridgeCover::set_close_duration(uint32_t value) {
+  if (!this->is_valid_travel_duration_(value)) {
+    ESP_LOGW(TAG, "Ignoring invalid close travel duration: %.1fs", value / 1000.0f);
+    return;
+  }
+  if (this->close_duration_ms_ == value) {
+    return;
+  }
+  this->close_duration_ms_ = value;
+  ESP_LOGI(TAG, "Close travel duration set to %.1fs", this->close_duration_ms_ / 1000.0f);
+  if (this->setup_complete_) {
+    this->save_travel_durations_();
+  }
 }
 
 void UAPBridgeCover::dump_config() {
@@ -541,18 +586,59 @@ void UAPBridgeCover::finish_travel_measurement_(UAPBridge::hoermann_state_t end_
   if (this->travel_measurement_operation_ == cover::COVER_OPERATION_OPENING &&
       end_state == UAPBridge::hoermann_state_t::hoermann_state_open &&
       this->travel_measurement_start_position_ <= this->position_deadband_) {
-    this->open_duration_ms_ = elapsed;
-    ESP_LOGI(TAG, "Learned full open travel duration: %.1fs. Copy this to open_duration if stable.",
-             elapsed / 1000.0f);
+    this->set_open_duration(elapsed);
+    ESP_LOGI(TAG, "Automatically learned full open travel duration: %.1fs", elapsed / 1000.0f);
   } else if (this->travel_measurement_operation_ == cover::COVER_OPERATION_CLOSING &&
              end_state == UAPBridge::hoermann_state_t::hoermann_state_closed &&
              this->travel_measurement_start_position_ >= 1.0f - this->position_deadband_) {
-    this->close_duration_ms_ = elapsed;
-    ESP_LOGI(TAG, "Learned full close travel duration: %.1fs. Copy this to close_duration if stable.",
-             elapsed / 1000.0f);
+    this->set_close_duration(elapsed);
+    ESP_LOGI(TAG, "Automatically learned full close travel duration: %.1fs", elapsed / 1000.0f);
   }
 
   this->travel_measurement_active_ = false;
+}
+
+void UAPBridgeCover::load_travel_durations_() {
+  UAPBridgeTravelDurationStore store{};
+  if (!this->travel_duration_pref_.load(&store)) {
+    ESP_LOGD(TAG, "No stored travel durations; using YAML defaults");
+    return;
+  }
+  if (store.magic != UAPBRIDGE_TRAVEL_DURATION_MAGIC ||
+      !this->is_valid_travel_duration_(store.open_duration_ms) ||
+      !this->is_valid_travel_duration_(store.close_duration_ms)) {
+    ESP_LOGW(TAG, "Ignoring invalid stored travel durations");
+    return;
+  }
+
+  this->open_duration_ms_ = store.open_duration_ms;
+  this->close_duration_ms_ = store.close_duration_ms;
+  ESP_LOGI(TAG, "Loaded stored travel durations: open=%.1fs close=%.1fs",
+           this->open_duration_ms_ / 1000.0f, this->close_duration_ms_ / 1000.0f);
+}
+
+void UAPBridgeCover::save_travel_durations_() {
+  if (!this->time_based_position_) {
+    return;
+  }
+
+  UAPBridgeTravelDurationStore store{};
+  store.magic = UAPBRIDGE_TRAVEL_DURATION_MAGIC;
+  store.open_duration_ms = this->open_duration_ms_;
+  store.close_duration_ms = this->close_duration_ms_;
+  if (!this->travel_duration_pref_.save(&store)) {
+    ESP_LOGW(TAG, "Failed to save learned travel durations");
+    return;
+  }
+  if (global_preferences != nullptr) {
+    global_preferences->sync();
+  }
+  ESP_LOGD(TAG, "Saved travel durations: open=%.1fs close=%.1fs",
+           this->open_duration_ms_ / 1000.0f, this->close_duration_ms_ / 1000.0f);
+}
+
+bool UAPBridgeCover::is_valid_travel_duration_(uint32_t duration_ms) const {
+  return duration_ms >= UAPBRIDGE_MIN_TRAVEL_DURATION_MS && duration_ms <= UAPBRIDGE_MAX_TRAVEL_DURATION_MS;
 }
 
 void UAPBridgeCover::publish_if_changed_(bool force, bool save) {

@@ -22,12 +22,12 @@ Home Assistant sees a normal cover position where `0%` is closed and `100%` is o
 
 The garage door cover advertises `supports_position: true`, but some Home Assistant garage-door cards do not expose a percentage slider for `device_class: garage`. The main YAML therefore also exposes a separate `Garage Door Target Position` number entity. Use that number slider to send percentage targets directly while keeping the main entity as a garage-door cover for HomeKit Bridge.
 
-The main YAML also exposes two configuration numbers:
+The cover component automatically learns and persists travel durations when it sees a complete full travel from one end state to the other. The main YAML also exposes two configuration numbers:
 
 - `Garage Door Open Duration`, in seconds.
 - `Garage Door Close Duration`, in seconds.
 
-These values are restored by ESPHome and applied to the position estimator on boot, so you can tune travel timing from Home Assistant without reflashing after every calibration run.
+These values show the active learned durations from the cover component. You can still override them manually from Home Assistant; manual changes are persisted by the cover component as well.
 
 ## Behavior
 
@@ -39,7 +39,7 @@ These values are restored by ESPHome and applied to the position estimator on bo
 - The estimate is corrected to `0%`, `100%`, or the configured venting percentage when the HCP status decoder sees closed, open, or venting.
 - The firmware restores the last estimated cover position after reboot, but a restored exact closed value is clamped above `0%` until the HCP closed bit is decoded again.
 - Full open/close timing completion keeps the cover operation as opening/closing until the corresponding HCP end-state bit confirms the final state.
-- If a full end-to-end travel starts from the opposite end and reaches the expected end state, the firmware logs a learned travel duration for that boot.
+- If a full end-to-end travel starts from the opposite end and reaches the expected end state, the firmware automatically stores the learned travel duration in flash.
 
 ## Safety Limits
 
@@ -52,12 +52,11 @@ These values are restored by ESPHome and applied to the position estimator on bo
 
 ## Calibration
 
-1. Keep `allow_remote_close: false`.
-2. Start with a conservative `open_duration` and `close_duration` slightly longer than the real travel time.
-3. Open from fully closed and watch for a log line like `Learned full open travel duration`.
-4. After verifying remote close safety, set `allow_remote_close: true`, close from fully open, and watch for `Learned full close travel duration`.
-5. Enter stable measured values into `Garage Door Open Duration` and `Garage Door Close Duration`.
-6. Test `75%`, `50%`, and `25%` with the `Garage Door Target Position` number while standing at the door.
-7. Once the values are stable, optionally copy them back into `open_duration` and `close_duration` in YAML so the defaults match the calibrated values after a clean flash.
+1. Start fully closed.
+2. Open fully and wait for the HCP open end state. The firmware stores the measured open duration automatically.
+3. Close fully and wait for the HCP closed end state. The firmware stores the measured close duration automatically.
+4. Check `Garage Door Open Duration` and `Garage Door Close Duration` in Home Assistant; they should reflect the learned values.
+5. Test `75%`, `50%`, and `25%` with the `Garage Door Target Position` number while standing at the door.
+6. If a value is obviously wrong because the run was interrupted, enter a corrected duration manually or repeat a clean full run.
 
 The Loxone Hörmann Air adapter is a useful reference point: it integrates through the Hörmann BUS, supports the Garage/Gate block including partially-open input, and documents automatic learning of travel durations. This firmware follows the same practical model, but keeps the timing estimate local and inspectable in ESPHome logs.

@@ -9,18 +9,6 @@ esphome:
   friendly_name: "${friendly_name}"
   platformio_options:
     board_build.f_cpu: 240000000L
-  on_boot:
-    priority: -100
-    then:
-      - lambda: |-
-          const float open_seconds = id(garage_door_open_duration_seconds).state;
-          if (open_seconds >= 5.0f && open_seconds <= 60.0f) {
-            id(garage_door_cover).set_open_duration((uint32_t) (open_seconds * 1000.0f));
-          }
-          const float close_seconds = id(garage_door_close_duration_seconds).state;
-          if (close_seconds >= 5.0f && close_seconds <= 60.0f) {
-            id(garage_door_cover).set_close_duration((uint32_t) (close_seconds * 1000.0f));
-          }
 
 esp32:
   board: esp32-s3-devkitc-1
@@ -167,9 +155,9 @@ number:
     step: 0.1
     mode: box
     unit_of_measurement: s
-    optimistic: true
-    restore_value: true
-    initial_value: 18
+    update_interval: 5s
+    lambda: |-
+      return id(garage_door_cover).get_open_duration() / 1000.0f;
     set_action:
       - lambda: |-
           id(garage_door_cover).set_open_duration((uint32_t) (x * 1000.0f));
@@ -183,9 +171,9 @@ number:
     step: 0.1
     mode: box
     unit_of_measurement: s
-    optimistic: true
-    restore_value: true
-    initial_value: 18
+    update_interval: 5s
+    lambda: |-
+      return id(garage_door_cover).get_close_duration() / 1000.0f;
     set_action:
       - lambda: |-
           id(garage_door_cover).set_close_duration((uint32_t) (x * 1000.0f));
