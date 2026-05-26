@@ -15,6 +15,7 @@ CONF_COMMAND_TIMEOUT = "command_timeout"
 CONF_DIAGNOSTIC_MODE = "diagnostic_mode"
 CONF_LISTEN_ONLY = "listen_only"
 CONF_VALID_BROADCAST_TIMEOUT = "valid_broadcast_timeout"
+CONF_TRUST_LIGHT_FEEDBACK = "trust_light_feedback"
 
 # Create UAPBridge namespace
 uapbridge_ns = cg.esphome_ns.namespace("uapbridge")
@@ -35,6 +36,7 @@ CONFIG_SCHEMA_BASE = cv.Schema(
         cv.Optional(CONF_DIAGNOSTIC_MODE, default=False): cv.boolean,
         cv.Optional(CONF_LISTEN_ONLY, default=False): cv.boolean,
         cv.Optional(CONF_VALID_BROADCAST_TIMEOUT, default="10s"): cv.positive_time_period_milliseconds,
+        cv.Optional(CONF_TRUST_LIGHT_FEEDBACK, default=True): cv.boolean,
     }
 ).extend(uart.UART_DEVICE_SCHEMA).extend(cv.COMPONENT_SCHEMA)
 
@@ -62,3 +64,4 @@ async def to_code_base(var, config):
     cg.add(var.set_diagnostic_mode(config[CONF_DIAGNOSTIC_MODE]))
     cg.add(var.set_listen_only(config[CONF_LISTEN_ONLY]))
     cg.add(var.set_valid_broadcast_timeout(config[CONF_VALID_BROADCAST_TIMEOUT].total_milliseconds))
+    cg.add(var.set_trust_light_feedback(config[CONF_TRUST_LIGHT_FEEDBACK]))

@@ -18,7 +18,7 @@ static const char UAPBRIDGE_HTTP_INDEX_HTML[] =
     "<a href=\"/stream\">plain stream</a></p><pre id=\"log\"></pre>"
     "<script>const log=document.getElementById('log');function add(x){log.textContent+=x+'\\n';"
     "log.scrollTop=log.scrollHeight;}const es=new EventSource('/events');"
-    "for(const t of ['hello','rx','tx','gap','frame'])es.addEventListener(t,e=>add(t.toUpperCase()+' '+e.data));"
+    "for(const t of ['hello','rx','tx','gap','frame','cmd'])es.addEventListener(t,e=>add(t.toUpperCase()+' '+e.data));"
     "es.onerror=()=>add('stream error or reconnecting');</script></body></html>";
 
 void UAPBridge_esp::setup() {
@@ -293,6 +293,7 @@ void UAPBridge_esp::process_rx_window() {
         this->tx_data[4] = (uint8_t)((this->next_action >> 8) & 0xFF);
         if (this->next_action != hoermann_action_none) {
           ESP_LOGI(TAG, "Sending one-shot HCP command: %s (0x%04X)", this->action_name(this->next_action), (unsigned int) this->next_action);
+          this->http_debug_emit_command_("sent", this->next_action);
           this->command_sequence++;
         }
         this->next_action = hoermann_action_none;
@@ -364,15 +365,18 @@ bool UAPBridge_esp::set_command(bool cond, const hoermann_action_t command, bool
     if (this->next_action != hoermann_action_none) {
       ESP_LOGW(TAG, "Last command was not yet fetched by HCP master; keeping queued action %s (0x%04X), rejected %s",
                this->action_name(this->next_action), (unsigned int) this->next_action, this->action_name(command));
+      this->http_debug_emit_command_("blocked", command, "previous_command_pending");
       return false;
     } else {
       this->next_action = command;
       this->command_set_at = millis();
       ESP_LOGI(TAG, "Queued one-shot HCP command: %s (0x%04X)", this->action_name(command), (unsigned int) command);
+      this->http_debug_emit_command_("queued", command);
       return true;
     }
   } else {
     ESP_LOGD(TAG, "Skipped HCP command %s because requested state already matches decoded state", this->action_name(command));
+    this->http_debug_emit_command_("skipped", command, "state_already_matches");
     return false;
   }
 }
@@ -380,24 +384,29 @@ bool UAPBridge_esp::set_command(bool cond, const hoermann_action_t command, bool
 bool UAPBridge_esp::command_allowed(const hoermann_action_t command, bool bypass_impulse_interlock) {
   if (this->listen_only) {
     ESP_LOGW(TAG, "Blocked HCP command %s because listen_only is true", this->action_name(command));
+    this->http_debug_emit_command_("blocked", command, "listen_only");
     return false;
   }
 
   if (command == hoermann_action_close && !this->allow_remote_close) {
     ESP_LOGW(TAG, "Blocked close command because allow_remote_close is false");
+    this->http_debug_emit_command_("blocked", command, "close_disabled");
     return false;
   }
   if (command == hoermann_action_impulse && !this->allow_remote_impulse && !bypass_impulse_interlock) {
     ESP_LOGW(TAG, "Blocked impulse command because allow_remote_impulse is false");
+    this->http_debug_emit_command_("blocked", command, "impulse_disabled");
     return false;
   }
   if (command == hoermann_action_stop && !this->use_unverified_stop_command) {
     ESP_LOGW(TAG, "Blocked raw stop command because use_unverified_stop_command is false");
+    this->http_debug_emit_command_("blocked", command, "raw_stop_disabled");
     return false;
   }
 
   if (this->require_fresh_broadcast_for_commands && !this->bus_state_is_fresh()) {
     ESP_LOGW(TAG, "Blocked HCP command %s because no fresh valid HCP broadcast is available", this->action_name(command));
+    this->http_debug_emit_command_("blocked", command, "stale_broadcast");
     return false;
   }
 
@@ -407,17 +416,20 @@ bool UAPBridge_esp::command_allowed(const hoermann_action_t command, bool bypass
 
   if (command == hoermann_action_venting && !this->allow_remote_close && gate_state == hoermann_state_open) {
     ESP_LOGW(TAG, "Blocked venting command from open state because allow_remote_close is false");
+    this->http_debug_emit_command_("blocked", command, "venting_from_open_close_disabled");
     return false;
   }
 
   if (this->is_movement_command(command) && (gate_state == hoermann_state_unknown || gate_state == hoermann_state_stopped)) {
     ESP_LOGW(TAG, "Blocked movement HCP command %s because decoded door state is %s",
              this->action_name(command), this->state_string.c_str());
+    this->http_debug_emit_command_("blocked", command, "unsafe_state");
     return false;
   }
 
   if (this->is_movement_command(command) && (gate_error || gate_prewarn)) {
     ESP_LOGW(TAG, "Blocked movement HCP command %s because error/prewarn is active", this->action_name(command));
+    this->http_debug_emit_command_("blocked", command, "error_or_prewarn");
     return false;
   }
 
@@ -500,6 +512,7 @@ void UAPBridge_esp::expire_pending_command() {
   if (millis() - this->command_set_at > this->command_timeout_ms) {
     ESP_LOGW(TAG, "Expired queued HCP command %s (0x%04X) after %ums without a status request",
              this->action_name(this->next_action), (unsigned int) this->next_action, (unsigned int) this->command_timeout_ms);
+    this->http_debug_emit_command_("expired", this->next_action, "status_request_timeout");
     this->next_action = hoermann_action_none;
     this->command_set_at = 0;
   }
@@ -519,6 +532,7 @@ void UAPBridge_esp::expire_valid_broadcast() {
     this->auto_correction_in_progress = false;
     if (this->next_action != hoermann_action_none) {
       ESP_LOGW(TAG, "Dropping queued HCP command %s because bus state is stale", this->action_name(this->next_action));
+      this->http_debug_emit_command_("dropped", this->next_action, "bus_state_stale");
       this->next_action = hoermann_action_none;
       this->command_set_at = 0;
     }
@@ -548,6 +562,7 @@ bool UAPBridge_esp::action_stop() {
   if (this->next_action != hoermann_action_none) {
     ESP_LOGI(TAG, "Cancelled queued HCP command before it was fetched: %s (0x%04X)",
              this->action_name(this->next_action), (unsigned int) this->next_action);
+    this->http_debug_emit_command_("cancelled", this->next_action, "stop_before_fetch");
     this->next_action = hoermann_action_none;
     this->command_set_at = 0;
     return true;
@@ -1102,6 +1117,56 @@ void UAPBridge_esp::http_debug_emit_frame_(const char *frame_type, uint8_t *p_da
   this->http_debug_send_stream_line_("frame", json, plain);
 }
 
+void UAPBridge_esp::http_debug_emit_command_(const char *phase, hoermann_action_t command, const char *reason) {
+  if (!this->http_debug_enabled_()) {
+    return;
+  }
+
+  const uint32_t seq = ++this->http_debug_cmd_sequence_;
+  char word[8];
+  snprintf(word, sizeof(word), "0x%04X", (unsigned int) command);
+
+  std::string plain = "CMD ";
+  plain += std::to_string(seq);
+  plain += " ";
+  plain += std::to_string(millis());
+  plain += " ";
+  plain += phase;
+  plain += " ";
+  plain += this->action_name(command);
+  plain += " ";
+  plain += word;
+  if (reason != nullptr) {
+    plain += " reason=";
+    plain += reason;
+  }
+  this->http_debug_append_recent_(plain);
+
+  std::string json = "{\"seq\":";
+  json += std::to_string(seq);
+  json += ",\"millis\":";
+  json += std::to_string(millis());
+  json += ",\"phase\":\"";
+  json += phase;
+  json += "\",\"action\":\"";
+  json += this->action_name(command);
+  json += "\",\"word\":\"";
+  json += word;
+  json += "\",\"raw_status\":";
+  json += std::to_string(this->broadcast_status);
+  json += ",\"state\":\"";
+  json += this->state_string;
+  json += "\",\"valid_broadcast\":";
+  json += this->valid_broadcast ? "true" : "false";
+  if (reason != nullptr) {
+    json += ",\"reason\":\"";
+    json += reason;
+    json += "\"";
+  }
+  json += "}";
+  this->http_debug_send_stream_line_("cmd", json, plain);
+}
+
 void UAPBridge_esp::http_debug_service_keepalive_() {
   if (this->http_debug_stream_client_ == nullptr ||
       millis() - this->http_debug_last_keepalive_ms_ < UAPBRIDGE_HTTP_KEEPALIVE_MS) {
@@ -1153,6 +1218,8 @@ std::string UAPBridge_esp::http_debug_stats_json_() {
   json += std::to_string(this->http_debug_frame_sequence_);
   json += ",\"gap_sequence\":";
   json += std::to_string(this->http_debug_gap_sequence_);
+  json += ",\"cmd_sequence\":";
+  json += std::to_string(this->http_debug_cmd_sequence_);
   json += ",\"last_rx_us\":";
   json += std::to_string(this->http_debug_last_rx_us_);
   json += ",\"valid_broadcast\":";
@@ -1161,6 +1228,11 @@ std::string UAPBridge_esp::http_debug_stats_json_() {
   json += std::to_string(this->broadcast_status);
   json += ",\"command_sequence\":";
   json += std::to_string(this->command_sequence);
+  json += ",\"queued_action\":\"";
+  json += this->action_name(this->next_action);
+  json += "\",\"state\":\"";
+  json += this->state_string;
+  json += "\"";
   json += ",\"stream_connected\":";
   json += this->http_debug_stream_client_ == nullptr ? "false" : "true";
   json += ",\"history_size\":";

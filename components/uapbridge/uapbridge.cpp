@@ -29,6 +29,7 @@ void UAPBridge::dump_config() {
   ESP_LOGCONFIG(TAG, "  Diagnostic Mode: %s", this->diagnostic_mode ? "true" : "false");
   ESP_LOGCONFIG(TAG, "  Listen Only: %s", this->listen_only ? "true" : "false");
   ESP_LOGCONFIG(TAG, "  Valid Broadcast Timeout: %ums", (unsigned int) this->valid_broadcast_timeout_ms);
+  ESP_LOGCONFIG(TAG, "  Trust Light Feedback: %s", this->trust_light_feedback ? "true" : "false");
 }
 
 void UAPBridge::add_on_state_callback(std::function<void()> &&callback) {

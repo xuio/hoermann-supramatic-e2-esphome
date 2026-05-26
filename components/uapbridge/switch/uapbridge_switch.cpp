@@ -36,6 +36,10 @@ void UAPBridgeSwitchLight::setup() {
     this->parent_->add_on_state_callback([this]() { this->on_event_triggered(); });
 }
 void UAPBridgeSwitchLight::on_event_triggered() {
+  if (!this->parent_->get_trust_light_feedback()) {
+    return;
+  }
+
   if (this->parent_->get_light_enabled() != this->previousState_) {
     ESP_LOGD(TAG, "UAPBridgeSwitchLight::on_event_triggered() - adjusting state");
     this->publish_state(this->parent_->get_light_enabled());
@@ -44,6 +48,15 @@ void UAPBridgeSwitchLight::on_event_triggered() {
 }
 void UAPBridgeSwitchLight::write_state(bool state) {
   ESP_LOGD(TAG, "UAPBridgeSwitchLight::write_state() - write State triggered");
+  if (!this->parent_->get_trust_light_feedback()) {
+    if (this->previousState_ != state) {
+      this->parent_->action_toggle_light();
+      this->previousState_ = state;
+    }
+    publish_state(state);
+    return;
+  }
+
   if (this->parent_->get_light_enabled() != state){
     this->parent_->action_toggle_light();
   }

@@ -75,6 +75,7 @@ uapbridge_esp:
   allow_remote_close: false
   allow_remote_impulse: false
   use_unverified_stop_command: false
+  trust_light_feedback: false
   http_debug_port: 8080
   http_debug_send_gaps: true
   http_debug_gap_threshold: 3ms
@@ -120,6 +121,7 @@ light:
     id: garage_light
     name: "${friendly_name} Light"
     output: garage_light_output
+    restore_mode: RESTORE_DEFAULT_OFF
 
 text_sensor:
   - platform: uapbridge

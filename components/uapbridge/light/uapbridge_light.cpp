@@ -28,6 +28,11 @@ void UAPBridgeLight::write_state(light::LightState* state) {
 }
 
 void UAPBridgeLight::on_event_triggered() {
+  if (!this->parent_->get_trust_light_feedback()) {
+    ESP_LOGVV(TAG, "UAPBridgeLight::on_event_triggered() - ignoring untrusted light feedback");
+    return;
+  }
+
   if (this->state_->current_values.is_on() != this->parent_->get_light_enabled()) {
     // Adjust the state of the light based on the external light state
     ESP_LOGD(TAG, "UAPBridgeLight::update() - adjusting state");

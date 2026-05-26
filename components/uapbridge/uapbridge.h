@@ -50,6 +50,8 @@ class UAPBridge : public uart::UARTDevice, public Component {
     bool get_listen_only() const { return this->listen_only; }
     void set_valid_broadcast_timeout(uint32_t value) { this->valid_broadcast_timeout_ms = value; }
     uint32_t get_valid_broadcast_timeout() const { return this->valid_broadcast_timeout_ms; }
+    void set_trust_light_feedback(bool value) { this->trust_light_feedback = value; }
+    bool get_trust_light_feedback() const { return this->trust_light_feedback; }
 
     virtual bool action_open() = 0;
     virtual bool action_close() = 0;
@@ -92,6 +94,7 @@ class UAPBridge : public uart::UARTDevice, public Component {
     bool diagnostic_mode = false;
     bool listen_only = false;
     uint32_t valid_broadcast_timeout_ms = 10000;
+    bool trust_light_feedback = true;
     // \yaml parameters
     CallbackManager<void()> state_callback_;
     // state variables

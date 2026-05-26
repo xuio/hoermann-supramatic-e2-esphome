@@ -16,7 +16,7 @@ namespace uapbridge {
         void write_state(bool state) override;
         void dump_config() override;
       private:
-        UAPBridge *parent_;
+        UAPBridge *parent_{nullptr};
         bool previousState_ = false;
     };
     class UAPBridgeSwitchLight : public switch_::Switch, public Component
@@ -28,7 +28,7 @@ namespace uapbridge {
         void write_state(bool state) override;
         void dump_config() override;
       private:
-        UAPBridge *parent_;
+        UAPBridge *parent_{nullptr};
         bool previousState_ = false;
     };
   }

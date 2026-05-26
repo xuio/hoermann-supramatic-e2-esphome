@@ -20,8 +20,8 @@ class UAPBridgeLight : public light::LightOutput, public Component {
     void setup_state(light::LightState *state) { state_ = state; }
 
   protected:
-    UAPBridge *parent_;
-    output::BinaryOutput *output_;
+    UAPBridge *parent_{nullptr};
+    output::BinaryOutput *output_{nullptr};
     light::LightState *state_{nullptr};
 };
 

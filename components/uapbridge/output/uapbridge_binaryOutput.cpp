@@ -8,6 +8,17 @@ namespace uapbridge {
 static const char *TAG = "uapbridge.binary_output";
 
 void UAPBridgeBinaryOutput::write_state(bool state) {
+  if (!this->parent_->get_trust_light_feedback()) {
+    if (this->optimistic_state_ != state) {
+      ESP_LOGD(TAG, "UAPBridgeBinaryOutput::write_state() - optimistic light toggle to %s",
+               state ? "true" : "false");
+      if (this->parent_->action_toggle_light()) {
+        this->optimistic_state_ = state;
+      }
+    }
+    return;
+  }
+
   if (this->parent_->get_light_enabled() != state) {
     ESP_LOGD(TAG, "UAPBridgeBinaryOutput::write_state() - setting light to %s", state ? "true" : "false");
     this->parent_->action_toggle_light();

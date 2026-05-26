@@ -117,6 +117,7 @@ class UAPBridge_esp : public esphome::uapbridge::UAPBridge {
     void http_debug_emit_tx_(const uint8_t *data, size_t len, uint32_t timestamp_us);
     void http_debug_emit_gap_(uint32_t timestamp_us, uint32_t gap_us);
     void http_debug_emit_frame_(const char *frame_type, uint8_t *p_data, uint8_t from, uint8_t to, bool crc_valid);
+    void http_debug_emit_command_(const char *phase, hoermann_action_t command, const char *reason = nullptr);
     void http_debug_append_recent_(const std::string &line);
     std::string http_debug_recent_body_();
     std::string http_debug_stats_json_();
@@ -155,6 +156,7 @@ class UAPBridge_esp : public esphome::uapbridge::UAPBridge {
     uint32_t http_debug_tx_sequence_{0};
     uint32_t http_debug_frame_sequence_{0};
     uint32_t http_debug_gap_sequence_{0};
+    uint32_t http_debug_cmd_sequence_{0};
     uint32_t http_debug_rx_bytes_{0};
     uint32_t http_debug_tx_bytes_{0};
     uint32_t http_debug_last_keepalive_ms_{0};

@@ -13,7 +13,8 @@ class UAPBridgeBinaryOutput : public output::BinaryOutput, public Component {
     void write_state(bool state) override;
     void dump_config() override;
   protected:
-    UAPBridge *parent_;
+    UAPBridge *parent_{nullptr};
+    bool optimistic_state_{false};
 };
 
 }  // namespace uapbridge

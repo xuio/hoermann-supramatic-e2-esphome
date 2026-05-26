@@ -101,7 +101,8 @@ The component is vendored under [components](components). It is based on the ESP
 - `require_fresh_broadcast_for_commands`, default `true`, blocks commands until a fresh CRC-valid HCP broadcast has been seen.
 - `command_timeout`, default `1200ms`, expires queued one-shot commands if the drive does not poll.
 - `diagnostic_mode`, default `false`, logs raw frames, CRC status, decoded status bits, command queueing, command sending, and state transitions when temporarily enabled for captures.
-- `http_debug_port`, set to `8080` in the primary YAML, exposes the live UAP1 emulator monitor without adding a second UART reader. It streams raw RX, TX responses, decoded frames, gaps, stats, and recent history while the emulator continues to answer the opener.
+- `trust_light_feedback`, default `true`, uses the decoded HCP light bit as authoritative. The SupraMatic E2 YAML sets this to `false` because the observed one-byte E2 broadcasts do not carry reliable light state; the Home Assistant light is therefore optimistic and each UI state change sends one toggle command.
+- `http_debug_port`, set to `8080` in the primary YAML, exposes the live UAP1 emulator monitor without adding a second UART reader. It streams raw RX, TX responses, decoded frames, command queue/block/send events, gaps, stats, and recent history while the emulator continues to answer the opener.
 - `listen_only`, when set true, receives and logs HCP frames without answering scan/status requests. Use this only for first bus capture.
 - `valid_broadcast_timeout`, default `10s`, clears the valid-broadcast diagnostic and marks state unknown if the bus goes stale.
 - `got_valid_broadcast` is set only after a CRC-valid HCP broadcast.
@@ -176,10 +177,13 @@ uapbridge_esp:
   allow_remote_impulse: false
   use_unverified_stop_command: false
   require_fresh_broadcast_for_commands: true
+  trust_light_feedback: false
   auto_correction: false
 ```
 
 This allows receive, scan response, state decoding, open, stop, light, and venting tests while blocking remote close and the generic impulse command. Temporarily set `diagnostic_mode: true` only when capturing protocol logs. After state decoding and physical safety behavior are verified at the door, set `allow_remote_close: true` to enable Home Assistant close commands. Only set `allow_remote_impulse: true` for deliberate protocol testing while physically present. Even then, the firmware requires a fresh valid HCP broadcast, a known non-stopped state, and no active error/prewarn before it accepts movement commands.
+
+In the primary E2 YAML, the light entity also uses `restore_mode: RESTORE_DEFAULT_OFF`. This avoids sending a light toggle during boot from a restored optimistic Home Assistant state. If the physical light and Home Assistant state ever get out of sync, toggle the light once from Home Assistant to realign the optimistic state.
 
 Keep `auto_correction: false` for the SupraMatic E2 until the raw E2 state mapping is known. It is retained only as an upstream compatibility option and should not be used as a substitute for understanding an error or prewarn state.
 
@@ -256,13 +260,14 @@ The monitor also exposes `/events` as a Server-Sent Events stream, `/recent` for
 8. Confirm `Valid HCP Broadcast` becomes true.
 9. Confirm slave scan and status request frames are detected.
 10. Confirm the emulator responds as UAP1 address `0x28`.
-11. Test the light command first if the opener supports it.
-12. Test stop while the door is already moving and while physically present at the door.
-13. Enable `allow_remote_close: true` only after state feedback is reliable and safety devices are verified.
-14. Test open and close while physically present at the door.
-15. Enable and test `allow_remote_impulse: true` only if you explicitly need the generic impulse command for protocol diagnosis.
-16. Log and verify states for closed, opening, open, closing, stopped halfway, venting/partial-open, light on/off, and any error/prewarn state.
-17. Only after reliable state and safety behavior, expose the cover through Home Assistant's HomeKit Bridge.
+11. Test the light command first if the opener supports it. On an E2 with `trust_light_feedback: false`, one Home Assistant state change should produce one `CMD ... queued toggle_light` event followed by one `CMD ... sent toggle_light` event in `http://<device>:8080/recent`.
+12. Test the cover open command while physically present at the door. It should produce `CMD ... queued open` and then `CMD ... sent open`.
+13. Test stop while the door is already moving and while physically present at the door.
+14. Enable `allow_remote_close: true` only after state feedback is reliable and safety devices are verified. Until then, close commands are expected to show `CMD ... blocked close ... reason=close_disabled`.
+15. Test open and close while physically present at the door.
+16. Enable and test `allow_remote_impulse: true` only if you explicitly need the generic impulse command for protocol diagnosis.
+17. Log and verify states for closed, opening, open, closing, stopped halfway, venting/partial-open, light on/off, and any error/prewarn state.
+18. Only after reliable state and safety behavior, expose the cover through Home Assistant's HomeKit Bridge.
 
 ## Capturing E2 State Logs
 
