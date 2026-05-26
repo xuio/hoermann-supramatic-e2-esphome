@@ -294,6 +294,10 @@ void UAPBridge_esp::process_rx_window() {
         if (this->next_action != hoermann_action_none) {
           ESP_LOGI(TAG, "Sending one-shot HCP command: %s (0x%04X)", this->action_name(this->next_action), (unsigned int) this->next_action);
           this->http_debug_emit_command_("sent", this->next_action);
+          if (this->next_action == hoermann_action_open || this->next_action == hoermann_action_close ||
+              this->next_action == hoermann_action_venting || this->next_action == hoermann_action_impulse) {
+            this->movement_command_callback_.call();
+          }
           this->command_sequence++;
         }
         this->next_action = hoermann_action_none;

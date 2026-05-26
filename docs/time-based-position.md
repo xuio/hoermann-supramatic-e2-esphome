@@ -20,6 +20,15 @@ cover:
 
 Home Assistant sees a normal cover position where `0%` is closed and `100%` is open. This matches the convention used by Home Assistant cover entities and Shelly cover mode.
 
+The garage door cover advertises `supports_position: true`, but some Home Assistant garage-door cards do not expose a percentage slider for `device_class: garage`. The main YAML therefore also exposes a separate `Garage Door Target Position` number entity. Use that number slider to send percentage targets directly while keeping the main entity as a garage-door cover for HomeKit Bridge.
+
+The main YAML also exposes two configuration numbers:
+
+- `Garage Door Open Duration`, in seconds.
+- `Garage Door Close Duration`, in seconds.
+
+These values are restored by ESPHome and applied to the position estimator on boot, so you can tune travel timing from Home Assistant without reflashing after every calibration run.
+
 ## Behavior
 
 - Fully open and fully close still use the native HCP open/close commands.
@@ -47,7 +56,8 @@ Home Assistant sees a normal cover position where `0%` is closed and `100%` is o
 2. Start with a conservative `open_duration` and `close_duration` slightly longer than the real travel time.
 3. Open from fully closed and watch for a log line like `Learned full open travel duration`.
 4. After verifying remote close safety, set `allow_remote_close: true`, close from fully open, and watch for `Learned full close travel duration`.
-5. Copy stable learned values into `open_duration` and `close_duration`.
-6. Test `75%`, `50%`, and `25%` targets while standing at the door.
+5. Enter stable measured values into `Garage Door Open Duration` and `Garage Door Close Duration`.
+6. Test `75%`, `50%`, and `25%` with the `Garage Door Target Position` number while standing at the door.
+7. Once the values are stable, optionally copy them back into `open_duration` and `close_duration` in YAML so the defaults match the calibrated values after a clean flash.
 
 The Loxone Hörmann Air adapter is a useful reference point: it integrates through the Hörmann BUS, supports the Garage/Gate block including partially-open input, and documents automatic learning of travel durations. This firmware follows the same practical model, but keeps the timing estimate local and inspectable in ESPHome logs.

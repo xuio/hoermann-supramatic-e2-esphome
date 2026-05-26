@@ -8,12 +8,17 @@ DEPENDENCIES = ["uapbridge"]
 
 UAPBridgeLight = uapbridge_ns.class_("UAPBridgeLight", light.LightOutput, cg.Component)
 
+CONF_AUTO_COURTESY_LIGHT = "auto_courtesy_light"
+CONF_COURTESY_LIGHT_DURATION = "courtesy_light_duration"
+
 CONFIG_SCHEMA = cv.All(
     cv.Schema(
         {
             cv.GenerateID(CONF_UAPBRIDGE_ID): cv.use_id(UAPBridge),
             cv.GenerateID(CONF_OUTPUT_ID): cv.declare_id(UAPBridgeLight),
             cv.Required(CONF_OUTPUT): cv.use_id(output.BinaryOutput),
+            cv.Optional(CONF_AUTO_COURTESY_LIGHT, default=False): cv.boolean,
+            cv.Optional(CONF_COURTESY_LIGHT_DURATION, default="120s"): cv.positive_time_period_milliseconds,
         }
     )
     .extend(cv.ENTITY_BASE_SCHEMA)
@@ -29,6 +34,8 @@ async def to_code(config):
 
     parent = await cg.get_variable(config[CONF_UAPBRIDGE_ID])
     cg.add(light_output_var.set_uapbridge_parent(parent))
+    cg.add(light_output_var.set_auto_courtesy_light(config[CONF_AUTO_COURTESY_LIGHT]))
+    cg.add(light_output_var.set_courtesy_light_duration(config[CONF_COURTESY_LIGHT_DURATION].total_milliseconds))
 
     await cg.register_component(light_output_var, config)
     await light.register_light(light_output_var, config)

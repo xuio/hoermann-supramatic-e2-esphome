@@ -9,6 +9,18 @@ esphome:
   friendly_name: "${friendly_name}"
   platformio_options:
     board_build.f_cpu: 240000000L
+  on_boot:
+    priority: -100
+    then:
+      - lambda: |-
+          const float open_seconds = id(garage_door_open_duration_seconds).state;
+          if (open_seconds >= 5.0f && open_seconds <= 60.0f) {
+            id(garage_door_cover).set_open_duration((uint32_t) (open_seconds * 1000.0f));
+          }
+          const float close_seconds = id(garage_door_close_duration_seconds).state;
+          if (close_seconds >= 5.0f && close_seconds <= 60.0f) {
+            id(garage_door_cover).set_close_duration((uint32_t) (close_seconds * 1000.0f));
+          }
 
 esp32:
   board: esp32-s3-devkitc-1
@@ -27,6 +39,7 @@ logger:
   logs:
     uapbridge_esp: DEBUG
     uapbridge.cover: DEBUG
+    uapbridge.light: DEBUG
     uapbridge.binary_sensor: DEBUG
 
 api:
@@ -83,6 +96,7 @@ uapbridge_esp:
 
 cover:
   - platform: uapbridge
+    id: garage_door_cover
     name: "${friendly_name}"
     device_class: garage
     time_based_position: true
@@ -122,6 +136,59 @@ light:
     name: "${friendly_name} Light"
     output: garage_light_output
     restore_mode: RESTORE_DEFAULT_OFF
+    auto_courtesy_light: true
+    courtesy_light_duration: 120s
+
+number:
+  - platform: template
+    id: garage_door_target_position
+    name: "${friendly_name} Target Position"
+    icon: mdi:garage-open
+    min_value: 0
+    max_value: 100
+    step: 1
+    mode: slider
+    unit_of_measurement: "%"
+    update_interval: 1s
+    lambda: |-
+      return id(garage_door_cover).position * 100.0f;
+    set_action:
+      - lambda: |-
+          auto call = id(garage_door_cover).make_call();
+          call.set_position(x / 100.0f);
+          call.perform();
+  - platform: template
+    id: garage_door_open_duration_seconds
+    name: "${friendly_name} Open Duration"
+    icon: mdi:timer-outline
+    entity_category: config
+    min_value: 5
+    max_value: 60
+    step: 0.1
+    mode: box
+    unit_of_measurement: s
+    optimistic: true
+    restore_value: true
+    initial_value: 18
+    set_action:
+      - lambda: |-
+          id(garage_door_cover).set_open_duration((uint32_t) (x * 1000.0f));
+  - platform: template
+    id: garage_door_close_duration_seconds
+    name: "${friendly_name} Close Duration"
+    icon: mdi:timer-outline
+    entity_category: config
+    min_value: 5
+    max_value: 60
+    step: 0.1
+    mode: box
+    unit_of_measurement: s
+    optimistic: true
+    restore_value: true
+    initial_value: 18
+    set_action:
+      - lambda: |-
+          id(garage_door_cover).set_close_duration((uint32_t) (x * 1000.0f));
 
 text_sensor:
   - platform: uapbridge

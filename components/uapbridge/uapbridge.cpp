@@ -36,5 +36,9 @@ void UAPBridge::add_on_state_callback(std::function<void()> &&callback) {
   this->state_callback_.add(std::move(callback));
 }
 
+void UAPBridge::add_on_movement_command_callback(std::function<void()> &&callback) {
+  this->movement_command_callback_.add(std::move(callback));
+}
+
 }  // namespace uapbridge
 }  // namespace esphome

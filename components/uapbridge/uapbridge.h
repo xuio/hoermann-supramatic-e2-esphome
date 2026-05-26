@@ -32,6 +32,7 @@ class UAPBridge : public uart::UARTDevice, public Component {
     void setup() override;
     void dump_config() override;
     void add_on_state_callback(std::function<void()> &&callback);
+    void add_on_movement_command_callback(std::function<void()> &&callback);
     void set_rts_pin(InternalGPIOPin *rts_pin) { this->rts_pin_ = rts_pin; }
     void set_auto_correction(bool value) { this->auto_correction = value; }
     void set_allow_remote_close(bool value) { this->allow_remote_close = value; }
@@ -97,6 +98,7 @@ class UAPBridge : public uart::UARTDevice, public Component {
     bool trust_light_feedback = true;
     // \yaml parameters
     CallbackManager<void()> state_callback_;
+    CallbackManager<void()> movement_command_callback_;
     // state variables
     bool venting_enabled = false;
     bool light_enabled = false;
