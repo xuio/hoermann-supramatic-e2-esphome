@@ -121,7 +121,7 @@ The component is vendored under [components](components). It is based on the ESP
 - `trust_light_feedback`, default `true`, uses the decoded HCP light bit as authoritative. The SupraMatic E2 YAML sets this to `false` because the observed one-byte E2 broadcasts do not carry reliable light state; the Home Assistant light is therefore optimistic and each UI state change sends one toggle command.
 - `close_obstruction_grace`, default `5s`, latches the `obstruction_state` diagnostic when a full close estimate has elapsed but the HCP closed bit never appears. This covers the observed E2 display `5` behavior where no explicit HCP error bit was captured.
 - `http_debug_port`, set to `8080` in the primary YAML, exposes the live UAP1 emulator monitor without adding a second UART reader. It streams raw RX, TX responses, decoded frames, command queue/block/send events, gaps, stats, and recent history while the emulator continues to answer the opener.
-- `persistent_log`, default `false`, adds an on-demand filesystem-backed protocol capture on a dedicated SPIFFS partition. It stages compact binary records in RAM, periodically flushes them to flash, and can be enabled and dumped at runtime over HTTP so obstruction or error tests can be captured even if no browser stream is open.
+- `persistent_log`, default `false`, adds an on-demand PSRAM-only protocol capture. It stores compact binary records in PSRAM and can be enabled and dumped at runtime over HTTP so obstruction or error tests can be captured even if no browser stream is open, without writing the ESP flash.
 - A passive CRC-valid frame scanner runs alongside the known UAP1 parser. It records the last valid HCP frame, counts status transitions, and counts/logs unknown CRC-valid frames so longer or undocumented E2 frames are visible without changing command behavior.
 - `listen_only`, when set true, receives and logs HCP frames without answering scan/status requests. Use this only for first bus capture.
 - `valid_broadcast_timeout`, default `10s`, clears the valid-broadcast diagnostic and marks state unknown if the bus goes stale.
@@ -305,7 +305,7 @@ Position estimates now wait for HCP endpoint departure when moving away from a k
 
 The capture runner downloads the compact binary persistent log by default. The expanded JSON log can still be requested with `--download-json-log`, but avoid doing that while the opener is moving because serving the large JSON response is much heavier on the ESP.
 
-For the synchronized phone runs, the ESP keeps raw RX/TX bytes and decoded frames but logs only larger inter-frame gaps. This keeps the persistent log useful while reducing flash writes and bus-service jitter during long captures.
+For the synchronized phone runs, the ESP keeps raw RX/TX bytes and decoded frames but logs only larger inter-frame gaps. This keeps the PSRAM log useful while reducing bus-service jitter during long captures.
 
 To verify the fullscreen visuals before moving the opener, run the same tool in dry-run mode. It does not connect to the ESP, does not start persistent logging, and simulates HCP state feedback locally so the automatic sequence can complete:
 
@@ -326,19 +326,19 @@ The primary YAML exposes these diagnostic entities for protocol work:
 
 ## Persistent Protocol Log
 
-The main firmware can capture raw RX, TX, gaps, decoded frame candidates, unknown CRC-valid frames, command events, and status transitions into a dedicated `hcp_logs` SPIFFS filesystem while UAP1 emulation continues to run. Records are staged in RAM as compact binary data with repeat-count compression for identical adjacent records, then flushed to flash periodically. The HTTP dump expands the capture into readable JSON with timestamps, repeat counts, raw hex, CRC status, decoded status bits, and command names.
+The main firmware can capture raw RX, TX, gaps, decoded frame candidates, unknown CRC-valid frames, command events, and status transitions into PSRAM while UAP1 emulation continues to run. Records are stored as compact binary data with repeat-count compression for identical adjacent records. The HTTP dump expands the capture into readable JSON with timestamps, repeat counts, raw hex, CRC status, decoded status bits, and command names.
 
-The default partition reserves 4 MB for captures and caps the active file at 3 MB, which is intended to hold at least five minutes of continuous HCP traffic. Use it only around diagnostic tests because it periodically writes flash while enabled:
+The Waveshare ESP32-S3 ETH PoE YAML enables PSRAM and currently reserves a 6 MiB live capture buffer. On the measured SupraMatic E2 idle HCP traffic rate, that is roughly 35 to 40 minutes of continuous capture. Captures are lost on reboot or power loss, so stop and download the log after each diagnostic run:
 
 ```bash
 curl http://supramatic-e2.local:8080/persistent_log/clear
 curl http://supramatic-e2.local:8080/persistent_log/start
 # reproduce the door state, obstruction, or command problem
 curl http://supramatic-e2.local:8080/persistent_log/stop
-curl --max-time 120 http://supramatic-e2.local:8080/persistent_log > persistent-log.json
+curl --max-time 120 http://supramatic-e2.local:8080/persistent_log.bin > persistent-log.bin
 ```
 
-If `format_required` is true after the partition is first added, initialize the filesystem once with `curl --max-time 120 http://supramatic-e2.local:8080/persistent_log/format`. If mDNS is unreliable, replace `supramatic-e2.local` with the current IP address. See [docs/persistent-protocol-log.md](docs/persistent-protocol-log.md).
+The `/persistent_log` JSON endpoint is still useful for short captures, but `/persistent_log.bin` is preferred for large captures because it avoids heavy JSON expansion on the ESP. If mDNS is unreliable, replace `supramatic-e2.local` with the current IP address. See [docs/persistent-protocol-log.md](docs/persistent-protocol-log.md).
 
 ## Proxy Mode
 

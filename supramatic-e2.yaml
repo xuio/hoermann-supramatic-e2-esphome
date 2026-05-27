@@ -42,7 +42,6 @@ api:
 ota:
   - platform: esphome
     password: !secret ota_password_supramatic_e2
-    allow_partition_access: true
 
 safe_mode:
   disabled: false

@@ -36,10 +36,8 @@
 #define STOP_FALLBACK_MOVING_TIMEOUT_MS 1000
 #define UAPBRIDGE_STATUS_RECORD_COUNT 32
 #define UAPBRIDGE_PERSISTENT_LOG_FALLBACK_RAM_CAPACITY 16384
-#define UAPBRIDGE_PERSISTENT_LOG_TARGET_RAM_CAPACITY (1024 * 1024)
-#define UAPBRIDGE_PERSISTENT_LOG_MAX_FILE_BYTES (3 * 1024 * 1024)
+#define UAPBRIDGE_PERSISTENT_LOG_TARGET_RAM_CAPACITY (6 * 1024 * 1024)
 #define UAPBRIDGE_PERSISTENT_LOG_DATA_LEN 32
-#define UAPBRIDGE_PERSISTENT_LOG_WRITE_CHUNK_BYTES 128
 #define UAPBRIDGE_FRAME_SCAN_BUFFER_LEN 24
 #define UAPBRIDGE_BUS_TASK_STACK_BYTES 6144
 #define UAPBRIDGE_BUS_TASK_PRIORITY 20
@@ -195,15 +193,7 @@ class UAPBridge_esp : public esphome::uapbridge::UAPBridge {
                                        uint8_t len = 0, uint8_t flags = 0, uint32_t timestamp_us = 0);
     void service_persistent_log_save_();
     bool save_persistent_log_(bool force = false);
-    bool queue_persistent_log_flush_();
-    bool write_persistent_log_chunk_();
-    bool drain_persistent_log_flush_(uint32_t timeout_ms);
-    bool open_persistent_log_file_();
-    void close_persistent_log_file_();
     void mark_persistent_log_dirty_();
-    bool persistent_log_write_bytes_(const uint8_t *data, size_t len);
-    bool persistent_log_refresh_fs_info_();
-    uint32_t persistent_log_file_size_();
     std::string http_debug_persistent_log_record_json_(const uint8_t *record, size_t total_len);
     uint8_t persistent_log_phase_code_(const char *phase) const;
     uint8_t persistent_log_reason_code_(const char *reason) const;
@@ -269,7 +259,6 @@ class UAPBridge_esp : public esphome::uapbridge::UAPBridge {
     uint16_t http_debug_history_size_{200};
     bool persistent_log_enabled_{false};
     bool persistent_log_ready_{false};
-    bool persistent_log_fs_mounted_{false};
     bool persistent_log_format_required_{false};
     bool persistent_log_dirty_{false};
     uint8_t persistent_log_unsaved_records_{0};
@@ -277,20 +266,12 @@ class UAPBridge_esp : public esphome::uapbridge::UAPBridge {
     uint32_t persistent_log_last_record_pos_{0xFFFFFFFF};
     uint8_t persistent_log_last_record_len_{0};
     uint32_t persistent_log_next_seq_{1};
-    uint32_t persistent_log_file_bytes_{0};
     uint32_t persistent_log_dropped_records_{0};
     uint32_t persistent_log_dropped_bytes_{0};
-    size_t persistent_log_fs_total_{0};
-    size_t persistent_log_fs_used_{0};
     uint32_t persistent_log_ram_used_{0};
-    uint32_t persistent_log_flush_len_{0};
-    uint32_t persistent_log_flush_offset_{0};
     uint32_t persistent_log_ram_capacity_{UAPBRIDGE_PERSISTENT_LOG_FALLBACK_RAM_CAPACITY};
     uint8_t persistent_log_fallback_ram_[UAPBRIDGE_PERSISTENT_LOG_FALLBACK_RAM_CAPACITY]{};
-    uint8_t persistent_log_fallback_flush_[UAPBRIDGE_PERSISTENT_LOG_FALLBACK_RAM_CAPACITY]{};
     uint8_t *persistent_log_ram_{nullptr};
-    uint8_t *persistent_log_flush_{nullptr};
-    FILE *persistent_log_file_{nullptr};
     std::unique_ptr<socket::ListenSocket> http_debug_server_;
     std::unique_ptr<socket::Socket> http_debug_pending_client_;
     std::unique_ptr<socket::Socket> http_debug_stream_client_;
