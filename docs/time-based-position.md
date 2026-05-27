@@ -33,6 +33,11 @@ Home Assistant sees a normal cover position where `0%` is closed and `100%` is o
 
 The garage door cover advertises `supports_position: true`, but some Home Assistant garage-door cards do not expose a percentage slider for `device_class: garage`. The main YAML therefore also exposes a separate `Garage Door Target Position` number entity. Use that number slider to send percentage targets directly while keeping the main entity as a garage-door cover for HomeKit Bridge.
 
+The main YAML also exposes read-only live position sensors:
+
+- `Garage Door Estimated Position`, in percent.
+- `Garage Door Clear Opening Height`, in meters, using the configured `door_opening_height_m` substitution.
+
 The SupraMatic E2 defaults above are calibrated from the 2026-05-27 ArUco marker videos and the first synchronized phone/HCP run:
 
 - `open_duration` / `close_duration`: visible door motion only, not command-to-HCP-end time.

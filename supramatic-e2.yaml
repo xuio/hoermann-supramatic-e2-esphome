@@ -3,6 +3,7 @@ substitutions:
   friendly_name: "Garage Door"
   rs485_rx_pin: GPIO16
   rs485_tx_pin: GPIO17
+  door_opening_height_m: "2.10"
 
 esphome:
   name: "${name}"
@@ -272,6 +273,26 @@ number:
           id(garage_door_cover).set_close_report_delay((uint32_t) (x * 1000.0f));
 
 sensor:
+  - platform: template
+    id: garage_door_estimated_position
+    name: "${friendly_name} Estimated Position"
+    icon: mdi:garage-open-variant
+    unit_of_measurement: "%"
+    accuracy_decimals: 1
+    state_class: measurement
+    update_interval: 500ms
+    lambda: |-
+      return id(garage_door_cover).position * 100.0f;
+  - platform: template
+    id: garage_door_clear_opening_height
+    name: "${friendly_name} Clear Opening Height"
+    icon: mdi:arrow-expand-vertical
+    unit_of_measurement: "m"
+    accuracy_decimals: 2
+    state_class: measurement
+    update_interval: 500ms
+    lambda: |-
+      return id(garage_door_cover).position * ${door_opening_height_m};
   - platform: template
     id: garage_door_raw_hcp_status
     name: "${friendly_name} Raw HCP Status"
