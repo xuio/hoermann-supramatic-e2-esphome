@@ -5,6 +5,12 @@
 #include <memory>
 #include <string>
 
+#ifdef USE_ESP32
+#include "freertos/FreeRTOS.h"
+#include "freertos/portmacro.h"
+#include "freertos/task.h"
+#endif
+
 #include "esphome/components/socket/socket.h"
 #include "esphome/core/component.h"
 #include "esphome/components/uart/uart.h"
@@ -29,11 +35,16 @@
 
 #define STOP_FALLBACK_MOVING_TIMEOUT_MS 1000
 #define UAPBRIDGE_STATUS_RECORD_COUNT 32
-#define UAPBRIDGE_PERSISTENT_LOG_RAM_CAPACITY 16384
+#define UAPBRIDGE_PERSISTENT_LOG_FALLBACK_RAM_CAPACITY 16384
+#define UAPBRIDGE_PERSISTENT_LOG_TARGET_RAM_CAPACITY (1024 * 1024)
 #define UAPBRIDGE_PERSISTENT_LOG_MAX_FILE_BYTES (3 * 1024 * 1024)
 #define UAPBRIDGE_PERSISTENT_LOG_DATA_LEN 32
 #define UAPBRIDGE_PERSISTENT_LOG_WRITE_CHUNK_BYTES 128
 #define UAPBRIDGE_FRAME_SCAN_BUFFER_LEN 24
+#define UAPBRIDGE_BUS_TASK_STACK_BYTES 6144
+#define UAPBRIDGE_BUS_TASK_PRIORITY 20
+#define UAPBRIDGE_BUS_DEBUG_EVENT_QUEUE_LEN 512
+#define UAPBRIDGE_BUS_DEBUG_EVENTS_PER_LOOP 64
 
 namespace esphome {
 namespace uapbridge_esp {
@@ -85,14 +96,16 @@ class UAPBridge_esp : public esphome::uapbridge::UAPBridge {
     std::string get_last_valid_frame_hex() const { return this->last_valid_frame_hex_; }
 
   protected:
+    struct BusDebugEvent;
     hoermann_state_t state = hoermann_state_stopped;
     hoermann_action_t next_action = hoermann_action_none;
-    // state variables
-    std::string state_string = "unknown";
-    // \state variables
     // Internal methods
     void loop_fast();
     void loop_slow();
+    void start_bus_task_();
+    static void bus_task_trampoline_(void *arg);
+    void bus_task_loop_();
+    bool is_bus_task_context_() const;
     void receive();
     void process_rx_window();
     void reset_hcp_frame_scanner_();
@@ -107,6 +120,10 @@ class UAPBridge_esp : public esphome::uapbridge::UAPBridge {
     bool command_allowed(const hoermann_action_t command, bool bypass_impulse_interlock = false,
                          bool bypass_unsafe_state = false);
     bool is_movement_command(const hoermann_action_t command);
+    hoermann_action_t get_queued_action_();
+    bool fetch_queued_action_(hoermann_action_t *action);
+    void queue_movement_command_callback_();
+    void process_pending_movement_command_callbacks_();
     bool bus_state_is_fresh() const;
     bool moving_state_is_fresh() const;
     hoermann_state_t decode_status_state(uint16_t status) const;
@@ -115,6 +132,9 @@ class UAPBridge_esp : public esphome::uapbridge::UAPBridge {
     void expire_valid_broadcast();
     uint8_t calc_crc8(const uint8_t *p_data, uint8_t length);
     void handle_state_change(hoermann_state_t new_state);
+    void mark_data_changed_();
+    bool take_data_changed_();
+    const char *state_name_(hoermann_state_t state) const;
     char* print_data(uint8_t *p_data, uint8_t from, uint8_t to);
     void update_boolean_state(const char * name, bool &current_state, bool new_state);
     const char *action_name(hoermann_action_t command);
@@ -140,6 +160,12 @@ class UAPBridge_esp : public esphome::uapbridge::UAPBridge {
     void http_debug_emit_command_(const char *phase, hoermann_action_t command, const char *reason = nullptr);
     void http_debug_emit_status_transition_(uint16_t status, const char *frame_type);
     void http_debug_append_recent_(const std::string &line);
+    bool queue_bus_debug_event_(uint8_t type, const uint8_t *data, uint8_t len, uint32_t timestamp_us,
+                                uint8_t source = 0, uint8_t phase = 0, uint8_t reason = 0,
+                                uint16_t action = 0, uint16_t status = 0, uint8_t flags = 0,
+                                uint32_t value = 0);
+    bool pop_bus_debug_event_(BusDebugEvent *event);
+    void process_bus_debug_events_();
     std::string http_debug_recent_body_();
     std::string http_debug_stats_json_();
     std::string http_debug_broadcast_status_json_();
@@ -152,6 +178,7 @@ class UAPBridge_esp : public esphome::uapbridge::UAPBridge {
     std::string http_debug_path_from_request_line_(const std::string &request_line);
     void record_broadcast_status_(uint16_t status, const char *frame_type);
     uint8_t broadcast_status_record_count_() const;
+    void setup_persistent_log_buffers_();
     bool setup_persistent_log_(bool format_if_mount_failed = false);
     bool format_persistent_log_();
     void reset_persistent_log_store_();
@@ -192,6 +219,19 @@ class UAPBridge_esp : public esphome::uapbridge::UAPBridge {
       uint32_t first_ms{0};
       uint32_t last_ms{0};
     };
+    struct BusDebugEvent {
+      uint8_t type{0};
+      uint8_t source{0};
+      uint8_t phase{0};
+      uint8_t reason{0};
+      uint8_t flags{0};
+      uint8_t len{0};
+      uint16_t action{0};
+      uint16_t status{0};
+      uint32_t timestamp_us{0};
+      uint32_t value{0};
+      uint8_t data[UAPBRIDGE_PERSISTENT_LOG_DATA_LEN]{};
+    };
     // internal function variables
     uint32_t last_call       = 0;
     uint32_t last_call_slow   = 0;
@@ -210,6 +250,19 @@ class UAPBridge_esp : public esphome::uapbridge::UAPBridge {
     uint8_t    tx_length        = 0;
     uint8_t    byte_cnt         = 0;
     uint32_t   send_time        = 0;
+#ifdef USE_ESP32
+    TaskHandle_t bus_task_handle_{nullptr};
+    portMUX_TYPE bus_event_mux_ = portMUX_INITIALIZER_UNLOCKED;
+    portMUX_TYPE bus_command_mux_ = portMUX_INITIALIZER_UNLOCKED;
+    portMUX_TYPE bus_state_mux_ = portMUX_INITIALIZER_UNLOCKED;
+#endif
+    bool bus_task_started_{false};
+    uint16_t bus_debug_event_head_{0};
+    uint16_t bus_debug_event_tail_{0};
+    uint32_t bus_debug_event_dropped_{0};
+    uint8_t pending_movement_command_callbacks_{0};
+    uint8_t pending_state_callbacks_{0};
+    BusDebugEvent bus_debug_events_[UAPBRIDGE_BUS_DEBUG_EVENT_QUEUE_LEN]{};
     uint16_t http_debug_port_{0};
     bool http_debug_send_gaps_{true};
     uint32_t http_debug_gap_threshold_us_{3000};
@@ -221,7 +274,7 @@ class UAPBridge_esp : public esphome::uapbridge::UAPBridge {
     bool persistent_log_dirty_{false};
     uint8_t persistent_log_unsaved_records_{0};
     uint32_t persistent_log_last_save_ms_{0};
-    uint16_t persistent_log_last_record_pos_{0xFFFF};
+    uint32_t persistent_log_last_record_pos_{0xFFFFFFFF};
     uint8_t persistent_log_last_record_len_{0};
     uint32_t persistent_log_next_seq_{1};
     uint32_t persistent_log_file_bytes_{0};
@@ -229,11 +282,14 @@ class UAPBridge_esp : public esphome::uapbridge::UAPBridge {
     uint32_t persistent_log_dropped_bytes_{0};
     size_t persistent_log_fs_total_{0};
     size_t persistent_log_fs_used_{0};
-    uint16_t persistent_log_ram_used_{0};
-    uint16_t persistent_log_flush_len_{0};
-    uint16_t persistent_log_flush_offset_{0};
-    uint8_t persistent_log_ram_[UAPBRIDGE_PERSISTENT_LOG_RAM_CAPACITY]{};
-    uint8_t persistent_log_flush_[UAPBRIDGE_PERSISTENT_LOG_RAM_CAPACITY]{};
+    uint32_t persistent_log_ram_used_{0};
+    uint32_t persistent_log_flush_len_{0};
+    uint32_t persistent_log_flush_offset_{0};
+    uint32_t persistent_log_ram_capacity_{UAPBRIDGE_PERSISTENT_LOG_FALLBACK_RAM_CAPACITY};
+    uint8_t persistent_log_fallback_ram_[UAPBRIDGE_PERSISTENT_LOG_FALLBACK_RAM_CAPACITY]{};
+    uint8_t persistent_log_fallback_flush_[UAPBRIDGE_PERSISTENT_LOG_FALLBACK_RAM_CAPACITY]{};
+    uint8_t *persistent_log_ram_{nullptr};
+    uint8_t *persistent_log_flush_{nullptr};
     FILE *persistent_log_file_{nullptr};
     std::unique_ptr<socket::ListenSocket> http_debug_server_;
     std::unique_ptr<socket::Socket> http_debug_pending_client_;

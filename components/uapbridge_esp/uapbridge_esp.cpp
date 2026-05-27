@@ -6,6 +6,7 @@
 #include <cstring>
 
 #include "esphome/components/watchdog/watchdog.h"
+#include "esp_heap_caps.h"
 #include "esp_spiffs.h"
 
 namespace esphome {
@@ -28,8 +29,6 @@ static constexpr uint8_t UAPBRIDGE_PLOG_FIXED_PAYLOAD_LEN = 34;
 static constexpr uint8_t UAPBRIDGE_PLOG_MAX_RECORD_TOTAL_LEN =
     1 + UAPBRIDGE_PLOG_FIXED_PAYLOAD_LEN + UAPBRIDGE_PERSISTENT_LOG_DATA_LEN;
 static constexpr uint32_t UAPBRIDGE_PERSISTENT_LOG_SAVE_INTERVAL_MS = 10000;
-static constexpr uint16_t UAPBRIDGE_PERSISTENT_LOG_FLUSH_THRESHOLD =
-    UAPBRIDGE_PERSISTENT_LOG_RAM_CAPACITY - 512;
 
 static void plog_write_u16(uint8_t *dst, uint16_t value) {
   dst[0] = value & 0xFF;
@@ -68,10 +67,12 @@ static const char UAPBRIDGE_HTTP_INDEX_HTML[] =
 
 void UAPBridge_esp::setup() {
   esphome::uapbridge::UAPBridge::setup();
+  this->setup_persistent_log_buffers_();
   this->setup_persistent_log_();
   if (this->http_debug_enabled_()) {
     this->setup_http_debug_server_();
   }
+  this->start_bus_task_();
 }
 
 float UAPBridge_esp::get_setup_priority() const { return setup_priority::AFTER_WIFI; }
@@ -88,22 +89,29 @@ void UAPBridge_esp::dump_config() {
   ESP_LOGCONFIG(TAG, "  Persistent Protocol Log Storage: SPIFFS partition '%s' mounted=%s",
                 UAPBRIDGE_PERSISTENT_LOG_PARTITION, this->persistent_log_fs_mounted_ ? "true" : "false");
   ESP_LOGCONFIG(TAG, "  Persistent Protocol Log RAM Staging: %u bytes",
-                (unsigned int) UAPBRIDGE_PERSISTENT_LOG_RAM_CAPACITY);
+                (unsigned int) this->persistent_log_ram_capacity_);
   ESP_LOGCONFIG(TAG, "  Persistent Protocol Log Max File: %u bytes",
                 (unsigned int) UAPBRIDGE_PERSISTENT_LOG_MAX_FILE_BYTES);
+  ESP_LOGCONFIG(TAG, "  HCP Bus FreeRTOS Task: %s priority=%u stack=%u bytes",
+                this->bus_task_started_ ? "running" : "fallback-loop",
+                (unsigned int) UAPBRIDGE_BUS_TASK_PRIORITY,
+                (unsigned int) UAPBRIDGE_BUS_TASK_STACK_BYTES);
 }
 
 void UAPBridge_esp::loop() {
-  this->loop_fast();
+  if (!this->bus_task_started_) {
+    this->loop_fast();
+  }
+  this->process_bus_debug_events_();
+  this->process_pending_movement_command_callbacks_();
   this->loop_slow();
   this->http_debug_accept_client_();
   this->http_debug_service_pending_client_();
   this->http_debug_service_keepalive_();
   this->service_persistent_log_save_();
 
-  if (this->data_has_changed) {
+  if (this->take_data_changed_()) {
     ESP_LOGD(TAG, "UAPBridge_esp::loop() - received Data has changed.");
-    this->clear_data_changed_flag();
     this->state_callback_.call();
   }
 }
@@ -123,6 +131,61 @@ void UAPBridge_esp::loop_fast() {
     this->transmit();
     this->send_time = 0;
   }
+}
+
+void UAPBridge_esp::start_bus_task_() {
+#ifdef USE_ESP32
+  if (this->bus_task_handle_ != nullptr) {
+    this->bus_task_started_ = true;
+    return;
+  }
+
+  const BaseType_t ok = xTaskCreatePinnedToCore(
+      UAPBridge_esp::bus_task_trampoline_, "uap_hcp_bus", UAPBRIDGE_BUS_TASK_STACK_BYTES, this,
+      UAPBRIDGE_BUS_TASK_PRIORITY, &this->bus_task_handle_, tskNO_AFFINITY);
+  if (ok == pdPASS) {
+    this->bus_task_started_ = true;
+    ESP_LOGI(TAG, "Started HCP bus task priority=%u stack=%u bytes",
+             (unsigned int) UAPBRIDGE_BUS_TASK_PRIORITY,
+             (unsigned int) UAPBRIDGE_BUS_TASK_STACK_BYTES);
+    return;
+  }
+
+  this->bus_task_handle_ = nullptr;
+  this->bus_task_started_ = false;
+  ESP_LOGE(TAG, "Failed to start HCP bus task; falling back to ESPHome loop polling");
+#else
+  this->bus_task_started_ = false;
+  ESP_LOGW(TAG, "FreeRTOS bus task is unavailable on this platform; using ESPHome loop polling");
+#endif
+}
+
+void UAPBridge_esp::bus_task_trampoline_(void *arg) {
+  auto *self = static_cast<UAPBridge_esp *>(arg);
+  if (self == nullptr) {
+#ifdef USE_ESP32
+    vTaskDelete(nullptr);
+#endif
+    return;
+  }
+  self->bus_task_loop_();
+}
+
+void UAPBridge_esp::bus_task_loop_() {
+#ifdef USE_ESP32
+  while (true) {
+    this->loop_fast();
+    vTaskDelay(pdMS_TO_TICKS(1));
+  }
+#endif
+}
+
+bool UAPBridge_esp::is_bus_task_context_() const {
+#ifdef USE_ESP32
+  return this->bus_task_handle_ != nullptr && xTaskGetCurrentTaskHandle() == this->bus_task_handle_;
+#else
+  return false;
+#endif
 }
 /**
  * this seems to be a function that only logs stati and makes errorcorrections
@@ -181,7 +244,6 @@ void UAPBridge_esp::receive() {
 
   auto flush_debug_batch = [&]() {
     if (debug_batch_len > 0) {
-      this->append_persistent_log_raw_(UAPBRIDGE_PLOG_TYPE_RX, debug_batch, debug_batch_len, debug_batch_timestamp);
       this->http_debug_emit_rx_(debug_batch, debug_batch_len, debug_batch_timestamp);
       debug_batch_len = 0;
     }
@@ -208,7 +270,6 @@ void UAPBridge_esp::receive() {
           const uint32_t gap = now - this->http_debug_last_rx_us_;
           if (gap > this->http_debug_gap_threshold_us_) {
             flush_debug_batch();
-            this->append_persistent_log_gap_(now, gap);
             this->http_debug_emit_gap_(now, gap);
             this->reset_hcp_frame_scanner_();
           }
@@ -287,7 +348,7 @@ void UAPBridge_esp::process_rx_window() {
         this->last_valid_broadcast_ms = millis();
         if (!this->valid_broadcast) {
           this->valid_broadcast = true;
-          this->data_has_changed = true;
+          this->mark_data_changed_();
         }
         if (this->diagnostic_mode && new_status != this->last_logged_status) {
           this->log_decoded_status(new_status);
@@ -316,7 +377,7 @@ void UAPBridge_esp::process_rx_window() {
         this->last_valid_broadcast_ms = millis();
         if (!this->valid_broadcast) {
           this->valid_broadcast = true;
-          this->data_has_changed = true;
+          this->mark_data_changed_();
         }
         if (this->diagnostic_mode && new_status != this->last_logged_status) {
           this->log_decoded_status(new_status);
@@ -344,22 +405,23 @@ void UAPBridge_esp::process_rx_window() {
           return;
         }
         counter = (this->rx_data[2] & 0xF0) + 0x10;
+        hoermann_action_t action_to_send = hoermann_action_none;
+        this->fetch_queued_action_(&action_to_send);
         this->tx_data[0] = UAP1_ADDR_MASTER;
         this->tx_data[1] = 0x03 | counter;
         this->tx_data[2] = CMD_SLAVE_STATUS_RESPONSE;
-        this->tx_data[3] = (uint8_t)(this->next_action & 0xFF);
-        this->tx_data[4] = (uint8_t)((this->next_action >> 8) & 0xFF);
-        if (this->next_action != hoermann_action_none) {
-          ESP_LOGI(TAG, "Sending one-shot HCP command: %s (0x%04X)", this->action_name(this->next_action), (unsigned int) this->next_action);
-          this->http_debug_emit_command_("sent", this->next_action);
-          if (this->next_action == hoermann_action_open || this->next_action == hoermann_action_close ||
-              this->next_action == hoermann_action_venting || this->next_action == hoermann_action_impulse) {
-            this->movement_command_callback_.call();
+        this->tx_data[3] = (uint8_t)(action_to_send & 0xFF);
+        this->tx_data[4] = (uint8_t)((action_to_send >> 8) & 0xFF);
+        if (action_to_send != hoermann_action_none) {
+          ESP_LOGI(TAG, "Sending one-shot HCP command: %s (0x%04X)", this->action_name(action_to_send),
+                   (unsigned int) action_to_send);
+          this->http_debug_emit_command_("sent", action_to_send);
+          if (action_to_send == hoermann_action_open || action_to_send == hoermann_action_close ||
+              action_to_send == hoermann_action_venting || action_to_send == hoermann_action_impulse) {
+            this->queue_movement_command_callback_();
           }
           this->command_sequence++;
         }
-        this->next_action = hoermann_action_none;
-        this->command_set_at = 0;
         this->tx_data[5] = calc_crc8(this->tx_data, 5);
         this->tx_length = 6;
         this->transmit_prepared_response();
@@ -417,9 +479,11 @@ void UAPBridge_esp::observe_hcp_frame_candidate_(uint8_t byte, uint32_t timestam
 
 void UAPBridge_esp::record_hcp_frame_candidate_(const uint8_t *frame, uint8_t len) {
   this->valid_frame_scan_sequence_++;
-  this->last_valid_frame_hex_ = this->http_debug_hex_encode_(frame, len);
   const char *known_type = this->classify_hcp_frame_(frame, len);
   if (known_type != nullptr) {
+    if (!this->is_bus_task_context_()) {
+      this->last_valid_frame_hex_ = this->http_debug_hex_encode_(frame, len);
+    }
     return;
   }
 
@@ -428,8 +492,12 @@ void UAPBridge_esp::record_hcp_frame_candidate_(const uint8_t *frame, uint8_t le
   const uint8_t stored_len = len > sizeof(copy) ? sizeof(copy) : len;
   memcpy(copy, frame, stored_len);
   this->http_debug_emit_frame_("unknown-valid", copy, 0, stored_len, true);
-  ESP_LOGW(TAG, "Observed unknown CRC-valid HCP frame len=%u data=%s",
-           len, this->last_valid_frame_hex_.c_str());
+  if (!this->is_bus_task_context_()) {
+    ESP_LOGW(TAG, "Observed unknown CRC-valid HCP frame len=%u data=%s",
+             len, this->last_valid_frame_hex_.c_str());
+  } else {
+    ESP_LOGW(TAG, "Observed unknown CRC-valid HCP frame len=%u", len);
+  }
 }
 
 const char *UAPBridge_esp::classify_hcp_frame_(const uint8_t *frame, uint8_t len) const {
@@ -479,7 +547,6 @@ void UAPBridge_esp::transmit() {
   this->parent_->load_settings(false);
   this->write_array(this->tx_data, this->tx_length);
   this->flush();
-  this->append_persistent_log_raw_(UAPBRIDGE_PLOG_TYPE_TX, this->tx_data, this->tx_length, micros());
   this->http_debug_emit_tx_(this->tx_data, this->tx_length, micros());
 
   if (this->rts_pin_ != nullptr) {
@@ -507,22 +574,34 @@ bool UAPBridge_esp::set_command(bool cond, const hoermann_action_t command, bool
     return false;
   }
   if (cond) {
-    if (this->next_action != hoermann_action_none) {
-      ESP_LOGW(TAG, "Last command was not yet fetched by HCP master; keeping queued action %s (0x%04X), rejected %s",
-               this->action_name(this->next_action), (unsigned int) this->next_action, this->action_name(command));
-      this->http_debug_emit_command_("blocked", command, "previous_command_pending");
-      return false;
-    } else {
+    hoermann_action_t pending_action = hoermann_action_none;
+    bool queued = false;
+#ifdef USE_ESP32
+    portENTER_CRITICAL(&this->bus_command_mux_);
+#endif
+    if (this->next_action == hoermann_action_none) {
       this->next_action = command;
       this->command_set_at = millis();
-      if (command == hoermann_action_open && this->obstruction_state) {
-        ESP_LOGI(TAG, "Clearing obstruction/close failure on accepted open command");
-        this->set_obstruction_state(false);
-      }
-      ESP_LOGI(TAG, "Queued one-shot HCP command: %s (0x%04X)", this->action_name(command), (unsigned int) command);
-      this->http_debug_emit_command_("queued", command);
-      return true;
+      queued = true;
+    } else {
+      pending_action = this->next_action;
     }
+#ifdef USE_ESP32
+    portEXIT_CRITICAL(&this->bus_command_mux_);
+#endif
+    if (!queued) {
+      ESP_LOGW(TAG, "Last command was not yet fetched by HCP master; keeping queued action %s (0x%04X), rejected %s",
+               this->action_name(pending_action), (unsigned int) pending_action, this->action_name(command));
+      this->http_debug_emit_command_("blocked", command, "previous_command_pending");
+      return false;
+    }
+    if (command == hoermann_action_open && this->obstruction_state) {
+      ESP_LOGI(TAG, "Clearing obstruction/close failure on accepted open command");
+      this->set_obstruction_state(false);
+    }
+    ESP_LOGI(TAG, "Queued one-shot HCP command: %s (0x%04X)", this->action_name(command), (unsigned int) command);
+    this->http_debug_emit_command_("queued", command);
+    return true;
   } else {
     if (command == hoermann_action_open && this->obstruction_state && this->state == hoermann_state_open) {
       ESP_LOGI(TAG, "Clearing obstruction/close failure because an open command was requested while HCP already reports open");
@@ -588,7 +667,7 @@ bool UAPBridge_esp::command_allowed(const hoermann_action_t command, bool bypass
       !obstruction_recovery_open &&
       (gate_state == hoermann_state_unknown || gate_state == hoermann_state_stopped)) {
     ESP_LOGW(TAG, "Blocked movement HCP command %s because decoded door state is %s",
-             this->action_name(command), this->state_string.c_str());
+             this->action_name(command), this->state_name_(this->state));
     this->http_debug_emit_command_("blocked", command, "unsafe_state");
     return false;
   }
@@ -612,6 +691,65 @@ bool UAPBridge_esp::is_movement_command(const hoermann_action_t command) {
       return true;
     default:
       return false;
+  }
+}
+
+UAPBridge_esp::hoermann_action_t UAPBridge_esp::get_queued_action_() {
+  hoermann_action_t action = hoermann_action_none;
+#ifdef USE_ESP32
+  portENTER_CRITICAL(&this->bus_command_mux_);
+#endif
+  action = this->next_action;
+#ifdef USE_ESP32
+  portEXIT_CRITICAL(&this->bus_command_mux_);
+#endif
+  return action;
+}
+
+bool UAPBridge_esp::fetch_queued_action_(hoermann_action_t *action) {
+  if (action == nullptr) {
+    return false;
+  }
+#ifdef USE_ESP32
+  portENTER_CRITICAL(&this->bus_command_mux_);
+#endif
+  *action = this->next_action;
+  this->next_action = hoermann_action_none;
+  this->command_set_at = 0;
+#ifdef USE_ESP32
+  portEXIT_CRITICAL(&this->bus_command_mux_);
+#endif
+  return *action != hoermann_action_none;
+}
+
+void UAPBridge_esp::queue_movement_command_callback_() {
+  if (!this->is_bus_task_context_()) {
+    this->movement_command_callback_.call();
+    return;
+  }
+#ifdef USE_ESP32
+  portENTER_CRITICAL(&this->bus_command_mux_);
+#endif
+  if (this->pending_movement_command_callbacks_ < 0xFF) {
+    this->pending_movement_command_callbacks_++;
+  }
+#ifdef USE_ESP32
+  portEXIT_CRITICAL(&this->bus_command_mux_);
+#endif
+}
+
+void UAPBridge_esp::process_pending_movement_command_callbacks_() {
+  uint8_t pending = 0;
+#ifdef USE_ESP32
+  portENTER_CRITICAL(&this->bus_command_mux_);
+#endif
+  pending = this->pending_movement_command_callbacks_;
+  this->pending_movement_command_callbacks_ = 0;
+#ifdef USE_ESP32
+  portEXIT_CRITICAL(&this->bus_command_mux_);
+#endif
+  while (pending-- > 0) {
+    this->movement_command_callback_.call();
   }
 }
 
@@ -659,8 +797,9 @@ void UAPBridge_esp::apply_broadcast_status(uint16_t status, const char *frame_ty
   if (new_state == hoermann_state_opening || new_state == hoermann_state_closing) {
     this->last_moving_broadcast_ms = millis();
   }
-  if (new_state == hoermann_state_closed) {
-    this->set_obstruction_state(false);
+  if (new_state == hoermann_state_closed && this->obstruction_state) {
+    this->obstruction_state = false;
+    this->mark_data_changed_();
   }
   if (new_state != this->state) {
     this->handle_state_change(new_state);
@@ -677,17 +816,26 @@ void UAPBridge_esp::apply_broadcast_status(uint16_t status, const char *frame_ty
 }
 
 void UAPBridge_esp::expire_pending_command() {
-  if (this->next_action == hoermann_action_none || this->command_timeout_ms == 0 || this->command_set_at == 0) {
-    return;
-  }
-
-  if (millis() - this->command_set_at > this->command_timeout_ms) {
-    ESP_LOGW(TAG, "Expired queued HCP command %s (0x%04X) after %ums without a status request",
-             this->action_name(this->next_action), (unsigned int) this->next_action, (unsigned int) this->command_timeout_ms);
-    this->http_debug_emit_command_("expired", this->next_action, "status_request_timeout");
+  hoermann_action_t expired_action = hoermann_action_none;
+  const uint32_t now = millis();
+#ifdef USE_ESP32
+  portENTER_CRITICAL(&this->bus_command_mux_);
+#endif
+  if (this->next_action != hoermann_action_none && this->command_timeout_ms != 0 && this->command_set_at != 0 &&
+      now - this->command_set_at > this->command_timeout_ms) {
+    expired_action = this->next_action;
     this->next_action = hoermann_action_none;
     this->command_set_at = 0;
   }
+#ifdef USE_ESP32
+  portEXIT_CRITICAL(&this->bus_command_mux_);
+#endif
+  if (expired_action == hoermann_action_none) {
+    return;
+  }
+  ESP_LOGW(TAG, "Expired queued HCP command %s (0x%04X) after %ums without a status request",
+           this->action_name(expired_action), (unsigned int) expired_action, (unsigned int) this->command_timeout_ms);
+  this->http_debug_emit_command_("expired", expired_action, "status_request_timeout");
 }
 
 void UAPBridge_esp::expire_valid_broadcast() {
@@ -702,11 +850,21 @@ void UAPBridge_esp::expire_valid_broadcast() {
     this->last_moving_broadcast_ms = 0;
     this->last_error_bit = false;
     this->auto_correction_in_progress = false;
+    hoermann_action_t dropped_action = hoermann_action_none;
+#ifdef USE_ESP32
+    portENTER_CRITICAL(&this->bus_command_mux_);
+#endif
     if (this->next_action != hoermann_action_none) {
-      ESP_LOGW(TAG, "Dropping queued HCP command %s because bus state is stale", this->action_name(this->next_action));
-      this->http_debug_emit_command_("dropped", this->next_action, "bus_state_stale");
+      dropped_action = this->next_action;
       this->next_action = hoermann_action_none;
       this->command_set_at = 0;
+    }
+#ifdef USE_ESP32
+    portEXIT_CRITICAL(&this->bus_command_mux_);
+#endif
+    if (dropped_action != hoermann_action_none) {
+      ESP_LOGW(TAG, "Dropping queued HCP command %s because bus state is stale", this->action_name(dropped_action));
+      this->http_debug_emit_command_("dropped", dropped_action, "bus_state_stale");
     }
     this->update_boolean_state("relay", this->relay_enabled, false);
     this->update_boolean_state("light", this->light_enabled, false);
@@ -714,7 +872,7 @@ void UAPBridge_esp::expire_valid_broadcast() {
     this->update_boolean_state("err", this->error_state, false);
     this->update_boolean_state("prewarn", this->prewarn_state, false);
     this->handle_state_change(hoermann_state_unknown);
-    this->data_has_changed = true;
+    this->mark_data_changed_();
     this->last_valid_broadcast_ms = 0;
   }
 }
@@ -741,12 +899,22 @@ bool UAPBridge_esp::action_close_from_estimated_position() {
 
 bool UAPBridge_esp::action_stop() {
   ESP_LOGD(TAG, "Action: stop called");
+  hoermann_action_t cancelled_action = hoermann_action_none;
+#ifdef USE_ESP32
+  portENTER_CRITICAL(&this->bus_command_mux_);
+#endif
   if (this->next_action != hoermann_action_none) {
-    ESP_LOGI(TAG, "Cancelled queued HCP command before it was fetched: %s (0x%04X)",
-             this->action_name(this->next_action), (unsigned int) this->next_action);
-    this->http_debug_emit_command_("cancelled", this->next_action, "stop_before_fetch");
+    cancelled_action = this->next_action;
     this->next_action = hoermann_action_none;
     this->command_set_at = 0;
+  }
+#ifdef USE_ESP32
+  portEXIT_CRITICAL(&this->bus_command_mux_);
+#endif
+  if (cancelled_action != hoermann_action_none) {
+    ESP_LOGI(TAG, "Cancelled queued HCP command before it was fetched: %s (0x%04X)",
+             this->action_name(cancelled_action), (unsigned int) cancelled_action);
+    this->http_debug_emit_command_("cancelled", cancelled_action, "stop_before_fetch");
     return true;
   }
   if (this->use_unverified_stop_command) {
@@ -763,7 +931,7 @@ bool UAPBridge_esp::action_stop() {
     ESP_LOGW(TAG, "Blocked stop fallback because no recent moving HCP broadcast is available");
     return false;
   } else {
-    ESP_LOGW(TAG, "Ignored stop fallback because decoded state is not moving: %s", this->state_string.c_str());
+    ESP_LOGW(TAG, "Ignored stop fallback because decoded state is not moving: %s", this->state_name_(this->state));
     return false;
   }
 }
@@ -788,7 +956,7 @@ UAPBridge_esp::hoermann_state_t UAPBridge_esp::get_state() {
 }
 
 std::string UAPBridge_esp::get_state_string() {
-  return this->state_string;
+  return this->state_name_(this->state);
 }
 
 std::string UAPBridge_esp::get_diagnostic_string() {
@@ -843,43 +1011,65 @@ char* UAPBridge_esp::print_data(uint8_t *p_data, uint8_t from, uint8_t to) {
 }
 
 void UAPBridge_esp::handle_state_change(hoermann_state_t new_state) {
+  const hoermann_state_t old_state = this->state;
   this->state = new_state;
-  ESP_LOGV(TAG, "State changed from %s to %d", this->state_string.c_str(), new_state);
-  switch (new_state) {
-    case hoermann_state_open:
-      this->state_string = "Open";
-      break;
-    case hoermann_state_closed:
-      this->state_string = "Closed";
-      break;
-    case hoermann_state_opening:
-      this->state_string = "Opening";
-      break;
-    case hoermann_state_closing:
-      this->state_string = "Closing";
-      break;
-    case hoermann_state_venting:
-      this->state_string = "Venting";
-      break;
-    case hoermann_state_stopped:
-      this->state_string = "Stopped";
-      break;
-    case hoermann_state_unknown:
-      this->state_string = "Unknown";
-      break;
-    default:
-      this->state_string = "Error";
-      break;
-  }
+  ESP_LOGV(TAG, "State changed from %s to %s", this->state_name_(old_state), this->state_name_(new_state));
+  this->mark_data_changed_();
+}
 
+void UAPBridge_esp::mark_data_changed_() {
+#ifdef USE_ESP32
+  portENTER_CRITICAL(&this->bus_state_mux_);
+#endif
   this->data_has_changed = true;
+  if (this->pending_state_callbacks_ < 0xFF) {
+    this->pending_state_callbacks_++;
+  }
+#ifdef USE_ESP32
+  portEXIT_CRITICAL(&this->bus_state_mux_);
+#endif
+}
+
+bool UAPBridge_esp::take_data_changed_() {
+  bool changed = false;
+#ifdef USE_ESP32
+  portENTER_CRITICAL(&this->bus_state_mux_);
+#endif
+  changed = this->data_has_changed || this->pending_state_callbacks_ > 0;
+  this->data_has_changed = false;
+  this->pending_state_callbacks_ = 0;
+#ifdef USE_ESP32
+  portEXIT_CRITICAL(&this->bus_state_mux_);
+#endif
+  return changed;
+}
+
+const char *UAPBridge_esp::state_name_(hoermann_state_t state) const {
+  switch (state) {
+    case hoermann_state_open:
+      return "Open";
+    case hoermann_state_closed:
+      return "Closed";
+    case hoermann_state_opening:
+      return "Opening";
+    case hoermann_state_closing:
+      return "Closing";
+    case hoermann_state_venting:
+      return "Venting";
+    case hoermann_state_stopped:
+      return "Stopped";
+    case hoermann_state_unknown:
+      return "Unknown";
+    default:
+      return "Error";
+  }
 }
 
 void UAPBridge_esp::update_boolean_state(const char * name, bool &current_state, bool new_state) {
   ESP_LOGV(TAG, "update_boolean_state: %s from %s to %s", name, current_state ? "true" : "false", new_state ? "true" : "false");
   if (current_state != new_state) {
     current_state = new_state;
-    this->data_has_changed = true;
+    this->mark_data_changed_();
   }
 }
 
@@ -905,16 +1095,7 @@ const char *UAPBridge_esp::action_name(hoermann_action_t command) {
 }
 
 void UAPBridge_esp::update_diagnostic_string(const char *frame_type, uint8_t *p_data, uint8_t from, uint8_t to, bool crc_valid) {
-  char output[96];
-  int written = snprintf(output, sizeof(output), "%lu %s crc=%s data=", millis(), frame_type, crc_valid ? "ok" : "bad");
-  for (uint8_t i = from; i < to && written > 0 && written < (int) sizeof(output); i++) {
-    written += snprintf(output + written, sizeof(output) - written, "%02X ", p_data[i]);
-  }
-  this->diagnostic_string = output;
   this->http_debug_emit_frame_(frame_type, p_data, from, to, crc_valid);
-  if (this->diagnostic_mode) {
-    ESP_LOGD(TAG, "%s", this->diagnostic_string.c_str());
-  }
 }
 
 void UAPBridge_esp::log_decoded_status(uint16_t status) {
@@ -1100,6 +1281,9 @@ void UAPBridge_esp::http_debug_handle_request_(std::unique_ptr<socket::Socket> c
     return;
   }
   if (path == "/persistent_log") {
+    for (uint8_t i = 0; i < 8; i++) {
+      this->process_bus_debug_events_();
+    }
     this->save_persistent_log_(true);
     if (!this->persistent_log_enabled_) {
       this->close_persistent_log_file_();
@@ -1108,6 +1292,9 @@ void UAPBridge_esp::http_debug_handle_request_(std::unique_ptr<socket::Socket> c
     return;
   }
   if (path == "/persistent_log.bin") {
+    for (uint8_t i = 0; i < 8; i++) {
+      this->process_bus_debug_events_();
+    }
     this->save_persistent_log_(true);
     if (!this->persistent_log_enabled_) {
       this->close_persistent_log_file_();
@@ -1129,6 +1316,9 @@ void UAPBridge_esp::http_debug_handle_request_(std::unique_ptr<socket::Socket> c
     return;
   }
   if (path == "/persistent_log/stop") {
+    for (uint8_t i = 0; i < 8; i++) {
+      this->process_bus_debug_events_();
+    }
     this->append_persistent_log_record_(UAPBRIDGE_PLOG_TYPE_CONTROL, 0, 2, 0, 0, this->broadcast_status,
                                         nullptr, 0, 0, micros());
     this->persistent_log_enabled_ = false;
@@ -1255,7 +1445,22 @@ void UAPBridge_esp::http_debug_send_stream_line_(const std::string &event_type, 
 }
 
 void UAPBridge_esp::http_debug_emit_rx_(const uint8_t *data, size_t len, uint32_t timestamp_us) {
-  if (!this->http_debug_enabled_() || len == 0) {
+  if (data == nullptr || len == 0) {
+    return;
+  }
+  if (this->is_bus_task_context_()) {
+    while (len > 0) {
+      const uint8_t chunk =
+          len > UAPBRIDGE_PERSISTENT_LOG_DATA_LEN ? UAPBRIDGE_PERSISTENT_LOG_DATA_LEN : (uint8_t) len;
+      this->queue_bus_debug_event_(UAPBRIDGE_PLOG_TYPE_RX, data, chunk, timestamp_us);
+      data += chunk;
+      len -= chunk;
+    }
+    return;
+  }
+
+  this->append_persistent_log_raw_(UAPBRIDGE_PLOG_TYPE_RX, data, len, timestamp_us);
+  if (!this->http_debug_enabled_()) {
     return;
   }
   const std::string hex = this->http_debug_hex_encode_(data, len);
@@ -1281,7 +1486,22 @@ void UAPBridge_esp::http_debug_emit_rx_(const uint8_t *data, size_t len, uint32_
 }
 
 void UAPBridge_esp::http_debug_emit_tx_(const uint8_t *data, size_t len, uint32_t timestamp_us) {
-  if (!this->http_debug_enabled_() || len == 0) {
+  if (data == nullptr || len == 0) {
+    return;
+  }
+  if (this->is_bus_task_context_()) {
+    while (len > 0) {
+      const uint8_t chunk =
+          len > UAPBRIDGE_PERSISTENT_LOG_DATA_LEN ? UAPBRIDGE_PERSISTENT_LOG_DATA_LEN : (uint8_t) len;
+      this->queue_bus_debug_event_(UAPBRIDGE_PLOG_TYPE_TX, data, chunk, timestamp_us);
+      data += chunk;
+      len -= chunk;
+    }
+    return;
+  }
+
+  this->append_persistent_log_raw_(UAPBRIDGE_PLOG_TYPE_TX, data, len, timestamp_us);
+  if (!this->http_debug_enabled_()) {
     return;
   }
   const std::string hex = this->http_debug_hex_encode_(data, len);
@@ -1307,6 +1527,12 @@ void UAPBridge_esp::http_debug_emit_tx_(const uint8_t *data, size_t len, uint32_
 }
 
 void UAPBridge_esp::http_debug_emit_gap_(uint32_t timestamp_us, uint32_t gap_us) {
+  if (this->is_bus_task_context_()) {
+    this->queue_bus_debug_event_(UAPBRIDGE_PLOG_TYPE_GAP, nullptr, 0, timestamp_us, 0, 0, 0, 0, 0, 0, gap_us);
+    return;
+  }
+
+  this->append_persistent_log_gap_(timestamp_us, gap_us);
   if (!this->http_debug_enabled_()) {
     return;
   }
@@ -1328,12 +1554,32 @@ void UAPBridge_esp::http_debug_emit_gap_(uint32_t timestamp_us, uint32_t gap_us)
 
 void UAPBridge_esp::http_debug_emit_frame_(const char *frame_type, uint8_t *p_data, uint8_t from, uint8_t to,
                                            bool crc_valid) {
+  if (p_data == nullptr || to < from) {
+    return;
+  }
+  const uint8_t len = to > from ? to - from : 0;
+  if (this->is_bus_task_context_()) {
+    this->queue_bus_debug_event_(UAPBRIDGE_PLOG_TYPE_FRAME, p_data + from, len, micros(),
+                                 this->persistent_log_source_code_(frame_type), 0, 0, 0, this->broadcast_status,
+                                 crc_valid ? UAPBRIDGE_PLOG_FLAG_CRC_OK : 0);
+    return;
+  }
+
+  const std::string hex = this->http_debug_hex_encode_(p_data + from, len);
+  this->last_valid_frame_hex_ = hex;
+  char output[96];
+  snprintf(output, sizeof(output), "%lu %s crc=%s data=%s", millis(),
+           frame_type != nullptr ? frame_type : "unknown", crc_valid ? "ok" : "bad", hex.c_str());
+  this->diagnostic_string = output;
+  if (this->diagnostic_mode) {
+    ESP_LOGD(TAG, "%s", this->diagnostic_string.c_str());
+  }
+
   this->append_persistent_log_frame_(frame_type, p_data, from, to, crc_valid);
   if (!this->http_debug_enabled_()) {
     return;
   }
   const uint32_t seq = ++this->http_debug_frame_sequence_;
-  std::string hex = this->http_debug_hex_encode_(p_data + from, to > from ? to - from : 0);
 
   std::string plain = "FRAME ";
   plain += std::to_string(seq);
@@ -1362,6 +1608,13 @@ void UAPBridge_esp::http_debug_emit_frame_(const char *frame_type, uint8_t *p_da
 }
 
 void UAPBridge_esp::http_debug_emit_command_(const char *phase, hoermann_action_t command, const char *reason) {
+  if (this->is_bus_task_context_()) {
+    this->queue_bus_debug_event_(UAPBRIDGE_PLOG_TYPE_CMD, nullptr, 0, micros(), 0,
+                                 this->persistent_log_phase_code_(phase), this->persistent_log_reason_code_(reason),
+                                 (uint16_t) command, this->broadcast_status);
+    return;
+  }
+
   this->append_persistent_log_command_(phase, command, reason);
   if (!this->http_debug_enabled_()) {
     return;
@@ -1400,7 +1653,7 @@ void UAPBridge_esp::http_debug_emit_command_(const char *phase, hoermann_action_
   json += "\",\"raw_status\":";
   json += std::to_string(this->broadcast_status);
   json += ",\"state\":\"";
-  json += this->state_string;
+  json += this->state_name_(this->state);
   json += "\",\"valid_broadcast\":";
   json += this->valid_broadcast ? "true" : "false";
   if (reason != nullptr) {
@@ -1413,6 +1666,12 @@ void UAPBridge_esp::http_debug_emit_command_(const char *phase, hoermann_action_
 }
 
 void UAPBridge_esp::http_debug_emit_status_transition_(uint16_t status, const char *frame_type) {
+  if (this->is_bus_task_context_()) {
+    this->queue_bus_debug_event_(UAPBRIDGE_PLOG_TYPE_STATUS, nullptr, 0, micros(),
+                                 this->persistent_log_source_code_(frame_type), 0, 0, 0, status);
+    return;
+  }
+
   this->append_persistent_log_status_(status, frame_type);
   if (!this->http_debug_enabled_()) {
     return;
@@ -1431,7 +1690,7 @@ void UAPBridge_esp::http_debug_emit_status_transition_(uint16_t status, const ch
   plain += " ";
   plain += status_word;
   plain += " state=";
-  plain += this->state_string;
+  plain += this->state_name_(this->state);
   this->http_debug_append_recent_(plain);
 
   std::string json = "{\"seq\":";
@@ -1445,7 +1704,7 @@ void UAPBridge_esp::http_debug_emit_status_transition_(uint16_t status, const ch
   json += ",\"hex\":\"";
   json += status_word;
   json += "\",\"state\":\"";
-  json += this->state_string;
+  json += this->state_name_(this->state);
   json += "\",\"bits\":";
   json += this->http_debug_status_bits_json_(status);
   json += "}";
@@ -1478,6 +1737,99 @@ void UAPBridge_esp::http_debug_append_recent_(const std::string &line) {
   this->http_debug_recent_lines_.push_back(line);
   while (this->http_debug_recent_lines_.size() > this->http_debug_history_size_) {
     this->http_debug_recent_lines_.pop_front();
+  }
+}
+
+bool UAPBridge_esp::queue_bus_debug_event_(uint8_t type, const uint8_t *data, uint8_t len, uint32_t timestamp_us,
+                                           uint8_t source, uint8_t phase, uint8_t reason, uint16_t action,
+                                           uint16_t status, uint8_t flags, uint32_t value) {
+  if (len > UAPBRIDGE_PERSISTENT_LOG_DATA_LEN) {
+    len = UAPBRIDGE_PERSISTENT_LOG_DATA_LEN;
+  }
+
+  BusDebugEvent event{};
+  event.type = type;
+  event.source = source;
+  event.phase = phase;
+  event.reason = reason;
+  event.flags = flags;
+  event.len = len;
+  event.action = action;
+  event.status = status;
+  event.timestamp_us = timestamp_us;
+  event.value = value;
+  if (data != nullptr && len > 0) {
+    memcpy(event.data, data, len);
+  }
+
+  bool queued = false;
+#ifdef USE_ESP32
+  portENTER_CRITICAL(&this->bus_event_mux_);
+#endif
+  const uint16_t next_head = (this->bus_debug_event_head_ + 1) % UAPBRIDGE_BUS_DEBUG_EVENT_QUEUE_LEN;
+  if (next_head != this->bus_debug_event_tail_) {
+    this->bus_debug_events_[this->bus_debug_event_head_] = event;
+    this->bus_debug_event_head_ = next_head;
+    queued = true;
+  } else {
+    this->bus_debug_event_dropped_++;
+  }
+#ifdef USE_ESP32
+  portEXIT_CRITICAL(&this->bus_event_mux_);
+#endif
+  return queued;
+}
+
+bool UAPBridge_esp::pop_bus_debug_event_(BusDebugEvent *event) {
+  if (event == nullptr) {
+    return false;
+  }
+
+  bool have_event = false;
+#ifdef USE_ESP32
+  portENTER_CRITICAL(&this->bus_event_mux_);
+#endif
+  if (this->bus_debug_event_tail_ != this->bus_debug_event_head_) {
+    *event = this->bus_debug_events_[this->bus_debug_event_tail_];
+    this->bus_debug_event_tail_ = (this->bus_debug_event_tail_ + 1) % UAPBRIDGE_BUS_DEBUG_EVENT_QUEUE_LEN;
+    have_event = true;
+  }
+#ifdef USE_ESP32
+  portEXIT_CRITICAL(&this->bus_event_mux_);
+#endif
+  return have_event;
+}
+
+void UAPBridge_esp::process_bus_debug_events_() {
+  BusDebugEvent event{};
+  uint8_t processed = 0;
+  while (processed < UAPBRIDGE_BUS_DEBUG_EVENTS_PER_LOOP && this->pop_bus_debug_event_(&event)) {
+    processed++;
+    switch (event.type) {
+      case UAPBRIDGE_PLOG_TYPE_RX:
+        this->http_debug_emit_rx_(event.data, event.len, event.timestamp_us);
+        break;
+      case UAPBRIDGE_PLOG_TYPE_TX:
+        this->http_debug_emit_tx_(event.data, event.len, event.timestamp_us);
+        break;
+      case UAPBRIDGE_PLOG_TYPE_GAP:
+        this->http_debug_emit_gap_(event.timestamp_us, event.value);
+        break;
+      case UAPBRIDGE_PLOG_TYPE_FRAME:
+        this->http_debug_emit_frame_(this->persistent_log_source_name_(event.source), event.data, 0, event.len,
+                                     (event.flags & UAPBRIDGE_PLOG_FLAG_CRC_OK) != 0);
+        break;
+      case UAPBRIDGE_PLOG_TYPE_CMD:
+        this->http_debug_emit_command_(this->persistent_log_phase_name_(event.phase),
+                                       (hoermann_action_t) event.action,
+                                       event.reason == 0 ? nullptr : this->persistent_log_reason_name_(event.reason));
+        break;
+      case UAPBRIDGE_PLOG_TYPE_STATUS:
+        this->http_debug_emit_status_transition_(event.status, this->persistent_log_source_name_(event.source));
+        break;
+      default:
+        break;
+    }
   }
 }
 
@@ -1516,10 +1868,27 @@ std::string UAPBridge_esp::http_debug_stats_json_() {
   json += ",\"command_sequence\":";
   json += std::to_string(this->command_sequence);
   json += ",\"queued_action\":\"";
-  json += this->action_name(this->next_action);
+  json += this->action_name(this->get_queued_action_());
   json += "\",\"state\":\"";
-  json += this->state_string;
+  json += this->state_name_(this->state);
   json += "\"";
+  json += ",\"bus_task_running\":";
+  json += this->bus_task_started_ ? "true" : "false";
+  json += ",\"bus_debug_event_queue_len\":";
+  uint16_t bus_debug_queue_len = 0;
+#ifdef USE_ESP32
+  portENTER_CRITICAL(&this->bus_event_mux_);
+#endif
+  bus_debug_queue_len =
+      this->bus_debug_event_head_ >= this->bus_debug_event_tail_
+          ? this->bus_debug_event_head_ - this->bus_debug_event_tail_
+          : UAPBRIDGE_BUS_DEBUG_EVENT_QUEUE_LEN - this->bus_debug_event_tail_ + this->bus_debug_event_head_;
+#ifdef USE_ESP32
+  portEXIT_CRITICAL(&this->bus_event_mux_);
+#endif
+  json += std::to_string(bus_debug_queue_len);
+  json += ",\"bus_debug_event_dropped\":";
+  json += std::to_string(this->bus_debug_event_dropped_);
   json += ",\"stream_connected\":";
   json += this->http_debug_stream_client_ == nullptr ? "false" : "true";
   json += ",\"history_size\":";
@@ -1545,7 +1914,7 @@ std::string UAPBridge_esp::http_debug_broadcast_status_json_() {
   std::string json = "{\"raw_status\":";
   json += std::to_string(this->broadcast_status);
   json += ",\"state\":\"";
-  json += this->state_string;
+  json += this->state_name_(this->state);
   json += "\",\"valid_broadcast\":";
   json += this->valid_broadcast ? "true" : "false";
   json += ",\"transition_sequence\":";
@@ -1595,7 +1964,7 @@ std::string UAPBridge_esp::http_debug_persistent_log_summary_json_() {
   json += UAPBRIDGE_PERSISTENT_LOG_MOUNT;
   json += "\",\"file\":\"";
   json += UAPBRIDGE_PERSISTENT_LOG_FILE;
-  json += "\",\"compression\":\"binary_records_cooperative_flash_staged\"";
+  json += "\",\"compression\":\"binary_records_psram_live_buffer\"";
   json += ",\"format_version\":";
   json += std::to_string(UAPBRIDGE_PERSISTENT_LOG_VERSION);
   json += ",\"filesystem_total\":";
@@ -1609,7 +1978,7 @@ std::string UAPBridge_esp::http_debug_persistent_log_summary_json_() {
   json += ",\"ram_used\":";
   json += std::to_string(this->persistent_log_ram_used_);
   json += ",\"ram_capacity\":";
-  json += std::to_string(UAPBRIDGE_PERSISTENT_LOG_RAM_CAPACITY);
+  json += std::to_string(this->persistent_log_ram_capacity_);
   json += ",\"flush_pending_bytes\":";
   json += std::to_string(this->persistent_log_flush_len_ > this->persistent_log_flush_offset_
                              ? this->persistent_log_flush_len_ - this->persistent_log_flush_offset_
@@ -1732,6 +2101,33 @@ void UAPBridge_esp::http_debug_send_persistent_log_response_(std::unique_ptr<soc
     chunk.clear();
     return ok;
   };
+  auto append_memory_records = [&](const uint8_t *data, size_t len) -> bool {
+    size_t offset = 0;
+    while (offset < len) {
+      const uint8_t total_len = data[offset];
+      if (total_len == 0 || total_len > UAPBRIDGE_PLOG_MAX_RECORD_TOTAL_LEN || offset + total_len > len) {
+        if (!flush_chunk()) {
+          return false;
+        }
+        std::string error = first ? "" : ",";
+        error += "{\"decode_error\":\"truncated persistent log memory buffer\"}";
+        if (!this->http_debug_write_all_(client.get(), error, 1000)) {
+          return false;
+        }
+        return true;
+      }
+      std::string item = first ? "" : ",";
+      item += this->http_debug_persistent_log_record_json_(data + offset, total_len);
+      if (chunk.size() + item.size() > 2048 && !flush_chunk()) {
+        return false;
+      }
+      chunk += item;
+      first = false;
+      offset += total_len;
+      this->service_bus_during_http_transfer_();
+    }
+    return true;
+  };
   FILE *file = fopen(UAPBRIDGE_PERSISTENT_LOG_FILE, "rb");
   if (file != nullptr) {
     while (true) {
@@ -1764,6 +2160,15 @@ void UAPBridge_esp::http_debug_send_persistent_log_response_(std::unique_ptr<soc
     }
     fclose(file);
   }
+  if (this->persistent_log_flush_len_ > this->persistent_log_flush_offset_ &&
+      !append_memory_records(this->persistent_log_flush_ + this->persistent_log_flush_offset_,
+                             this->persistent_log_flush_len_ - this->persistent_log_flush_offset_)) {
+    return;
+  }
+  if (this->persistent_log_ram_used_ > 0 &&
+      !append_memory_records(this->persistent_log_ram_, this->persistent_log_ram_used_)) {
+    return;
+  }
   if (!flush_chunk()) {
     return;
   }
@@ -1775,35 +2180,62 @@ void UAPBridge_esp::http_debug_send_persistent_log_response_(std::unique_ptr<soc
 void UAPBridge_esp::http_debug_send_persistent_log_binary_response_(std::unique_ptr<socket::Socket> client) {
   watchdog::WatchdogManager watchdog(60000);
   this->persistent_log_refresh_fs_info_();
+  const size_t pending_flush_bytes = this->persistent_log_flush_len_ > this->persistent_log_flush_offset_
+                                         ? this->persistent_log_flush_len_ - this->persistent_log_flush_offset_
+                                         : 0;
+  const size_t content_len = this->persistent_log_file_bytes_ + pending_flush_bytes + this->persistent_log_ram_used_;
   std::string header =
       "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n"
       "Access-Control-Allow-Origin: *\r\nContent-Length: ";
-  header += std::to_string(this->persistent_log_file_bytes_);
+  header += std::to_string(content_len);
   header += "\r\n\r\n";
   if (!this->http_debug_write_all_(client.get(), header, 1000)) {
     return;
   }
 
+  auto write_memory = [&](const uint8_t *data, size_t len) -> bool {
+    size_t offset = 0;
+    while (offset < len) {
+      const size_t chunk = std::min<size_t>(len - offset, 1024);
+      if (!this->http_debug_write_all_(client.get(), std::string((const char *) data + offset, chunk), 1000)) {
+        return false;
+      }
+      offset += chunk;
+      this->service_bus_during_http_transfer_();
+    }
+    return true;
+  };
+
   FILE *file = fopen(UAPBRIDGE_PERSISTENT_LOG_FILE, "rb");
-  if (file == nullptr) {
+  if (file != nullptr) {
+    char buffer[1024];
+    while (true) {
+      const size_t len = fread(buffer, 1, sizeof(buffer), file);
+      if (len == 0) {
+        break;
+      }
+      if (!this->http_debug_write_all_(client.get(), std::string(buffer, len), 1000)) {
+        fclose(file);
+        return;
+      }
+      this->service_bus_during_http_transfer_();
+    }
+    fclose(file);
+  }
+  if (pending_flush_bytes > 0 &&
+      !write_memory(this->persistent_log_flush_ + this->persistent_log_flush_offset_, pending_flush_bytes)) {
     return;
   }
-  char buffer[1024];
-  while (true) {
-    const size_t len = fread(buffer, 1, sizeof(buffer), file);
-    if (len == 0) {
-      break;
-    }
-    if (!this->http_debug_write_all_(client.get(), std::string(buffer, len), 1000)) {
-      fclose(file);
-      return;
-    }
-    this->service_bus_during_http_transfer_();
+  if (this->persistent_log_ram_used_ > 0 && !write_memory(this->persistent_log_ram_, this->persistent_log_ram_used_)) {
+    return;
   }
-  fclose(file);
 }
 
 void UAPBridge_esp::service_bus_during_http_transfer_() {
+  if (this->bus_task_started_) {
+    this->process_bus_debug_events_();
+    return;
+  }
   this->loop_fast();
 }
 
@@ -1904,7 +2336,42 @@ uint8_t UAPBridge_esp::broadcast_status_record_count_() const {
   return count;
 }
 
+void UAPBridge_esp::setup_persistent_log_buffers_() {
+  if (this->persistent_log_ram_ != nullptr && this->persistent_log_flush_ != nullptr) {
+    return;
+  }
+
+  this->persistent_log_ram_ = this->persistent_log_fallback_ram_;
+  this->persistent_log_flush_ = this->persistent_log_fallback_flush_;
+  this->persistent_log_ram_capacity_ = UAPBRIDGE_PERSISTENT_LOG_FALLBACK_RAM_CAPACITY;
+
+#ifdef USE_ESP32
+  uint8_t *ram = static_cast<uint8_t *>(heap_caps_malloc(UAPBRIDGE_PERSISTENT_LOG_TARGET_RAM_CAPACITY,
+                                                        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  uint8_t *flush = static_cast<uint8_t *>(heap_caps_malloc(UAPBRIDGE_PERSISTENT_LOG_TARGET_RAM_CAPACITY,
+                                                          MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (ram != nullptr && flush != nullptr) {
+    this->persistent_log_ram_ = ram;
+    this->persistent_log_flush_ = flush;
+    this->persistent_log_ram_capacity_ = UAPBRIDGE_PERSISTENT_LOG_TARGET_RAM_CAPACITY;
+    ESP_LOGI(TAG, "Persistent protocol log buffers allocated in PSRAM: %u bytes",
+             (unsigned int) this->persistent_log_ram_capacity_);
+    return;
+  }
+  if (ram != nullptr) {
+    heap_caps_free(ram);
+  }
+  if (flush != nullptr) {
+    heap_caps_free(flush);
+  }
+#endif
+
+  ESP_LOGW(TAG, "Using fallback internal RAM persistent protocol log buffer: %u bytes",
+           (unsigned int) this->persistent_log_ram_capacity_);
+}
+
 bool UAPBridge_esp::setup_persistent_log_(bool format_if_mount_failed) {
+  this->setup_persistent_log_buffers_();
   if (this->persistent_log_fs_mounted_) {
     this->persistent_log_refresh_fs_info_();
     return true;
@@ -1967,7 +2434,7 @@ void UAPBridge_esp::reset_persistent_log_store_() {
   this->persistent_log_dropped_bytes_ = 0;
   this->persistent_log_dirty_ = false;
   this->persistent_log_unsaved_records_ = 0;
-  this->persistent_log_last_record_pos_ = 0xFFFF;
+  this->persistent_log_last_record_pos_ = 0xFFFFFFFF;
   this->persistent_log_last_record_len_ = 0;
 }
 
@@ -2043,7 +2510,7 @@ void UAPBridge_esp::append_persistent_log_record_(uint8_t type, uint8_t source, 
   const uint32_t event_us = timestamp_us == 0 ? micros() : timestamp_us;
   const uint16_t state_value = (uint16_t) this->state;
 
-  if (this->persistent_log_last_record_pos_ != 0xFFFF &&
+  if (this->persistent_log_last_record_pos_ != 0xFFFFFFFF &&
       this->persistent_log_last_record_len_ == total_len &&
       this->persistent_log_last_record_pos_ + total_len <= this->persistent_log_ram_used_ &&
       this->persistent_log_ram_[this->persistent_log_last_record_pos_] == total_len) {
@@ -2067,11 +2534,13 @@ void UAPBridge_esp::append_persistent_log_record_(uint8_t type, uint8_t source, 
     }
   }
 
-  if (this->persistent_log_ram_used_ + total_len > UAPBRIDGE_PERSISTENT_LOG_RAM_CAPACITY) {
-    this->queue_persistent_log_flush_();
-    this->write_persistent_log_chunk_();
+  if (this->persistent_log_ram_used_ + total_len > this->persistent_log_ram_capacity_) {
+    if (!this->bus_task_started_) {
+      this->queue_persistent_log_flush_();
+      this->write_persistent_log_chunk_();
+    }
   }
-  if (this->persistent_log_ram_used_ + total_len > UAPBRIDGE_PERSISTENT_LOG_RAM_CAPACITY ||
+  if (this->persistent_log_ram_used_ + total_len > this->persistent_log_ram_capacity_ ||
       this->persistent_log_file_bytes_ + this->persistent_log_ram_used_ + total_len >
           UAPBRIDGE_PERSISTENT_LOG_MAX_FILE_BYTES) {
     this->persistent_log_dropped_records_++;
@@ -2101,7 +2570,7 @@ void UAPBridge_esp::append_persistent_log_record_(uint8_t type, uint8_t source, 
     memcpy(payload + UAPBRIDGE_PLOG_FIXED_PAYLOAD_LEN, data, len);
   }
 
-  const uint16_t write_pos = this->persistent_log_ram_used_;
+  const uint32_t write_pos = this->persistent_log_ram_used_;
   memcpy(this->persistent_log_ram_ + write_pos, record, total_len);
   this->persistent_log_ram_used_ += total_len;
   this->persistent_log_last_record_pos_ = write_pos;
@@ -2110,6 +2579,9 @@ void UAPBridge_esp::append_persistent_log_record_(uint8_t type, uint8_t source, 
 }
 
 void UAPBridge_esp::service_persistent_log_save_() {
+  if (this->bus_task_started_) {
+    return;
+  }
   if (this->persistent_log_flush_len_ > 0) {
     this->write_persistent_log_chunk_();
   }
@@ -2119,7 +2591,9 @@ void UAPBridge_esp::service_persistent_log_save_() {
   }
 
   const uint32_t now = millis();
-  if (this->persistent_log_ram_used_ < UAPBRIDGE_PERSISTENT_LOG_FLUSH_THRESHOLD &&
+  const uint32_t flush_threshold =
+      this->persistent_log_ram_capacity_ > 512 ? this->persistent_log_ram_capacity_ - 512 : this->persistent_log_ram_capacity_;
+  if (this->persistent_log_ram_used_ < flush_threshold &&
       now - this->persistent_log_last_save_ms_ < UAPBRIDGE_PERSISTENT_LOG_SAVE_INTERVAL_MS) {
     return;
   }
@@ -2130,6 +2604,10 @@ void UAPBridge_esp::service_persistent_log_save_() {
 }
 
 bool UAPBridge_esp::save_persistent_log_(bool force) {
+  if (this->bus_task_started_) {
+    this->persistent_log_last_save_ms_ = millis();
+    return true;
+  }
   if (!force && !this->persistent_log_dirty_ && this->persistent_log_flush_len_ == 0) {
     return true;
   }
@@ -2182,7 +2660,7 @@ bool UAPBridge_esp::queue_persistent_log_flush_() {
   this->persistent_log_flush_len_ = this->persistent_log_ram_used_;
   this->persistent_log_flush_offset_ = 0;
   this->persistent_log_ram_used_ = 0;
-  this->persistent_log_last_record_pos_ = 0xFFFF;
+  this->persistent_log_last_record_pos_ = 0xFFFFFFFF;
   this->persistent_log_last_record_len_ = 0;
   return true;
 }

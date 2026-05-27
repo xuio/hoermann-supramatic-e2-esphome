@@ -16,6 +16,10 @@ esp32:
   framework:
     type: esp-idf
 
+psram:
+  mode: octal
+  speed: 80MHz
+
 external_components:
   - source:
       type: local
