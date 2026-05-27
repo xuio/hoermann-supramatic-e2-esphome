@@ -64,3 +64,19 @@ The piecewise empirical model fits the AUTO_04 points exactly because it uses th
 ![Interrupted target fit](interrupted_target_fit.png)
 
 ![Interrupted stop response fit](interrupted_stop_response_fit.png)
+
+## Recovered Model From Existing Runs
+
+A new run is not strictly required for a first model. We can recover stop-response observations from AUTO_02 and AUTO_04 because both contain command timestamps, stop timestamps, and video-derived physical positions. AUTO_02 `target_25_from_open` is excluded because the recorded video did not contain a valid movement away from open.
+
+| Class | Model | N | RMSE | Max error |
+| --- | --- | ---: | ---: | ---: |
+| opening_from_closed | `current_target_equals_settled_assumption` | 6 | 16.83 pp | 25.18 pp |
+| opening_from_closed | `linear_stop_position_to_settled: settled=0.975103*stop_position+2.083240` | 6 | 0.30 pp | 0.52 pp |
+| closing_from_open | `current_target_equals_settled_assumption` | 5 | 7.69 pp | 8.42 pp |
+| closing_from_open | `linear_stop_position_to_settled: settled=0.992568*stop_position+-0.163212` | 5 | 0.10 pp | 0.12 pp |
+
+
+Cross-run validation is the important caveat: closing-from-open generalizes well across AUTO_02 and AUTO_04, while opening-from-closed is less stable because those runs were made under different firmware behavior and the bad estimator influenced the tested stop times. The recovered model is still good enough for a provisional firmware table, especially for closing, but opening should be clamped/conservative until another capture validates interpolation.
+
+![Recovered interrupted model fit](recovered_interrupted_model_fit.png)

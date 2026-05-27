@@ -1,0 +1,9 @@
+class,model,n,rmse_pp,mae_pp,max_abs_error_pp
+opening_from_closed,current_target_equals_settled_assumption,6,16.82699223220454,15.467100077647174,25.184445372168753
+opening_from_closed,linear_stop_position_to_settled: settled=0.975103*stop_position+2.083240,6,0.2957326533226556,0.2461314552094566,0.5211932677028983
+opening_from_closed,cross_run_linear_train_AUTO02_test_other: settled=0.977969*stop_position+1.836807,3,0.4526594416024825,0.4158841406612031,0.6662721552795929
+opening_from_closed,cross_run_linear_train_AUTO04_test_other: settled=0.983005*stop_position+1.874637,3,0.2821007319419026,0.2745629713482008,0.3271343722529352
+closing_from_open,current_target_equals_settled_assumption,5,7.6935643578784,7.66720264589784,8.424123811030213
+closing_from_open,linear_stop_position_to_settled: settled=0.992568*stop_position+-0.163212,5,0.09679941388093263,0.08955950695657933,0.12408592581108735
+closing_from_open,cross_run_linear_train_AUTO02_test_other: settled=0.994037*stop_position+-0.143768,3,0.17400028327129582,0.14962169681179086,0.2182274147056944
+closing_from_open,cross_run_linear_train_AUTO04_test_other: settled=0.990061*stop_position+-0.122683,2,0.20513123671647857,0.19851956755097788,0.2501800512518173
