@@ -1,0 +1,57 @@
+{
+  "endpoints": {
+    "10": {
+      "closed": [
+        391.4829121183648,
+        1352.8018275938236
+      ],
+      "denom": 1271858.7073740312,
+      "open": [
+        544.1203598071844,
+        235.4117806822387
+      ],
+      "vent": [
+        393.20634878203487,
+        1312.382682249903
+      ]
+    },
+    "11": {
+      "closed": [
+        192.6206413344196,
+        1422.0941552156178
+      ],
+      "denom": 1544758.3790586737,
+      "open": [
+        305.0492361016893,
+        184.3065360590313
+      ],
+      "vent": [
+        194.18437963560737,
+        1377.720523510915
+      ]
+    }
+  },
+  "samples": 181,
+  "windows": {
+    "close": {
+      "command_video_s": 33.0,
+      "duration_s": 17.5,
+      "end_video_s": 52.0,
+      "start_video_s": 34.5
+    },
+    "open": {
+      "command_video_s": 9.5,
+      "duration_s": 10.0,
+      "end_video_s": 22.0,
+      "start_video_s": 12.0
+    },
+    "vent_from_closed": {
+      "command_video_s": 66.0,
+      "duration_s": 0.0,
+      "end_video_s": 68.5,
+      "final_open_height_m": 0.07494087148021437,
+      "final_progress_open_fraction": 0.035686129276292555,
+      "start_video_s": 68.5
+    }
+  }
+}
