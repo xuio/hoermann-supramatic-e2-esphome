@@ -41,6 +41,9 @@ EVENT_SCHEDULE_VENT = 12
 EVENT_COMMAND_VENT = 13
 EVENT_HCP_VENTING = 14
 EVENT_SEQUENCE_DONE = 15
+EVENT_SCHEDULE_TARGET = 16
+EVENT_COMMAND_TARGET = 17
+EVENT_TARGET_REACHED = 18
 
 QR_PAYLOAD_PREFIX = "GDS1"
 QR_COMPACT_PAYLOAD_PREFIX = "G1"
@@ -69,6 +72,9 @@ EVENT_NAMES = {
     EVENT_COMMAND_VENT: "command_vent",
     EVENT_HCP_VENTING: "hcp_venting",
     EVENT_SEQUENCE_DONE: "sequence_done",
+    EVENT_SCHEDULE_TARGET: "scheduled_target",
+    EVENT_COMMAND_TARGET: "command_target",
+    EVENT_TARGET_REACHED: "target_reached",
 }
 
 
@@ -163,24 +169,28 @@ COMMAND_EVENT = {
     "open": EVENT_COMMAND_OPEN,
     "close": EVENT_COMMAND_CLOSE,
     "vent": EVENT_COMMAND_VENT,
+    "target": EVENT_COMMAND_TARGET,
 }
 
 SCHEDULE_EVENT = {
     "open": EVENT_SCHEDULE_OPEN,
     "close": EVENT_SCHEDULE_CLOSE,
     "vent": EVENT_SCHEDULE_VENT,
+    "target": EVENT_SCHEDULE_TARGET,
 }
 
 COMMAND_COLOR = {
     "open": "#00ff88",
     "close": "#ff66aa",
     "vent": "#b86bff",
+    "target": "#ffd166",
 }
 
 SCHEDULE_COLOR = {
     "open": "#0b4dff",
     "close": "#ff2020",
     "vent": "#8a2be2",
+    "target": "#9a6b00",
 }
 
 
@@ -271,8 +281,21 @@ def print_http(label: str, result: HttpResult) -> None:
         print(result.text[:300])
 
 
-def parse_sequence(sequence: str) -> list[dict[str, str]]:
+def parse_sequence(sequence: str) -> list[dict[str, Any]]:
     presets = {
+        "position_targets": [
+            ("open", "Open", "calibrate_open"),
+            ("close", "Closed", "calibrate_close"),
+            ("target:25", "Position", "target_25_from_closed"),
+            ("close", "Closed", "reset_closed_after_25"),
+            ("target:50", "Position", "target_50_from_closed"),
+            ("close", "Closed", "reset_closed_after_50"),
+            ("open", "Open", "setup_open_for_descending_targets"),
+            ("target:75", "Position", "target_75_from_open"),
+            ("open", "Open", "reset_open_after_75"),
+            ("target:50", "Position", "target_50_from_open"),
+            ("close", "Closed", "final_close"),
+        ],
         "full_and_vent": [
             ("open", "Open", "full_open"),
             ("close", "Closed", "full_close"),
@@ -296,9 +319,26 @@ def parse_sequence(sequence: str) -> list[dict[str, str]]:
                 source.append(("close", "Closed", "close"))
             elif action in {"vent", "venting"}:
                 source.append(("vent", "Venting", "vent"))
+            elif action.startswith(("target", "position")):
+                match = re.match(r"^(?:target|position)[:=_-]?(\d+(?:\.\d+)?)$", action)
+                if not match:
+                    raise SystemExit(f"Unsupported target sequence action: {action}")
+                percent = float(match.group(1))
+                if percent < 0 or percent > 100:
+                    raise SystemExit(f"Target position must be 0..100: {action}")
+                source.append((f"target:{percent:g}", "Position", f"target_{percent:g}"))
             else:
                 raise SystemExit(f"Unsupported sequence action: {action}")
-    return [{"action": action, "target_state": target, "label": label} for action, target, label in source]
+    steps = []
+    for action, target, label in source:
+        step: dict[str, Any] = {"target_state": target, "label": label}
+        if action.startswith("target:"):
+            step["action"] = "target"
+            step["target_position"] = float(action.split(":", 1)[1])
+        else:
+            step["action"] = action
+        steps.append(step)
+    return steps
 
 
 class CaptureCoordinator:
@@ -323,6 +363,7 @@ class CaptureCoordinator:
                 "motion_timeout_s": args.motion_timeout,
                 "vent_observe_duration_s": args.vent_observe_duration,
                 "vent_motion_timeout_s": args.vent_motion_timeout,
+                "target_tolerance_percent": args.target_tolerance,
                 "cover_object_id": args.cover_object_id,
                 "automatic_sequence": args.sequence,
                 "dry_run": args.dry_run,
@@ -389,7 +430,14 @@ class CaptureCoordinator:
             self.flash_label = label
             self.flash_until = time.monotonic() + duration_s
 
-    def schedule_action(self, action: str, *, delay_s: float | None = None, label: str | None = None) -> None:
+    def schedule_action(
+        self,
+        action: str,
+        *,
+        delay_s: float | None = None,
+        label: str | None = None,
+        target_position: float | None = None,
+    ) -> None:
         if action not in COMMAND_EVENT:
             self.set_error(f"Unsupported action: {action}")
             return
@@ -404,8 +452,13 @@ class CaptureCoordinator:
                 "delay_s": delay,
                 "due_monotonic_s": due,
                 "scheduled_at_monotonic_s": time.monotonic(),
+                "target_position": target_position,
             }
-        self.add_event("schedule", f"{action}_scheduled", {"action": action, "label": label or action, "delay_s": delay})
+        self.add_event(
+            "schedule",
+            f"{action}_scheduled",
+            {"action": action, "label": label or action, "delay_s": delay, "target_position": target_position},
+        )
         self.set_flash(event_code, color, f"{action.upper()} SCHEDULED", duration_s=0.9)
 
     def cancel_scheduled(self) -> None:
@@ -463,7 +516,12 @@ class CaptureCoordinator:
             self.sequence_waiting_for_state = None
             self.sequence_wait_started_monotonic = None
         self.add_event("sequence", "step_scheduled", {"index": next_index, "step": step, "delay_s": delay})
-        self.schedule_action(step["action"], delay_s=delay, label=step["label"])
+        self.schedule_action(
+            step["action"],
+            delay_s=delay,
+            label=step["label"],
+            target_position=step.get("target_position"),
+        )
 
     def on_sequence_command_sent(self, action: str) -> None:
         with self.lock:
@@ -487,6 +545,7 @@ class CaptureCoordinator:
             index = self.sequence_index
             step = self.sequence_steps[index] if 0 <= index < len(self.sequence_steps) else {}
             cover_operation = self.hcp.get("cover_operation")
+            cover_position = self.hcp.get("cover_position")
         if not target_state or wait_started is None:
             return
         wait_elapsed = time.monotonic() - wait_started
@@ -494,6 +553,29 @@ class CaptureCoordinator:
             advance = True
             event_label = "target_state_reached"
             event_data = {"index": index, "target_state": target_state}
+        elif target_state.lower() == "position" and self.is_idle_cover_operation(cover_operation):
+            target_position = step.get("target_position")
+            try:
+                position_percent = float(cover_position) * 100.0
+                target_percent = float(target_position)
+            except (TypeError, ValueError):
+                position_percent = None
+                target_percent = None
+            if (
+                position_percent is not None
+                and target_percent is not None
+                and abs(position_percent - target_percent) <= self.args.target_tolerance
+            ):
+                advance = True
+                event_label = "target_position_reached"
+                event_data = {
+                    "index": index,
+                    "target_position": target_percent,
+                    "cover_position": position_percent,
+                    "tolerance_percent": self.args.target_tolerance,
+                    "elapsed_s": wait_elapsed,
+                    "step": step,
+                }
         elif target_state.lower() == "venting" and wait_elapsed >= self.args.vent_observe_duration and self.is_idle_cover_operation(cover_operation):
             advance = True
             event_label = "vent_observe_duration_elapsed"
@@ -531,17 +613,23 @@ class CaptureCoordinator:
     def tick(self, worker: Any) -> None:
         due_action: str | None = None
         due_label: str | None = None
+        due_target_position: float | None = None
         with self.lock:
             if self.scheduled and time.monotonic() >= self.scheduled["due_monotonic_s"]:
                 due_action = self.scheduled["action"]
                 due_label = self.scheduled.get("label")
+                due_target_position = self.scheduled.get("target_position")
                 self.scheduled = None
         if due_action is not None:
             event_code = COMMAND_EVENT[due_action]
             color = COMMAND_COLOR[due_action]
-            self.add_event("command", f"{due_action}_command_requested", {"action": due_action, "label": due_label or due_action})
-            self.set_flash(event_code, color, f"SEND {due_action.upper()}", duration_s=1.2)
-            worker.submit_cover_command(due_action)
+            event_data = {"action": due_action, "label": due_label or due_action, "target_position": due_target_position}
+            self.add_event("command", f"{due_action}_command_requested", event_data)
+            flash_label = f"SEND {due_action.upper()}"
+            if due_action == "target" and due_target_position is not None:
+                flash_label = f"SEND {due_target_position:.0f}%"
+            self.set_flash(event_code, color, flash_label, duration_s=1.2)
+            worker.submit_cover_command(due_action, due_target_position)
             self.on_sequence_command_sent(due_action)
         self.service_sequence_wait_()
 
@@ -706,6 +794,7 @@ class NativeApiWorker(threading.Thread):
         )
         await self.client.connect(login=True)
         _info, entities, _services = await self.client.device_info_and_list_entities()
+        requires_vent_button = any(step.get("action") == "vent" for step in self.coordinator.sequence_steps)
         for entity in entities:
             object_id = getattr(entity, "object_id", "")
             self.entity_names[entity.key] = (type(entity).__name__, object_id)
@@ -715,11 +804,19 @@ class NativeApiWorker(threading.Thread):
                 self.vent_button_key = entity.key
         if self.cover_key is None:
             raise RuntimeError(f"Could not find cover object_id {self.cover_object_id!r}")
-        if self.vent_button_key is None:
+        if requires_vent_button and self.vent_button_key is None:
             raise RuntimeError("Could not find vent button object_id 'garage_door_vent'")
         self.client.subscribe_states(self.on_state)
         self.ready.set()
-        self.coordinator.add_event("native_api", "connected", {"cover_key": self.cover_key, "vent_button_key": self.vent_button_key})
+        self.coordinator.add_event(
+            "native_api",
+            "connected",
+            {
+                "cover_key": self.cover_key,
+                "vent_button_key": self.vent_button_key,
+                "requires_vent_button": requires_vent_button,
+            },
+        )
         while not self.stop_requested.is_set():
             await asyncio.sleep(0.1)
         await self.client.disconnect()
@@ -735,11 +832,11 @@ class NativeApiWorker(threading.Thread):
                 payload[attr] = str(value) if not isinstance(value, (int, float, bool, str, type(None))) else value
         self.coordinator.update_hcp_state(object_id, payload)
 
-    def submit_cover_command(self, action: str) -> None:
+    def submit_cover_command(self, action: str, target_position: float | None = None) -> None:
         if self.loop is None or self.client is None or self.cover_key is None:
             self.coordinator.set_error("ESPHome API is not ready")
             return
-        future = asyncio.run_coroutine_threadsafe(self.send_cover_command(action), self.loop)
+        future = asyncio.run_coroutine_threadsafe(self.send_cover_command(action, target_position), self.loop)
         future.add_done_callback(self.on_command_done)
 
     def on_command_done(self, future: "asyncio.Future[None]") -> None:
@@ -748,18 +845,26 @@ class NativeApiWorker(threading.Thread):
         except Exception as err:  # noqa: BLE001
             self.coordinator.set_error(f"ESPHome command failed: {err}")
 
-    async def send_cover_command(self, action: str) -> None:
+    async def send_cover_command(self, action: str, target_position: float | None = None) -> None:
         if action == "open":
             self.client.cover_command(self.cover_key, position=1.0)
         elif action == "close":
             self.client.cover_command(self.cover_key, position=0.0)
         elif action == "vent":
+            if self.vent_button_key is None:
+                raise RuntimeError("Cannot send vent command because garage_door_vent was not discovered")
             self.client.button_command(self.vent_button_key)
         elif action == "stop":
             self.client.cover_command(self.cover_key, stop=True)
+        elif action == "target" and target_position is not None:
+            self.client.cover_command(self.cover_key, position=max(0.0, min(1.0, target_position / 100.0)))
         else:
             raise ValueError(f"Unsupported cover action: {action}")
-        self.coordinator.add_event("native_api_command", f"cover_{action}_sent", {"action": action})
+        self.coordinator.add_event(
+            "native_api_command",
+            f"cover_{action}_sent",
+            {"action": action, "target_position": target_position},
+        )
 
     def stop(self) -> None:
         self.stop_requested.set()
@@ -771,6 +876,7 @@ class DryRunWorker:
     def __init__(self, coordinator: CaptureCoordinator, motion_duration_s: float) -> None:
         self.coordinator = coordinator
         self.motion_duration_s = motion_duration_s
+        self.position = 0.0
         self.ready = threading.Event()
         self.ready.set()
         self.stopped = threading.Event()
@@ -799,10 +905,10 @@ class DryRunWorker:
         for timer in timers:
             timer.cancel()
 
-    def submit_cover_command(self, action: str) -> None:
+    def submit_cover_command(self, action: str, target_position: float | None = None) -> None:
         if self.stopped.is_set():
             return
-        plan = self._simulation_plan(action)
+        plan = self._simulation_plan(action, target_position)
         self.coordinator.add_event(
             "dry_run_command",
             f"{action}_simulated",
@@ -832,7 +938,7 @@ class DryRunWorker:
         with self.lock:
             self.timers = [timer for timer in self.timers if timer.is_alive()]
 
-    def _simulation_plan(self, action: str) -> dict[str, Any]:
+    def _simulation_plan(self, action: str, target_position: float | None = None) -> dict[str, Any]:
         if action == "open":
             return {
                 "moving_state": "Opening",
@@ -874,6 +980,18 @@ class DryRunWorker:
                 "moving_raw": "0xD00080",
                 "target_raw": "0xD00081",
             }
+        if action == "target" and target_position is not None:
+            target = max(0.0, min(1.0, target_position / 100.0))
+            opening = target >= self.position
+            return {
+                "moving_state": "Opening" if opening else "Closing",
+                "target_state": "Stopped",
+                "moving_position": (self.position + target) / 2.0,
+                "target_position": target,
+                "moving_operation": "OPENING" if opening else "CLOSING",
+                "moving_raw": "0xD00040" if opening else "0xD00060",
+                "target_raw": "0xD00000",
+            }
         raise ValueError(f"Unsupported cover action: {action}")
 
     def _publish_state(self, state: str, *, position: float, operation: str, raw: str) -> None:
@@ -883,6 +1001,7 @@ class DryRunWorker:
         self.coordinator.update_hcp_state("garage_door_light", {"state": False})
         self.coordinator.update_hcp_state("garage_door", {"position": position, "current_operation": operation})
         self.coordinator.update_hcp_state("garage_door_state", {"state": state})
+        self.position = position
 
 
 class FullscreenDisplay:
@@ -1287,6 +1406,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--motion-timeout", type=float, default=90.0, help="Maximum seconds to wait for each HCP target state")
     parser.add_argument("--vent-observe-duration", type=float, default=20.0, help="Seconds to keep recording after a vent command when HCP reports only Stopped/idle instead of Venting")
     parser.add_argument("--vent-motion-timeout", type=float, default=35.0, help="Maximum seconds to wait for a vent command before aborting if the opener still appears to be moving")
+    parser.add_argument("--target-tolerance", type=float, default=3.0, help="Allowed percentage-point error when waiting for an automatic target-position step")
     parser.add_argument("--dry-run", action="store_true", help="Show the fullscreen visuals and simulated HCP feedback without contacting the ESP or moving the opener")
     parser.add_argument("--dry-run-motion-duration", type=float, default=3.0, help="Seconds before each simulated dry-run command reaches its target state")
     parser.add_argument("--startup-check", action="store_true", help="Start persistent logging and connect to ESPHome, then stop and exit without opening the UI or sending commands")
@@ -1303,8 +1423,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--sequence",
-        default="full_and_vent",
-        help="Preset 'full_and_vent' or comma-separated commands such as open,close,vent,open,vent,close",
+        default="position_targets",
+        help="Preset 'position_targets', preset 'full_and_vent', or comma-separated commands such as open,close,target:25,close",
     )
     parser.add_argument("--output-dir", type=Path, default=Path("captures"))
     parser.add_argument("--yes", action="store_true", help="Skip the physical-presence prompt")

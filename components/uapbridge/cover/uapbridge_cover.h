@@ -20,11 +20,20 @@ class UAPBridgeCover : public cover::Cover, public Component {
   uint32_t get_open_duration() const { return this->open_duration_ms_; }
   void set_close_duration(uint32_t value);
   uint32_t get_close_duration() const { return this->close_duration_ms_; }
+  void set_open_start_delay(uint32_t value);
+  uint32_t get_open_start_delay() const { return this->open_start_delay_ms_; }
+  void set_close_start_delay(uint32_t value);
+  uint32_t get_close_start_delay() const { return this->close_start_delay_ms_; }
+  void set_open_report_delay(uint32_t value);
+  uint32_t get_open_report_delay() const { return this->open_report_delay_ms_; }
+  void set_close_report_delay(uint32_t value);
+  uint32_t get_close_report_delay() const { return this->close_report_delay_ms_; }
   void set_close_obstruction_grace(uint32_t value) { this->close_obstruction_grace_ms_ = value; }
   void set_position_publish_interval(uint32_t value) { this->position_publish_interval_ms_ = value; }
   void set_position_deadband(float value) { this->position_deadband_ = value; }
   void set_venting_position(float value) { this->venting_position_ = value; }
   void set_learn_travel_durations(bool value) { this->learn_travel_durations_ = value; }
+  void set_use_motion_curve(bool value) { this->use_motion_curve_ = value; }
  protected:
     UAPBridge *parent_;
     cover::CoverOperation previousOperation_ = cover::COVER_OPERATION_IDLE;
@@ -33,14 +42,21 @@ class UAPBridgeCover : public cover::Cover, public Component {
     bool time_based_position_ = false;
     uint32_t open_duration_ms_ = 18000;
     uint32_t close_duration_ms_ = 18000;
+    uint32_t open_start_delay_ms_ = 0;
+    uint32_t close_start_delay_ms_ = 0;
+    uint32_t open_report_delay_ms_ = 0;
+    uint32_t close_report_delay_ms_ = 0;
     uint32_t close_obstruction_grace_ms_ = 5000;
     uint32_t position_publish_interval_ms_ = 1000;
     float position_deadband_ = 0.02f;
     float venting_position_ = 0.2f;
     bool learn_travel_durations_ = true;
+    bool use_motion_curve_ = false;
     float target_position_ = 1.0f;
     uint32_t last_recompute_time_ = 0;
     uint32_t last_publish_time_ = 0;
+    uint32_t movement_started_ms_ = 0;
+    float movement_start_position_ = 0.5f;
     bool pending_movement_ = false;
     cover::CoverOperation pending_operation_ = cover::COVER_OPERATION_IDLE;
     float pending_target_position_ = 1.0f;
@@ -76,6 +92,11 @@ class UAPBridgeCover : public cover::Cover, public Component {
     void load_travel_durations_();
     void save_travel_durations_();
     bool is_valid_travel_duration_(uint32_t duration_ms) const;
+    bool is_valid_delay_(uint32_t delay_ms) const;
+    uint32_t start_delay_for_operation_(cover::CoverOperation operation) const;
+    uint32_t report_delay_for_operation_(cover::CoverOperation operation) const;
+    float curve_time_for_position_(cover::CoverOperation operation, float position) const;
+    float curve_position_for_time_(cover::CoverOperation operation, float normalized_time) const;
     void force_non_closed_estimate_(const char *reason);
     void publish_if_changed_(bool force = false, bool save = true);
     bool almost_equal_(float a, float b) const;

@@ -95,13 +95,21 @@ cover:
     name: "${friendly_name}"
     device_class: garage
     time_based_position: true
-    open_duration: 18s
-    close_duration: 18s
+    # Calibrated from 2026-05-27 ArUco/video + HCP sync captures.
+    # Durations are visible door motion; delays model command-to-motion and
+    # physical-end-to-HCP-end-state latency separately.
+    open_duration: 10215ms
+    close_duration: 18565ms
+    open_start_delay: 2500ms
+    close_start_delay: 1500ms
+    open_report_delay: 600ms
+    close_report_delay: 2600ms
     close_obstruction_grace: 5s
     position_publish_interval: 1s
     position_deadband: 2%
-    venting_position: 20%
+    venting_position: 3.6%
     learn_travel_durations: true
+    use_motion_curve: true
 
 switch:
   - platform: uapbridge
@@ -187,6 +195,70 @@ number:
     set_action:
       - lambda: |-
           id(garage_door_cover).set_close_duration((uint32_t) (x * 1000.0f));
+  - platform: template
+    id: garage_door_open_start_delay_seconds
+    name: "${friendly_name} Open Start Delay"
+    icon: mdi:timer-sand
+    entity_category: config
+    min_value: 0
+    max_value: 15
+    step: 0.1
+    mode: box
+    unit_of_measurement: s
+    update_interval: 5s
+    lambda: |-
+      return id(garage_door_cover).get_open_start_delay() / 1000.0f;
+    set_action:
+      - lambda: |-
+          id(garage_door_cover).set_open_start_delay((uint32_t) (x * 1000.0f));
+  - platform: template
+    id: garage_door_close_start_delay_seconds
+    name: "${friendly_name} Close Start Delay"
+    icon: mdi:timer-sand
+    entity_category: config
+    min_value: 0
+    max_value: 15
+    step: 0.1
+    mode: box
+    unit_of_measurement: s
+    update_interval: 5s
+    lambda: |-
+      return id(garage_door_cover).get_close_start_delay() / 1000.0f;
+    set_action:
+      - lambda: |-
+          id(garage_door_cover).set_close_start_delay((uint32_t) (x * 1000.0f));
+  - platform: template
+    id: garage_door_open_report_delay_seconds
+    name: "${friendly_name} Open Report Delay"
+    icon: mdi:timer-check-outline
+    entity_category: config
+    min_value: 0
+    max_value: 15
+    step: 0.1
+    mode: box
+    unit_of_measurement: s
+    update_interval: 5s
+    lambda: |-
+      return id(garage_door_cover).get_open_report_delay() / 1000.0f;
+    set_action:
+      - lambda: |-
+          id(garage_door_cover).set_open_report_delay((uint32_t) (x * 1000.0f));
+  - platform: template
+    id: garage_door_close_report_delay_seconds
+    name: "${friendly_name} Close Report Delay"
+    icon: mdi:timer-check-outline
+    entity_category: config
+    min_value: 0
+    max_value: 15
+    step: 0.1
+    mode: box
+    unit_of_measurement: s
+    update_interval: 5s
+    lambda: |-
+      return id(garage_door_cover).get_close_report_delay() / 1000.0f;
+    set_action:
+      - lambda: |-
+          id(garage_door_cover).set_close_report_delay((uint32_t) (x * 1000.0f));
 
 sensor:
   - platform: template

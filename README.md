@@ -226,14 +226,20 @@ The main YAML enables time-based position estimation so Home Assistant can show 
 cover:
   - platform: uapbridge
     time_based_position: true
-    open_duration: 18s
-    close_duration: 18s
+    open_duration: 10215ms
+    close_duration: 18565ms
+    open_start_delay: 2500ms
+    close_start_delay: 1500ms
+    open_report_delay: 600ms
+    close_report_delay: 2600ms
     close_obstruction_grace: 5s
+    venting_position: 3.6%
+    use_motion_curve: true
 ```
 
-This is an estimate, not measured position data from the opener. Timing starts when the command is actually sent on the next HCP status response, or when HCP status reports movement. The firmware only reports exact `0%` after the HCP closed bit is decoded; timing alone is clamped above closed so Home Assistant is not told the door is definitely closed when it is not confirmed. If a close reaches the calibrated travel time and the HCP closed bit still does not appear after `close_obstruction_grace`, `Garage Door Obstruction State` turns on and the estimate remains non-closed. Intermediate position targets require a reliable stop path. See [docs/time-based-position.md](docs/time-based-position.md).
+This is an estimate, not measured position data from the opener. The current SupraMatic E2 defaults are calibrated from the 2026-05-27 ArUco/video and HCP sync captures: the duration fields are visible door motion, the start delays model command-to-motion latency, the report delays model physical-end-to-HCP-end-state latency, and `use_motion_curve` interpolates through the measured soft-start/soft-stop curve instead of assuming linear travel. The firmware only reports exact `0%` after the HCP closed bit is decoded; timing alone is clamped above closed so Home Assistant is not told the door is definitely closed when it is not confirmed. If a close reaches the calibrated travel time and the expected report delay plus `close_obstruction_grace` elapses without the HCP closed bit, `Garage Door Obstruction State` turns on and the estimate remains non-closed. Intermediate position targets require a reliable stop path. See [docs/time-based-position.md](docs/time-based-position.md).
 
-Because Home Assistant may hide the position slider for a `device_class: garage` cover, the primary YAML also exposes `Garage Door Target Position` as a number entity. Use that slider for percentage tests. `Garage Door Open Duration` and `Garage Door Close Duration` show the automatically learned runtime calibration values in seconds; clean full open/close runs update and persist them automatically.
+Because Home Assistant may hide the position slider for a `device_class: garage` cover, the primary YAML also exposes `Garage Door Target Position` as a number entity. Use that slider for percentage tests. `Garage Door Open Duration`, `Garage Door Close Duration`, and the start/report delay number entities show the active calibration values in seconds; clean full open/close runs update and persist the visible motion durations automatically.
 
 The E2 light feedback bit is not available in the observed one-byte broadcasts. The light entity is optimistic for manual toggles, and the primary YAML enables courtesy-light estimation: when HCP state reports opening or closing, Home Assistant is told the light is on and the estimate expires after `courtesy_light_duration`.
 
@@ -269,15 +275,15 @@ uv run garage-analyze-hcp-timing \
   --curve-lookup docs/research/analysis/garage-door-motion-20260527/curve_lookup.json
 ```
 
-For a new phone video capture with synchronized protocol logging, use the fullscreen sync display. Start with the door fully closed, start your phone recording with the MacBook screen visible, then press `Space`. The automatic sequence starts after a visible `15s` countdown and records full-open, full-close, vent-from-closed, open setup, vent-from-open, and final close movements while the screen prioritizes a near full-height QR timecode marker and keeps live HCP feedback in compact side text:
+For a new phone video capture with synchronized protocol logging, use the fullscreen sync display. Start with the door fully closed, start your phone recording with the MacBook screen visible, then press `Space`. The default automatic sequence is position-control focused: full open, full close, `25%` from closed, full close, `50%` from closed, full close, full open, `75%` from open, full open, `50%` from open, and final close. The screen prioritizes a near full-height QR timecode marker and keeps live HCP feedback in compact side text:
 
 ```bash
-uv run garage-phone-sync --esp-host <local-ip>
+uv run garage-phone-sync --esp-host <local-ip> --sequence position_targets
 ```
 
 Controls: `Space` starts the sequence or cancels a pending countdown, `M` emits a manual marker flash, and `Q`/`Esc` finishes the capture and downloads the ESP persistent log.
 
-On the SupraMatic E2, the vent/partial-open command may report HCP state `Stopped` instead of `Venting`. The opener display can show `H` at this point; per the Hörmann manual this is the normal "partly open" status, not an error. The capture runner therefore treats vent steps as observed timing windows: it records for `--vent-observe-duration` seconds, default `20s`, after the vent command and then advances if the opener appears idle. This keeps the automatic sequence moving while still preserving the raw HCP/video data needed to improve vent decoding later.
+The old venting capture preset is still available as `--sequence full_and_vent`, but the current calibration path ignores the native vent command. If percentage control is accurate enough, partial-open behavior should be handled by sending a normal cover target instead.
 
 The capture screen keeps the QR code and its keepout area clear, with only rotated status text in the left and right gutters. The far-left vertical bar shows current-step progress, and the far-right vertical bar shows total automation progress. The marker is a compact version-1 QR code with a standard quiet zone, strong error correction, a 10-character alphanumeric base36 payload, and payload CRC validation. Decode a recorded phone video with:
 

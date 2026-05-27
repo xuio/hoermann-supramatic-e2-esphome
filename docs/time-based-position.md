@@ -10,39 +10,55 @@ cover:
     name: "${friendly_name}"
     device_class: garage
     time_based_position: true
-    open_duration: 18s
-    close_duration: 18s
+    open_duration: 10215ms
+    close_duration: 18565ms
+    open_start_delay: 2500ms
+    close_start_delay: 1500ms
+    open_report_delay: 600ms
+    close_report_delay: 2600ms
     close_obstruction_grace: 5s
     position_publish_interval: 1s
     position_deadband: 2%
-    venting_position: 20%
+    venting_position: 3.6%
     learn_travel_durations: true
+    use_motion_curve: true
 ```
 
 Home Assistant sees a normal cover position where `0%` is closed and `100%` is open. This matches the convention used by Home Assistant cover entities and Shelly cover mode.
 
 The garage door cover advertises `supports_position: true`, but some Home Assistant garage-door cards do not expose a percentage slider for `device_class: garage`. The main YAML therefore also exposes a separate `Garage Door Target Position` number entity. Use that number slider to send percentage targets directly while keeping the main entity as a garage-door cover for HomeKit Bridge.
 
-The cover component automatically learns and persists travel durations when it sees a complete full travel from one end state to the other. The main YAML also exposes two configuration numbers:
+The SupraMatic E2 defaults above are calibrated from the 2026-05-27 ArUco marker videos and the first synchronized phone/HCP run:
+
+- `open_duration` / `close_duration`: visible door motion only, not command-to-HCP-end time.
+- `open_start_delay` / `close_start_delay`: delay between the HCP command being transmitted and visible door motion beginning.
+- `open_report_delay` / `close_report_delay`: delay between visible end of travel and the HCP end-state report.
+- `use_motion_curve`: interpolate through the measured soft-start/soft-stop curve instead of assuming a linear position over time.
+- `venting_position`: used only if a future HCP status frame decodes as native venting; current position calibration does not depend on the vent command.
+
+The cover component automatically learns and persists visible travel durations when it sees a complete full travel from one end state to the other. The main YAML also exposes configuration numbers:
 
 - `Garage Door Open Duration`, in seconds.
 - `Garage Door Close Duration`, in seconds.
+- `Garage Door Open Start Delay` and `Garage Door Close Start Delay`, in seconds.
+- `Garage Door Open Report Delay` and `Garage Door Close Report Delay`, in seconds.
 
-These values show the active learned durations from the cover component. You can still override them manually from Home Assistant; manual changes are persisted by the cover component as well.
+These values show the active calibration from the cover component. You can still override them manually from Home Assistant; manual changes are persisted by the cover component as well.
 
 ## Behavior
 
 - Fully open and fully close still use the native HCP open/close commands.
 - Intermediate targets move in the needed direction, estimate travel progress, then send stop at the estimated target.
-- The movement timer is armed by the Home Assistant command, but it does not start counting from the request timestamp. It starts after the one-shot HCP command is actually sent in a status response, or when decoded HCP status reports opening/closing.
+- The movement timer is armed by the Home Assistant command, but it does not start counting from the request timestamp. It starts after the one-shot HCP command is actually sent in a status response.
+- The visible position remains at the start value during the configured start delay, then advances through the configured empirical motion curve over the visible motion duration.
 - During the short start/prewarn window after a command is sent, old opposite end-state broadcasts are ignored so an intermediate target is not discarded before movement is reported.
 - Ambiguous E2 `stopped` / `0x0000` status is ignored while an estimated movement is active. Captures showed the E2 can emit that value during a close attempt, so treating it as a real stop breaks calibration and percentage control.
 - New targets in the current travel direction retarget the active estimate. A target in the opposite direction first sends stop and requires a second explicit command after the door stops.
-- The estimate is corrected to `0%`, `100%`, or the configured venting percentage when the HCP status decoder sees closed, open, or venting.
+- The estimate is corrected to `0%` or `100%` when the HCP status decoder sees closed or open. Native venting is intentionally not part of the current calibration path; use normal percentage targets for partial-open testing.
 - The firmware restores the last estimated cover position after reboot, but a restored exact closed value is clamped above `0%` until the HCP closed bit is decoded again.
 - Full open/close timing completion keeps the cover operation as opening/closing until the corresponding HCP end-state bit confirms the final state.
-- For a full close, if the close duration plus `close_obstruction_grace` elapses without the HCP closed bit, the firmware latches `Garage Door Obstruction State`, stops the estimate at a conservative non-closed value, and blocks further close/venting/impulse commands. An explicit open command is still allowed as recovery and clears the latch when accepted, or when HCP already reports open.
-- If a full end-to-end travel starts from the opposite end and reaches the expected end state, the firmware automatically stores the learned travel duration in flash.
+- For a full close, if the visible close duration plus `close_report_delay` plus `close_obstruction_grace` elapses without the HCP closed bit, the firmware latches `Garage Door Obstruction State`, stops the estimate at a conservative non-closed value, and blocks further close/venting/impulse commands. An explicit open command is still allowed as recovery and clears the latch when accepted, or when HCP already reports open.
+- If a full end-to-end travel starts from the opposite end and reaches the expected end state, the firmware subtracts the configured start/report delays and stores the learned visible travel duration in flash.
 
 ## Safety Limits
 
@@ -59,9 +75,10 @@ These values show the active learned durations from the cover component. You can
 1. Start fully closed.
 2. Open fully and wait for the HCP open end state. The firmware stores the measured open duration automatically.
 3. Close fully and wait for the HCP closed end state. The firmware stores the measured close duration automatically.
-4. Check `Garage Door Open Duration` and `Garage Door Close Duration` in Home Assistant; they should reflect the learned values.
-5. Test `75%`, `50%`, and `25%` with the `Garage Door Target Position` number while standing at the door.
-6. If a value is obviously wrong because the run was interrupted, enter a corrected duration manually or repeat a clean full run.
+4. Check `Garage Door Open Duration` and `Garage Door Close Duration` in Home Assistant; they should reflect visible motion time, not command-to-end-state time.
+5. Leave the start/report delays at the measured E2 defaults unless a synchronized video shows a consistent offset.
+6. Test `75%`, `50%`, and `25%` with the `Garage Door Target Position` number while standing at the door.
+7. If a value is obviously wrong because the run was interrupted, enter a corrected duration manually or repeat a clean full run.
 
 For repeatable position tests, use [tools/garage_test_wizard.py](tools/garage_test_wizard.py). It records full-open clear height in meters and asks for measured clear opening height after each target. The saved CSV gives actual position and target error without guessing percentages by eye.
 
@@ -73,11 +90,11 @@ Use [tools/run_hcp_timing_calibration.py](tools/run_hcp_timing_calibration.py) w
 
 The analyzer treats the first HCP open or closed endpoint bit after a command as the fully stopped endpoint, then shifts the ArUco curve so its end aligns to that HCP endpoint. The reported offset is therefore a combined command-to-motion-start and endpoint-report offset; splitting those requires simultaneous video and HCP capture.
 
-For a simultaneous phone video run, start with the door fully closed and use [tools/run_phone_video_sync_capture.py](tools/run_phone_video_sync_capture.py). It opens a fullscreen Tk display on the MacBook, starts the ESP persistent HCP logger, records a near full-height compact QR timecode timeline, and runs an automatic sequence after `Space`: full open, full close, venting from closed, open setup, venting from open, and final close. Each command is separated by a timed delay and settle period.
+For a simultaneous phone video run, start with the door fully closed and use [tools/run_phone_video_sync_capture.py](tools/run_phone_video_sync_capture.py). It opens a fullscreen Tk display on the MacBook, starts the ESP persistent HCP logger, records a near full-height compact QR timecode timeline, and runs the default `position_targets` sequence after `Space`: full open, full close, `25%` from closed, full close, `50%` from closed, full close, full open, `75%` from open, full open, `50%` from open, and final close. Each command is separated by a timed delay and settle period.
 
 Use `--dry-run` first if you only want to check the fullscreen layout and QR code. Dry run skips all ESPHome API and HTTP calls, sends no opener commands, and simulates HCP state changes locally so the sequence advances without hardware.
 
-For E2 venting tests, do not require a decoded `Venting` text state. The opener display can show `H`, which the Hörmann manual defines as the normal "partly open" status. The runner records a configurable observation window after each vent command, `--vent-observe-duration` defaulting to `20s`, and advances when the opener appears idle. The raw HCP log and video remain the source of truth for later partial-open decoding.
+The old native-venting capture preset is still available with `--sequence full_and_vent`, but it is not used for the current percentage-control calibration. If position control is good enough, partial-open behavior should be tested as a normal cover target.
 
 The capture display keeps the QR code and keepout area clear, with rotated status text only in the left and right gutters. The far-left vertical bar shows current-step progress, and the far-right vertical bar shows total automation progress. The QR payload is a 10-character alphanumeric base36 code in a version-1 symbol with a standard quiet zone, strong error correction, and CRC validation. Use `--hide-side-status` for a QR-only screen, or `--show-overlay-text` only for local debugging when you are not recording calibration video.
 
