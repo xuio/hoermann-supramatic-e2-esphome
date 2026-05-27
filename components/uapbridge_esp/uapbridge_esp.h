@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdio>
 #include <deque>
 #include <memory>
 #include <string>
@@ -31,6 +32,7 @@
 #define UAPBRIDGE_PERSISTENT_LOG_RAM_CAPACITY 16384
 #define UAPBRIDGE_PERSISTENT_LOG_MAX_FILE_BYTES (3 * 1024 * 1024)
 #define UAPBRIDGE_PERSISTENT_LOG_DATA_LEN 32
+#define UAPBRIDGE_PERSISTENT_LOG_WRITE_CHUNK_BYTES 128
 #define UAPBRIDGE_FRAME_SCAN_BUFFER_LEN 24
 
 namespace esphome {
@@ -166,6 +168,11 @@ class UAPBridge_esp : public esphome::uapbridge::UAPBridge {
                                        uint8_t len = 0, uint8_t flags = 0, uint32_t timestamp_us = 0);
     void service_persistent_log_save_();
     bool save_persistent_log_(bool force = false);
+    bool queue_persistent_log_flush_();
+    bool write_persistent_log_chunk_();
+    bool drain_persistent_log_flush_(uint32_t timeout_ms);
+    bool open_persistent_log_file_();
+    void close_persistent_log_file_();
     void mark_persistent_log_dirty_();
     bool persistent_log_write_bytes_(const uint8_t *data, size_t len);
     bool persistent_log_refresh_fs_info_();
@@ -223,7 +230,11 @@ class UAPBridge_esp : public esphome::uapbridge::UAPBridge {
     size_t persistent_log_fs_total_{0};
     size_t persistent_log_fs_used_{0};
     uint16_t persistent_log_ram_used_{0};
+    uint16_t persistent_log_flush_len_{0};
+    uint16_t persistent_log_flush_offset_{0};
     uint8_t persistent_log_ram_[UAPBRIDGE_PERSISTENT_LOG_RAM_CAPACITY]{};
+    uint8_t persistent_log_flush_[UAPBRIDGE_PERSISTENT_LOG_RAM_CAPACITY]{};
+    FILE *persistent_log_file_{nullptr};
     std::unique_ptr<socket::ListenSocket> http_debug_server_;
     std::unique_ptr<socket::Socket> http_debug_pending_client_;
     std::unique_ptr<socket::Socket> http_debug_stream_client_;
