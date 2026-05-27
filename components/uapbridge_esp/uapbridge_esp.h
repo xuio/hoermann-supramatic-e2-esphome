@@ -130,6 +130,7 @@ class UAPBridge_esp : public esphome::uapbridge::UAPBridge {
     std::string http_debug_broadcast_status_json_();
     std::string http_debug_persistent_log_summary_json_();
     void http_debug_send_persistent_log_response_(std::unique_ptr<socket::Socket> client);
+    void http_debug_send_persistent_log_binary_response_(std::unique_ptr<socket::Socket> client);
     std::string http_debug_status_bits_json_(uint16_t status);
     std::string http_debug_hex_encode_(const uint8_t *data, size_t len);
     std::string http_debug_path_from_request_line_(const std::string &request_line);

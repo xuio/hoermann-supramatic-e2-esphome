@@ -40,6 +40,8 @@ curl --max-time 120 http://supramatic-e2.local:8080/persistent_log > persistent-
 
 `/persistent_log/start` enables recording without rebooting. `/persistent_log/stop` disables recording and flushes the RAM staging buffer to the SPIFFS file. `/persistent_log/clear` removes the capture file and leaves recording in its previous enabled or disabled state.
 
+For large captures, `/persistent_log.bin` streams the compact binary capture file directly. This is faster and more reliable than expanding JSON on the ESP; decode it locally with the same record format used by `/persistent_log`.
+
 After first installing a firmware that adds the `hcp_logs` partition, `/persistent_log/clear` may report `"format_required":true`. Run this once:
 
 ```bash

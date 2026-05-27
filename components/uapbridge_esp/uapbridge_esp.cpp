@@ -983,6 +983,11 @@ void UAPBridge_esp::http_debug_handle_request_(std::unique_ptr<socket::Socket> c
     this->http_debug_send_persistent_log_response_(std::move(client));
     return;
   }
+  if (path == "/persistent_log.bin") {
+    this->save_persistent_log_(true);
+    this->http_debug_send_persistent_log_binary_response_(std::move(client));
+    return;
+  }
   if (path == "/persistent_log/start") {
     if (!this->persistent_log_fs_mounted_) {
       this->setup_persistent_log_(false);
@@ -1550,6 +1555,7 @@ std::string UAPBridge_esp::http_debug_persistent_log_record_json_(const uint8_t 
 }
 
 void UAPBridge_esp::http_debug_send_persistent_log_response_(std::unique_ptr<socket::Socket> client) {
+  watchdog::WatchdogManager watchdog(60000);
   std::string header =
       "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nCache-Control: no-cache\r\nConnection: close\r\n"
       "Access-Control-Allow-Origin: *\r\n\r\n";
@@ -1617,6 +1623,36 @@ void UAPBridge_esp::http_debug_send_persistent_log_response_(std::unique_ptr<soc
 
   std::string suffix = "]}\n";
   this->http_debug_write_all_(client.get(), suffix, 1000);
+}
+
+void UAPBridge_esp::http_debug_send_persistent_log_binary_response_(std::unique_ptr<socket::Socket> client) {
+  watchdog::WatchdogManager watchdog(60000);
+  this->persistent_log_refresh_fs_info_();
+  std::string header =
+      "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n"
+      "Access-Control-Allow-Origin: *\r\nContent-Length: ";
+  header += std::to_string(this->persistent_log_file_bytes_);
+  header += "\r\n\r\n";
+  if (!this->http_debug_write_all_(client.get(), header, 1000)) {
+    return;
+  }
+
+  FILE *file = fopen(UAPBRIDGE_PERSISTENT_LOG_FILE, "rb");
+  if (file == nullptr) {
+    return;
+  }
+  char buffer[1024];
+  while (true) {
+    const size_t len = fread(buffer, 1, sizeof(buffer), file);
+    if (len == 0) {
+      break;
+    }
+    if (!this->http_debug_write_all_(client.get(), std::string(buffer, len), 1000)) {
+      fclose(file);
+      return;
+    }
+  }
+  fclose(file);
 }
 
 std::string UAPBridge_esp::http_debug_status_bits_json_(uint16_t status) {
