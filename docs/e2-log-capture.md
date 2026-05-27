@@ -39,7 +39,7 @@ curl http://supramatic-e2.local:8080/persistent_log/clear
 curl http://supramatic-e2.local:8080/persistent_log/start
 # run the physical test
 curl http://supramatic-e2.local:8080/persistent_log/stop
-curl http://supramatic-e2.local:8080/persistent_log > persistent-log.json
+curl --max-time 120 http://supramatic-e2.local:8080/persistent_log > persistent-log.json
 ```
 
-The dump is expanded JSON from a compressed binary ring buffer stored on the ESP. See [persistent-protocol-log.md](docs/persistent-protocol-log.md).
+The dump is expanded JSON from a compact binary capture file stored on the ESP's `hcp_logs` SPIFFS partition. See [persistent-protocol-log.md](docs/persistent-protocol-log.md).

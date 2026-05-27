@@ -1,14 +1,20 @@
 #include "uapbridge_esp.h"
 
 #include <cerrno>
+#include <cstdio>
 #include <cstring>
+
+#include "esphome/components/watchdog/watchdog.h"
+#include "esp_spiffs.h"
 
 namespace esphome {
 namespace uapbridge_esp {
 static const char *const TAG = "uapbridge_esp";
 static constexpr uint32_t UAPBRIDGE_PERSISTENT_LOG_MAGIC = 0x5531504C;  // "U1PL"
-static constexpr uint32_t UAPBRIDGE_PERSISTENT_LOG_VERSION = 0x00020001;
-static constexpr uint32_t UAPBRIDGE_PERSISTENT_LOG_PREF_KEY = 0xA5E20031;
+static constexpr uint32_t UAPBRIDGE_PERSISTENT_LOG_VERSION = 0x00040001;
+static constexpr const char *UAPBRIDGE_PERSISTENT_LOG_PARTITION = "hcp_logs";
+static constexpr const char *UAPBRIDGE_PERSISTENT_LOG_MOUNT = "/hcp";
+static constexpr const char *UAPBRIDGE_PERSISTENT_LOG_FILE = "/hcp/current.hcplog";
 static constexpr uint8_t UAPBRIDGE_PLOG_TYPE_RX = 1;
 static constexpr uint8_t UAPBRIDGE_PLOG_TYPE_TX = 2;
 static constexpr uint8_t UAPBRIDGE_PLOG_TYPE_GAP = 3;
@@ -20,7 +26,7 @@ static constexpr uint8_t UAPBRIDGE_PLOG_FLAG_CRC_OK = 0x01;
 static constexpr uint8_t UAPBRIDGE_PLOG_FIXED_PAYLOAD_LEN = 34;
 static constexpr uint8_t UAPBRIDGE_PLOG_MAX_RECORD_TOTAL_LEN =
     1 + UAPBRIDGE_PLOG_FIXED_PAYLOAD_LEN + UAPBRIDGE_PERSISTENT_LOG_DATA_LEN;
-static constexpr uint32_t UAPBRIDGE_PERSISTENT_LOG_SAVE_INTERVAL_MS = 5000;
+static constexpr uint32_t UAPBRIDGE_PERSISTENT_LOG_SAVE_INTERVAL_MS = 10000;
 
 static void plog_write_u16(uint8_t *dst, uint16_t value) {
   dst[0] = value & 0xFF;
@@ -76,8 +82,12 @@ void UAPBridge_esp::dump_config() {
     ESP_LOGCONFIG(TAG, "  HTTP Debug History Size: %u", this->http_debug_history_size_);
   }
   ESP_LOGCONFIG(TAG, "  Persistent Protocol Log: %s", this->persistent_log_enabled_ ? "enabled" : "disabled");
-  ESP_LOGCONFIG(TAG, "  Persistent Protocol Log Capacity: %u bytes",
-                (unsigned int) UAPBRIDGE_PERSISTENT_LOG_CAPACITY);
+  ESP_LOGCONFIG(TAG, "  Persistent Protocol Log Storage: SPIFFS partition '%s' mounted=%s",
+                UAPBRIDGE_PERSISTENT_LOG_PARTITION, this->persistent_log_fs_mounted_ ? "true" : "false");
+  ESP_LOGCONFIG(TAG, "  Persistent Protocol Log RAM Staging: %u bytes",
+                (unsigned int) UAPBRIDGE_PERSISTENT_LOG_RAM_CAPACITY);
+  ESP_LOGCONFIG(TAG, "  Persistent Protocol Log Max File: %u bytes",
+                (unsigned int) UAPBRIDGE_PERSISTENT_LOG_MAX_FILE_BYTES);
 }
 
 void UAPBridge_esp::loop() {
@@ -970,17 +980,19 @@ void UAPBridge_esp::http_debug_handle_request_(std::unique_ptr<socket::Socket> c
   }
   if (path == "/persistent_log") {
     this->save_persistent_log_(true);
-    this->http_debug_send_response_(std::move(client), "200 OK", "application/json",
-                                    this->http_debug_persistent_log_json_());
+    this->http_debug_send_persistent_log_response_(std::move(client));
     return;
   }
   if (path == "/persistent_log/start") {
+    if (!this->persistent_log_fs_mounted_) {
+      this->setup_persistent_log_(false);
+    }
     this->persistent_log_enabled_ = true;
     this->append_persistent_log_record_(UAPBRIDGE_PLOG_TYPE_CONTROL, 0, 1, 0, 0, this->broadcast_status,
                                         nullptr, 0, 0, micros());
     this->save_persistent_log_(true);
     this->http_debug_send_response_(std::move(client), "200 OK", "application/json",
-                                    this->http_debug_persistent_log_json_());
+                                    this->http_debug_persistent_log_summary_json_());
     return;
   }
   if (path == "/persistent_log/stop") {
@@ -989,13 +1001,22 @@ void UAPBridge_esp::http_debug_handle_request_(std::unique_ptr<socket::Socket> c
     this->persistent_log_enabled_ = false;
     this->save_persistent_log_(true);
     this->http_debug_send_response_(std::move(client), "200 OK", "application/json",
-                                    this->http_debug_persistent_log_json_());
+                                    this->http_debug_persistent_log_summary_json_());
     return;
   }
   if (path == "/persistent_log/clear") {
+    if (!this->persistent_log_fs_mounted_) {
+      this->setup_persistent_log_(false);
+    }
     this->clear_persistent_log_();
     this->http_debug_send_response_(std::move(client), "200 OK", "application/json",
-                                    this->http_debug_persistent_log_json_());
+                                    this->http_debug_persistent_log_summary_json_());
+    return;
+  }
+  if (path == "/persistent_log/format") {
+    this->format_persistent_log_();
+    this->http_debug_send_response_(std::move(client), "200 OK", "application/json",
+                                    this->http_debug_persistent_log_summary_json_());
     return;
   }
   if (path == "/recent") {
@@ -1416,115 +1437,186 @@ std::string UAPBridge_esp::http_debug_broadcast_status_json_() {
   return json;
 }
 
-std::string UAPBridge_esp::http_debug_persistent_log_json_() {
+std::string UAPBridge_esp::http_debug_persistent_log_summary_json_() {
+  this->persistent_log_refresh_fs_info_();
   std::string json = "{\"enabled\":";
   json += this->persistent_log_enabled_ ? "true" : "false";
   json += ",\"ready\":";
   json += this->persistent_log_ready_ ? "true" : "false";
-  json += ",\"storage\":\"preferences\"";
-  json += ",\"compression\":\"binary_ring_rle\"";
+  json += ",\"format_required\":";
+  json += this->persistent_log_format_required_ ? "true" : "false";
+  json += ",\"storage\":\"spiffs\"";
+  json += ",\"mount\":\"";
+  json += UAPBRIDGE_PERSISTENT_LOG_MOUNT;
+  json += "\",\"file\":\"";
+  json += UAPBRIDGE_PERSISTENT_LOG_FILE;
+  json += "\",\"compression\":\"binary_records_ram_staged\"";
   json += ",\"format_version\":";
   json += std::to_string(UAPBRIDGE_PERSISTENT_LOG_VERSION);
-  json += ",\"capacity\":";
-  json += std::to_string(UAPBRIDGE_PERSISTENT_LOG_CAPACITY);
-  json += ",\"used\":";
-  json += std::to_string(this->persistent_log_store_.used);
+  json += ",\"filesystem_total\":";
+  json += std::to_string(this->persistent_log_fs_total_);
+  json += ",\"filesystem_used\":";
+  json += std::to_string(this->persistent_log_fs_used_);
+  json += ",\"max_file_bytes\":";
+  json += std::to_string(UAPBRIDGE_PERSISTENT_LOG_MAX_FILE_BYTES);
+  json += ",\"file_bytes\":";
+  json += std::to_string(this->persistent_log_file_bytes_);
+  json += ",\"ram_used\":";
+  json += std::to_string(this->persistent_log_ram_used_);
+  json += ",\"ram_capacity\":";
+  json += std::to_string(UAPBRIDGE_PERSISTENT_LOG_RAM_CAPACITY);
   json += ",\"dropped_records\":";
-  json += std::to_string(this->persistent_log_store_.dropped_records);
+  json += std::to_string(this->persistent_log_dropped_records_);
   json += ",\"dropped_bytes\":";
-  json += std::to_string(this->persistent_log_store_.dropped_bytes);
+  json += std::to_string(this->persistent_log_dropped_bytes_);
   json += ",\"next_seq\":";
-  json += std::to_string(this->persistent_log_store_.next_seq);
-  json += ",\"records\":[";
+  json += std::to_string(this->persistent_log_next_seq_);
+  json += "}\n";
+  return json;
+}
 
-  uint16_t pos = (this->persistent_log_store_.head + UAPBRIDGE_PERSISTENT_LOG_CAPACITY -
-                  this->persistent_log_store_.used) % UAPBRIDGE_PERSISTENT_LOG_CAPACITY;
-  uint16_t remaining = this->persistent_log_store_.used;
-  bool first = true;
-  while (remaining > 0) {
-    const uint8_t total_len = this->persistent_log_store_.data[pos];
-    if (total_len == 0 || total_len > remaining || total_len > UAPBRIDGE_PLOG_MAX_RECORD_TOTAL_LEN) {
-      json += first ? "" : ",";
-      json += "{\"decode_error\":\"invalid persistent log record\"}";
-      break;
-    }
-
-    uint8_t record[UAPBRIDGE_PLOG_MAX_RECORD_TOTAL_LEN]{};
-    for (uint8_t i = 0; i < total_len; i++) {
-      record[i] = this->persistent_log_store_.data[(pos + i) % UAPBRIDGE_PERSISTENT_LOG_CAPACITY];
-    }
-    const uint8_t *payload = record + 1;
-    const uint8_t type = payload[0];
-    const uint8_t flags = payload[1];
-    const uint8_t source = payload[2];
-    const uint8_t phase = payload[3];
-    const uint8_t reason = payload[4];
-    const uint8_t data_len = payload[5];
-    const uint32_t seq = plog_read_u32(payload + 6);
-    const uint32_t first_ms = plog_read_u32(payload + 10);
-    const uint32_t last_ms = plog_read_u32(payload + 14);
-    const uint32_t first_us = plog_read_u32(payload + 18);
-    const uint32_t last_us = plog_read_u32(payload + 22);
-    const uint16_t status = plog_read_u16(payload + 26);
-    const uint16_t action = plog_read_u16(payload + 28);
-    const uint16_t state = plog_read_u16(payload + 30);
-    const uint16_t repeat = plog_read_u16(payload + 32);
-
-    if (!first) {
-      json += ",";
-    }
-    first = false;
-    char status_word[8];
-    char action_word[8];
-    snprintf(status_word, sizeof(status_word), "0x%04X", (unsigned int) status);
-    snprintf(action_word, sizeof(action_word), "0x%04X", (unsigned int) action);
-    const char *action_name = action == 0 ? "none" : this->action_name((hoermann_action_t) action);
-    json += "{\"seq\":";
-    json += std::to_string(seq);
-    json += ",\"type\":\"";
-    json += this->persistent_log_type_name_(type);
-    json += "\",\"source\":\"";
-    json += this->persistent_log_source_name_(source);
-    json += "\",\"phase\":\"";
-    json += this->persistent_log_phase_name_(phase);
-    json += "\",\"reason\":\"";
-    json += this->persistent_log_reason_name_(reason);
-    json += "\",\"flags\":";
-    json += std::to_string(flags);
-    json += ",\"crc\":\"";
-    json += (flags & UAPBRIDGE_PLOG_FLAG_CRC_OK) ? "ok" : "unknown_or_bad";
-    json += "\",\"first_ms\":";
-    json += std::to_string(first_ms);
-    json += ",\"last_ms\":";
-    json += std::to_string(last_ms);
-    json += ",\"first_micros\":";
-    json += std::to_string(first_us);
-    json += ",\"last_micros\":";
-    json += std::to_string(last_us);
-    json += ",\"repeat\":";
-    json += std::to_string(repeat == 0 ? 1 : repeat);
-    json += ",\"status\":";
-    json += std::to_string(status);
-    json += ",\"status_hex\":\"";
-    json += status_word;
-    json += "\",\"action\":\"";
-    json += action_name;
-    json += "\",\"action_hex\":\"";
-    json += action_word;
-    json += "\",\"state\":";
-    json += std::to_string(state);
-    json += ",\"bits\":";
-    json += this->http_debug_status_bits_json_(status);
-    json += ",\"hex\":\"";
-    json += this->http_debug_hex_encode_(payload + UAPBRIDGE_PLOG_FIXED_PAYLOAD_LEN, data_len);
-    json += "\"}";
-
-    pos = (pos + total_len) % UAPBRIDGE_PERSISTENT_LOG_CAPACITY;
-    remaining -= total_len;
+std::string UAPBridge_esp::http_debug_persistent_log_record_json_(const uint8_t *record, size_t total_len) {
+  if (record == nullptr || total_len < 1 + UAPBRIDGE_PLOG_FIXED_PAYLOAD_LEN ||
+      total_len > UAPBRIDGE_PLOG_MAX_RECORD_TOTAL_LEN || record[0] != total_len) {
+    return "{\"decode_error\":\"invalid persistent log record\"}";
   }
 
-  json += "]}\n";
+  const uint8_t *payload = record + 1;
+  const uint8_t type = payload[0];
+  const uint8_t flags = payload[1];
+  const uint8_t source = payload[2];
+  const uint8_t phase = payload[3];
+  const uint8_t reason = payload[4];
+  const uint8_t data_len = payload[5];
+  if (data_len + 1 + UAPBRIDGE_PLOG_FIXED_PAYLOAD_LEN != total_len) {
+    return "{\"decode_error\":\"invalid persistent log data length\"}";
+  }
+  const uint32_t seq = plog_read_u32(payload + 6);
+  const uint32_t first_ms = plog_read_u32(payload + 10);
+  const uint32_t last_ms = plog_read_u32(payload + 14);
+  const uint32_t first_us = plog_read_u32(payload + 18);
+  const uint32_t last_us = plog_read_u32(payload + 22);
+  const uint16_t status = plog_read_u16(payload + 26);
+  const uint16_t action = plog_read_u16(payload + 28);
+  const uint16_t state = plog_read_u16(payload + 30);
+  const uint16_t repeat = plog_read_u16(payload + 32);
+
+  char status_word[8];
+  char action_word[8];
+  snprintf(status_word, sizeof(status_word), "0x%04X", (unsigned int) status);
+  snprintf(action_word, sizeof(action_word), "0x%04X", (unsigned int) action);
+  const char *action_name = action == 0 ? "none" : this->action_name((hoermann_action_t) action);
+
+  std::string json = "{\"seq\":";
+  json += std::to_string(seq);
+  json += ",\"type\":\"";
+  json += this->persistent_log_type_name_(type);
+  json += "\",\"source\":\"";
+  json += this->persistent_log_source_name_(source);
+  json += "\",\"phase\":\"";
+  json += this->persistent_log_phase_name_(phase);
+  json += "\",\"reason\":\"";
+  json += this->persistent_log_reason_name_(reason);
+  json += "\",\"flags\":";
+  json += std::to_string(flags);
+  json += ",\"crc\":\"";
+  json += (flags & UAPBRIDGE_PLOG_FLAG_CRC_OK) ? "ok" : "unknown_or_bad";
+  json += "\",\"first_ms\":";
+  json += std::to_string(first_ms);
+  json += ",\"last_ms\":";
+  json += std::to_string(last_ms);
+  json += ",\"first_micros\":";
+  json += std::to_string(first_us);
+  json += ",\"last_micros\":";
+  json += std::to_string(last_us);
+  json += ",\"repeat\":";
+  json += std::to_string(repeat == 0 ? 1 : repeat);
+  json += ",\"status\":";
+  json += std::to_string(status);
+  json += ",\"status_hex\":\"";
+  json += status_word;
+  json += "\",\"action\":\"";
+  json += action_name;
+  json += "\",\"action_hex\":\"";
+  json += action_word;
+  json += "\",\"state\":";
+  json += std::to_string(state);
+  json += ",\"bits\":";
+  json += this->http_debug_status_bits_json_(status);
+  json += ",\"hex\":\"";
+  json += this->http_debug_hex_encode_(payload + UAPBRIDGE_PLOG_FIXED_PAYLOAD_LEN, data_len);
+  json += "\"}";
   return json;
+}
+
+void UAPBridge_esp::http_debug_send_persistent_log_response_(std::unique_ptr<socket::Socket> client) {
+  std::string header =
+      "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nCache-Control: no-cache\r\nConnection: close\r\n"
+      "Access-Control-Allow-Origin: *\r\n\r\n";
+  if (!this->http_debug_write_all_(client.get(), header, 1000)) {
+    return;
+  }
+
+  std::string prefix = this->http_debug_persistent_log_summary_json_();
+  if (!prefix.empty() && prefix.back() == '\n') {
+    prefix.pop_back();
+  }
+  if (!prefix.empty() && prefix.back() == '}') {
+    prefix.pop_back();
+  }
+  prefix += ",\"records\":[";
+  if (!this->http_debug_write_all_(client.get(), prefix, 1000)) {
+    return;
+  }
+
+  bool first = true;
+  std::string chunk;
+  chunk.reserve(2048);
+  auto flush_chunk = [&]() -> bool {
+    if (chunk.empty()) {
+      return true;
+    }
+    const bool ok = this->http_debug_write_all_(client.get(), chunk, 1000);
+    chunk.clear();
+    return ok;
+  };
+  FILE *file = fopen(UAPBRIDGE_PERSISTENT_LOG_FILE, "rb");
+  if (file != nullptr) {
+    while (true) {
+      uint8_t total_len = 0;
+      if (fread(&total_len, 1, 1, file) != 1) {
+        break;
+      }
+      uint8_t record[UAPBRIDGE_PLOG_MAX_RECORD_TOTAL_LEN]{};
+      record[0] = total_len;
+      if (total_len == 0 || total_len > UAPBRIDGE_PLOG_MAX_RECORD_TOTAL_LEN ||
+          fread(record + 1, 1, total_len - 1, file) != total_len - 1) {
+        if (!flush_chunk()) {
+          fclose(file);
+          return;
+        }
+        std::string error = first ? "" : ",";
+        error += "{\"decode_error\":\"truncated persistent log file\"}";
+        this->http_debug_write_all_(client.get(), error, 1000);
+        break;
+      }
+      std::string item = first ? "" : ",";
+      item += this->http_debug_persistent_log_record_json_(record, total_len);
+      if (chunk.size() + item.size() > 2048 && !flush_chunk()) {
+        fclose(file);
+        return;
+      }
+      chunk += item;
+      first = false;
+    }
+    fclose(file);
+  }
+  if (!flush_chunk()) {
+    return;
+  }
+
+  std::string suffix = "]}\n";
+  this->http_debug_write_all_(client.get(), suffix, 1000);
 }
 
 std::string UAPBridge_esp::http_debug_status_bits_json_(uint16_t status) {
@@ -1624,60 +1716,81 @@ uint8_t UAPBridge_esp::broadcast_status_record_count_() const {
   return count;
 }
 
-void UAPBridge_esp::setup_persistent_log_() {
-  if (global_preferences == nullptr) {
-    ESP_LOGW(TAG, "Persistent protocol log unavailable: preferences backend is not ready");
-    this->reset_persistent_log_store_();
-    return;
+bool UAPBridge_esp::setup_persistent_log_(bool format_if_mount_failed) {
+  if (this->persistent_log_fs_mounted_) {
+    this->persistent_log_refresh_fs_info_();
+    return true;
   }
 
-  this->persistent_log_pref_ =
-      global_preferences->make_preference<PersistentLogStore>(UAPBRIDGE_PERSISTENT_LOG_PREF_KEY, true);
-  if (!this->persistent_log_pref_.load(&this->persistent_log_store_) ||
-      this->persistent_log_store_.magic != UAPBRIDGE_PERSISTENT_LOG_MAGIC ||
-      this->persistent_log_store_.version != UAPBRIDGE_PERSISTENT_LOG_VERSION ||
-      this->persistent_log_store_.head >= UAPBRIDGE_PERSISTENT_LOG_CAPACITY ||
-      this->persistent_log_store_.used > UAPBRIDGE_PERSISTENT_LOG_CAPACITY) {
+  esp_vfs_spiffs_conf_t conf{};
+  conf.base_path = UAPBRIDGE_PERSISTENT_LOG_MOUNT;
+  conf.partition_label = UAPBRIDGE_PERSISTENT_LOG_PARTITION;
+  conf.max_files = 2;
+  conf.format_if_mount_failed = format_if_mount_failed;
+
+  esp_err_t err = esp_vfs_spiffs_register(&conf);
+  if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+    ESP_LOGW(TAG, "Persistent protocol log filesystem mount failed: %s", esp_err_to_name(err));
+    this->persistent_log_ready_ = false;
+    this->persistent_log_fs_mounted_ = false;
+    this->persistent_log_format_required_ = true;
     this->reset_persistent_log_store_();
-    this->save_persistent_log_(true);
+    return false;
   }
 
-  this->persistent_log_last_record_pos_ = 0xFFFF;
-  this->persistent_log_last_record_len_ = 0;
-  if (this->persistent_log_store_.used > 0) {
-    uint16_t pos = (this->persistent_log_store_.head + UAPBRIDGE_PERSISTENT_LOG_CAPACITY -
-                    this->persistent_log_store_.used) % UAPBRIDGE_PERSISTENT_LOG_CAPACITY;
-    uint16_t remaining = this->persistent_log_store_.used;
-    while (remaining > 0) {
-      const uint8_t total_len = this->persistent_log_store_.data[pos];
-      if (total_len == 0 || total_len > remaining || total_len > UAPBRIDGE_PLOG_MAX_RECORD_TOTAL_LEN) {
-        this->reset_persistent_log_store_();
-        this->save_persistent_log_(true);
-        break;
-      }
-      this->persistent_log_last_record_pos_ = pos;
-      this->persistent_log_last_record_len_ = total_len;
-      pos = (pos + total_len) % UAPBRIDGE_PERSISTENT_LOG_CAPACITY;
-      remaining -= total_len;
-    }
-  }
   this->persistent_log_ready_ = true;
+  this->persistent_log_fs_mounted_ = true;
+  this->persistent_log_format_required_ = false;
+  this->reset_persistent_log_store_();
+  this->persistent_log_file_bytes_ = this->persistent_log_file_size_();
+  this->persistent_log_refresh_fs_info_();
+  ESP_LOGI(TAG, "Persistent protocol log filesystem mounted: total=%u used=%u file=%u",
+           (unsigned int) this->persistent_log_fs_total_, (unsigned int) this->persistent_log_fs_used_,
+           (unsigned int) this->persistent_log_file_bytes_);
+  return true;
+}
+
+bool UAPBridge_esp::format_persistent_log_() {
+  this->persistent_log_enabled_ = false;
+  this->reset_persistent_log_store_();
+  if (this->persistent_log_fs_mounted_) {
+    esp_vfs_spiffs_unregister(UAPBRIDGE_PERSISTENT_LOG_PARTITION);
+    this->persistent_log_fs_mounted_ = false;
+    this->persistent_log_ready_ = false;
+  }
+
+  ESP_LOGW(TAG, "Formatting persistent protocol log filesystem; do not remove power");
+  watchdog::WatchdogManager watchdog(60000);
+  const bool mounted = this->setup_persistent_log_(true);
+  if (mounted) {
+    this->clear_persistent_log_();
+  }
+  return mounted;
 }
 
 void UAPBridge_esp::reset_persistent_log_store_() {
-  memset(&this->persistent_log_store_, 0, sizeof(this->persistent_log_store_));
-  this->persistent_log_store_.magic = UAPBRIDGE_PERSISTENT_LOG_MAGIC;
-  this->persistent_log_store_.version = UAPBRIDGE_PERSISTENT_LOG_VERSION;
-  this->persistent_log_store_.next_seq = 1;
+  this->persistent_log_next_seq_ = 1;
+  this->persistent_log_ram_used_ = 0;
+  this->persistent_log_file_bytes_ = 0;
+  this->persistent_log_dropped_records_ = 0;
+  this->persistent_log_dropped_bytes_ = 0;
+  this->persistent_log_dirty_ = false;
+  this->persistent_log_unsaved_records_ = 0;
   this->persistent_log_last_record_pos_ = 0xFFFF;
   this->persistent_log_last_record_len_ = 0;
 }
 
 void UAPBridge_esp::clear_persistent_log_() {
   this->reset_persistent_log_store_();
-  this->persistent_log_dirty_ = true;
-  this->persistent_log_unsaved_records_ = 0;
-  this->save_persistent_log_(true);
+  if (this->persistent_log_fs_mounted_) {
+    FILE *file = fopen(UAPBRIDGE_PERSISTENT_LOG_FILE, "wb");
+    if (file != nullptr) {
+      fclose(file);
+    } else {
+      remove(UAPBRIDGE_PERSISTENT_LOG_FILE);
+    }
+    this->persistent_log_refresh_fs_info_();
+  }
 }
 
 void UAPBridge_esp::append_persistent_log_status_(uint16_t status, const char *frame_type) {
@@ -1723,8 +1836,10 @@ void UAPBridge_esp::append_persistent_log_record_(uint8_t type, uint8_t source, 
   if (!this->persistent_log_enabled_ && type != UAPBRIDGE_PLOG_TYPE_CONTROL) {
     return;
   }
-  if (!this->persistent_log_ready_ && this->persistent_log_store_.magic != UAPBRIDGE_PERSISTENT_LOG_MAGIC) {
-    this->reset_persistent_log_store_();
+  if (!this->persistent_log_ready_ || !this->persistent_log_fs_mounted_) {
+    this->persistent_log_dropped_records_++;
+    this->persistent_log_dropped_bytes_ += len;
+    return;
   }
 
   if (len > UAPBRIDGE_PERSISTENT_LOG_DATA_LEN) {
@@ -1738,14 +1853,9 @@ void UAPBridge_esp::append_persistent_log_record_(uint8_t type, uint8_t source, 
 
   if (this->persistent_log_last_record_pos_ != 0xFFFF &&
       this->persistent_log_last_record_len_ == total_len &&
-      this->persistent_log_last_record_pos_ < UAPBRIDGE_PERSISTENT_LOG_CAPACITY &&
-      this->persistent_log_store_.data[this->persistent_log_last_record_pos_] == total_len) {
-    uint8_t previous[UAPBRIDGE_PLOG_MAX_RECORD_TOTAL_LEN]{};
-    for (uint8_t i = 0; i < total_len; i++) {
-      previous[i] =
-          this->persistent_log_store_.data[(this->persistent_log_last_record_pos_ + i) %
-                                           UAPBRIDGE_PERSISTENT_LOG_CAPACITY];
-    }
+      this->persistent_log_last_record_pos_ + total_len <= this->persistent_log_ram_used_ &&
+      this->persistent_log_ram_[this->persistent_log_last_record_pos_] == total_len) {
+    uint8_t *previous = this->persistent_log_ram_ + this->persistent_log_last_record_pos_;
     uint8_t *payload = previous + 1;
     bool same = payload[0] == type && payload[1] == flags && payload[2] == source && payload[3] == phase &&
                 payload[4] == reason && payload[5] == len && plog_read_u16(payload + 26) == status &&
@@ -1759,32 +1869,21 @@ void UAPBridge_esp::append_persistent_log_record_(uint8_t type, uint8_t source, 
         plog_write_u32(payload + 14, now_ms);
         plog_write_u32(payload + 22, event_us);
         plog_write_u16(payload + 32, repeat + 1);
-        for (uint8_t i = 0; i < total_len; i++) {
-          this->persistent_log_store_.data[(this->persistent_log_last_record_pos_ + i) %
-                                           UAPBRIDGE_PERSISTENT_LOG_CAPACITY] = previous[i];
-        }
         this->mark_persistent_log_dirty_();
         return;
       }
     }
   }
 
-  while (this->persistent_log_store_.used + total_len > UAPBRIDGE_PERSISTENT_LOG_CAPACITY) {
-    const uint16_t tail = (this->persistent_log_store_.head + UAPBRIDGE_PERSISTENT_LOG_CAPACITY -
-                           this->persistent_log_store_.used) % UAPBRIDGE_PERSISTENT_LOG_CAPACITY;
-    const uint8_t old_len = this->persistent_log_store_.data[tail];
-    if (old_len == 0 || old_len > this->persistent_log_store_.used ||
-        old_len > UAPBRIDGE_PLOG_MAX_RECORD_TOTAL_LEN) {
-      this->reset_persistent_log_store_();
-      break;
-    }
-    this->persistent_log_store_.used -= old_len;
-    this->persistent_log_store_.dropped_records++;
-    this->persistent_log_store_.dropped_bytes += old_len;
-    if (this->persistent_log_store_.used == 0) {
-      this->persistent_log_last_record_pos_ = 0xFFFF;
-      this->persistent_log_last_record_len_ = 0;
-    }
+  if (this->persistent_log_ram_used_ + total_len > UAPBRIDGE_PERSISTENT_LOG_RAM_CAPACITY) {
+    this->save_persistent_log_(true);
+  }
+  if (this->persistent_log_ram_used_ + total_len > UAPBRIDGE_PERSISTENT_LOG_RAM_CAPACITY ||
+      this->persistent_log_file_bytes_ + this->persistent_log_ram_used_ + total_len >
+          UAPBRIDGE_PERSISTENT_LOG_MAX_FILE_BYTES) {
+    this->persistent_log_dropped_records_++;
+    this->persistent_log_dropped_bytes_ += total_len;
+    return;
   }
 
   uint8_t record[UAPBRIDGE_PLOG_MAX_RECORD_TOTAL_LEN]{};
@@ -1796,7 +1895,7 @@ void UAPBridge_esp::append_persistent_log_record_(uint8_t type, uint8_t source, 
   payload[3] = phase;
   payload[4] = reason;
   payload[5] = len;
-  plog_write_u32(payload + 6, this->persistent_log_store_.next_seq++);
+  plog_write_u32(payload + 6, this->persistent_log_next_seq_++);
   plog_write_u32(payload + 10, now_ms);
   plog_write_u32(payload + 14, now_ms);
   plog_write_u32(payload + 18, event_us);
@@ -1809,12 +1908,9 @@ void UAPBridge_esp::append_persistent_log_record_(uint8_t type, uint8_t source, 
     memcpy(payload + UAPBRIDGE_PLOG_FIXED_PAYLOAD_LEN, data, len);
   }
 
-  const uint16_t write_pos = this->persistent_log_store_.head;
-  for (uint8_t i = 0; i < total_len; i++) {
-    this->persistent_log_store_.data[(write_pos + i) % UAPBRIDGE_PERSISTENT_LOG_CAPACITY] = record[i];
-  }
-  this->persistent_log_store_.head = (write_pos + total_len) % UAPBRIDGE_PERSISTENT_LOG_CAPACITY;
-  this->persistent_log_store_.used += total_len;
+  const uint16_t write_pos = this->persistent_log_ram_used_;
+  memcpy(this->persistent_log_ram_ + write_pos, record, total_len);
+  this->persistent_log_ram_used_ += total_len;
   this->persistent_log_last_record_pos_ = write_pos;
   this->persistent_log_last_record_len_ = total_len;
   this->mark_persistent_log_dirty_();
@@ -1835,20 +1931,82 @@ bool UAPBridge_esp::save_persistent_log_(bool force) {
   if (!force && !this->persistent_log_dirty_) {
     return true;
   }
-  if (global_preferences == nullptr) {
+  if (!this->persistent_log_fs_mounted_ || this->persistent_log_ram_used_ == 0) {
+    this->persistent_log_dirty_ = false;
+    this->persistent_log_unsaved_records_ = 0;
+    this->persistent_log_last_save_ms_ = millis();
+    return this->persistent_log_fs_mounted_;
+  }
+  if (!this->persistent_log_write_bytes_(this->persistent_log_ram_, this->persistent_log_ram_used_)) {
     return false;
   }
-  if (!this->persistent_log_pref_.save(&this->persistent_log_store_)) {
-    ESP_LOGW(TAG, "Failed to save persistent protocol log");
-    return false;
-  }
-  if (global_preferences != nullptr) {
-    global_preferences->sync();
-  }
+  this->persistent_log_ram_used_ = 0;
+  this->persistent_log_last_record_pos_ = 0xFFFF;
+  this->persistent_log_last_record_len_ = 0;
   this->persistent_log_dirty_ = false;
   this->persistent_log_unsaved_records_ = 0;
   this->persistent_log_last_save_ms_ = millis();
+  this->persistent_log_refresh_fs_info_();
   return true;
+}
+
+bool UAPBridge_esp::persistent_log_write_bytes_(const uint8_t *data, size_t len) {
+  if (data == nullptr || len == 0) {
+    return true;
+  }
+  if (!this->persistent_log_fs_mounted_) {
+    return false;
+  }
+  if (this->persistent_log_file_bytes_ + len > UAPBRIDGE_PERSISTENT_LOG_MAX_FILE_BYTES) {
+    this->persistent_log_dropped_records_++;
+    this->persistent_log_dropped_bytes_ += len;
+    return false;
+  }
+
+  FILE *file = fopen(UAPBRIDGE_PERSISTENT_LOG_FILE, "ab");
+  if (file == nullptr) {
+    ESP_LOGW(TAG, "Failed to open persistent protocol log for append");
+    return false;
+  }
+  const size_t written = fwrite(data, 1, len, file);
+  fclose(file);
+  if (written != len) {
+    ESP_LOGW(TAG, "Short persistent protocol log write: %u/%u", (unsigned int) written, (unsigned int) len);
+    this->persistent_log_dropped_bytes_ += len - written;
+    return false;
+  }
+  this->persistent_log_file_bytes_ += len;
+  return true;
+}
+
+bool UAPBridge_esp::persistent_log_refresh_fs_info_() {
+  if (!this->persistent_log_fs_mounted_) {
+    return false;
+  }
+  size_t total = 0;
+  size_t used = 0;
+  esp_err_t err = esp_spiffs_info(UAPBRIDGE_PERSISTENT_LOG_PARTITION, &total, &used);
+  if (err != ESP_OK) {
+    return false;
+  }
+  this->persistent_log_fs_total_ = total;
+  this->persistent_log_fs_used_ = used;
+  this->persistent_log_file_bytes_ = this->persistent_log_file_size_();
+  return true;
+}
+
+uint32_t UAPBridge_esp::persistent_log_file_size_() {
+  FILE *file = fopen(UAPBRIDGE_PERSISTENT_LOG_FILE, "rb");
+  if (file == nullptr) {
+    return 0;
+  }
+  if (fseek(file, 0, SEEK_END) != 0) {
+    fclose(file);
+    return this->persistent_log_file_bytes_;
+  }
+  const long size = ftell(file);
+  fclose(file);
+  return size > 0 ? (uint32_t) size : 0;
 }
 
 void UAPBridge_esp::mark_persistent_log_dirty_() {

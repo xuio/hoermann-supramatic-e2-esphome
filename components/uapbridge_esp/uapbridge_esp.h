@@ -6,7 +6,6 @@
 
 #include "esphome/components/socket/socket.h"
 #include "esphome/core/component.h"
-#include "esphome/core/preferences.h"
 #include "esphome/components/uart/uart.h"
 #include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
@@ -29,8 +28,9 @@
 
 #define STOP_FALLBACK_MOVING_TIMEOUT_MS 1000
 #define UAPBRIDGE_STATUS_RECORD_COUNT 32
-#define UAPBRIDGE_PERSISTENT_LOG_CAPACITY 8192
-#define UAPBRIDGE_PERSISTENT_LOG_DATA_LEN 12
+#define UAPBRIDGE_PERSISTENT_LOG_RAM_CAPACITY 4096
+#define UAPBRIDGE_PERSISTENT_LOG_MAX_FILE_BYTES (3 * 1024 * 1024)
+#define UAPBRIDGE_PERSISTENT_LOG_DATA_LEN 32
 
 namespace esphome {
 namespace uapbridge_esp {
@@ -128,13 +128,15 @@ class UAPBridge_esp : public esphome::uapbridge::UAPBridge {
     std::string http_debug_recent_body_();
     std::string http_debug_stats_json_();
     std::string http_debug_broadcast_status_json_();
-    std::string http_debug_persistent_log_json_();
+    std::string http_debug_persistent_log_summary_json_();
+    void http_debug_send_persistent_log_response_(std::unique_ptr<socket::Socket> client);
     std::string http_debug_status_bits_json_(uint16_t status);
     std::string http_debug_hex_encode_(const uint8_t *data, size_t len);
     std::string http_debug_path_from_request_line_(const std::string &request_line);
     void record_broadcast_status_(uint16_t status, const char *frame_type);
     uint8_t broadcast_status_record_count_() const;
-    void setup_persistent_log_();
+    bool setup_persistent_log_(bool format_if_mount_failed = false);
+    bool format_persistent_log_();
     void reset_persistent_log_store_();
     void clear_persistent_log_();
     void append_persistent_log_status_(uint16_t status, const char *frame_type);
@@ -150,6 +152,10 @@ class UAPBridge_esp : public esphome::uapbridge::UAPBridge {
     void service_persistent_log_save_();
     bool save_persistent_log_(bool force = false);
     void mark_persistent_log_dirty_();
+    bool persistent_log_write_bytes_(const uint8_t *data, size_t len);
+    bool persistent_log_refresh_fs_info_();
+    uint32_t persistent_log_file_size_();
+    std::string http_debug_persistent_log_record_json_(const uint8_t *record, size_t total_len);
     uint8_t persistent_log_phase_code_(const char *phase) const;
     uint8_t persistent_log_reason_code_(const char *reason) const;
     uint8_t persistent_log_source_code_(const char *source) const;
@@ -163,16 +169,6 @@ class UAPBridge_esp : public esphome::uapbridge::UAPBridge {
       uint32_t count{0};
       uint32_t first_ms{0};
       uint32_t last_ms{0};
-    };
-    struct PersistentLogStore {
-      uint32_t magic{0};
-      uint32_t version{0};
-      uint32_t next_seq{1};
-      uint16_t head{0};
-      uint16_t used{0};
-      uint32_t dropped_records{0};
-      uint32_t dropped_bytes{0};
-      uint8_t data[UAPBRIDGE_PERSISTENT_LOG_CAPACITY]{};
     };
     // internal function variables
     uint32_t last_call       = 0;
@@ -198,13 +194,21 @@ class UAPBridge_esp : public esphome::uapbridge::UAPBridge {
     uint16_t http_debug_history_size_{200};
     bool persistent_log_enabled_{false};
     bool persistent_log_ready_{false};
+    bool persistent_log_fs_mounted_{false};
+    bool persistent_log_format_required_{false};
     bool persistent_log_dirty_{false};
     uint8_t persistent_log_unsaved_records_{0};
     uint32_t persistent_log_last_save_ms_{0};
     uint16_t persistent_log_last_record_pos_{0xFFFF};
     uint8_t persistent_log_last_record_len_{0};
-    ESPPreferenceObject persistent_log_pref_;
-    PersistentLogStore persistent_log_store_{};
+    uint32_t persistent_log_next_seq_{1};
+    uint32_t persistent_log_file_bytes_{0};
+    uint32_t persistent_log_dropped_records_{0};
+    uint32_t persistent_log_dropped_bytes_{0};
+    size_t persistent_log_fs_total_{0};
+    size_t persistent_log_fs_used_{0};
+    uint16_t persistent_log_ram_used_{0};
+    uint8_t persistent_log_ram_[UAPBRIDGE_PERSISTENT_LOG_RAM_CAPACITY]{};
     std::unique_ptr<socket::ListenSocket> http_debug_server_;
     std::unique_ptr<socket::Socket> http_debug_pending_client_;
     std::unique_ptr<socket::Socket> http_debug_stream_client_;

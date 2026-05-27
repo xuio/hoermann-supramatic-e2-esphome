@@ -1,6 +1,6 @@
 # Persistent Protocol Log
 
-The main UAP1 emulation firmware can capture protocol traffic into ESP internal preferences storage while it continues to control the door. This is intended for short, targeted captures such as obstruction tests where the interesting bytes may be missed by a live HTTP stream.
+The main UAP1 emulation firmware can capture protocol traffic into a dedicated SPIFFS filesystem partition while it continues to control the door. This is intended for multi-minute captures such as obstruction tests where the interesting bytes may be missed by a live HTTP stream.
 
 ## What It Captures
 
@@ -11,7 +11,21 @@ The main UAP1 emulation firmware can capture protocol traffic into ESP internal 
 - Command queue, send, block, cancel, and expiry events.
 - Broadcast status transitions with decoded status bits.
 
-The stored format is a compact binary ring buffer. Adjacent identical records are compressed with a repeat count; `/persistent_log` expands that back to JSON fields such as `first_ms`, `last_ms`, `repeat`, `hex`, `crc`, `status_hex`, and decoded `bits`.
+The firmware creates a 4 MB `hcp_logs` SPIFFS partition and caps the active capture file at 3 MB. Records are staged in a 4 KB RAM buffer as compact binary events, adjacent identical records are compressed with a repeat count, and the staged buffer is flushed to flash about every 10 seconds or when full. `/persistent_log` expands the stored binary records back to JSON fields such as `first_ms`, `last_ms`, `repeat`, `hex`, `crc`, `status_hex`, and decoded `bits`.
+
+The filesystem-backed capture is designed to hold at least five minutes of continuous SupraMatic E2 HCP traffic. It records the raw byte stream, so protocol details that the decoder does not understand yet are still present in the `hex` fields.
+
+## First OTA Partition Migration
+
+Adding the filesystem partition changes the ESP32 partition table. A normal ESPHome OTA uploads only the application image; the partition table must be sent once with the dedicated OTA mode after a firmware containing `allow_partition_access: true` is already running:
+
+```bash
+esphome upload supramatic-e2.yaml --device <local-ip>
+esphome upload supramatic-e2.yaml --device <local-ip> --partition-table
+esphome upload supramatic-e2.yaml --device <local-ip>
+```
+
+The final application upload after the partition-table update ensures the garage firmware is present in the app slot selected by the new table. Then run `/persistent_log/format` once if the summary reports `format_required:true`.
 
 ## Runtime Commands
 
@@ -21,12 +35,22 @@ Use the device host name or IP address:
 curl http://supramatic-e2.local:8080/persistent_log/clear
 curl http://supramatic-e2.local:8080/persistent_log/start
 curl http://supramatic-e2.local:8080/persistent_log/stop
-curl http://supramatic-e2.local:8080/persistent_log > persistent-log.json
+curl --max-time 120 http://supramatic-e2.local:8080/persistent_log > persistent-log.json
 ```
 
-`/persistent_log/start` enables recording without rebooting. `/persistent_log/stop` disables recording and flushes the ring buffer to storage. `/persistent_log/clear` erases the ring and leaves recording in its previous enabled or disabled state.
+`/persistent_log/start` enables recording without rebooting. `/persistent_log/stop` disables recording and flushes the RAM staging buffer to the SPIFFS file. `/persistent_log/clear` removes the capture file and leaves recording in its previous enabled or disabled state.
 
-Do not leave persistent logging enabled for normal daily operation. It is designed for short diagnostic windows and writes flash periodically while active.
+After first installing a firmware that adds the `hcp_logs` partition, `/persistent_log/clear` may report `"format_required":true`. Run this once:
+
+```bash
+curl --max-time 120 http://supramatic-e2.local:8080/persistent_log/format
+```
+
+Formatting is explicit because the first SPIFFS format can take tens of seconds on the 4 MB partition. The firmware avoids formatting during boot so the normal ESPHome boot watchdog does not push the device into safe mode.
+
+The summary returned by `/persistent_log/start`, `/persistent_log/stop`, and `/persistent_log/clear` includes `filesystem_total`, `filesystem_used`, `max_file_bytes`, `file_bytes`, `ram_used`, and drop counters. If `dropped_records` is nonzero, the capture reached its cap or the filesystem could not keep up.
+
+Do not leave persistent logging enabled for normal daily operation. It is designed for diagnostic windows and writes flash periodically while active.
 
 ## Obstruction Capture
 
@@ -35,7 +59,7 @@ Do not leave persistent logging enabled for normal daily operation. It is design
 3. Open the door.
 4. Close the door and trigger the obstruction.
 5. Wait until the opener display shows its final error code.
-6. Stop and dump the persistent log.
+6. Stop and dump the persistent log. For longer captures, give `curl` enough time to receive the streamed JSON response.
 7. Also fetch the current broadcast summary:
 
 ```bash
@@ -43,5 +67,8 @@ curl http://supramatic-e2.local:8080/broadcast_status > broadcast-status.json
 curl http://supramatic-e2.local:8080/stats > stats.json
 ```
 
-For protocol analysis, keep the JSON files together with the physical sequence notes: closed, opening, open, closing, obstruction, opener display code, and whether Home Assistant commands were accepted or blocked after the event.
+```bash
+curl --max-time 120 http://supramatic-e2.local:8080/persistent_log > persistent-log.json
+```
 
+For protocol analysis, keep the JSON files together with the physical sequence notes: closed, opening, open, closing, obstruction, opener display code, and whether Home Assistant commands were accepted or blocked after the event.
