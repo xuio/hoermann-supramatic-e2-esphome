@@ -42,10 +42,11 @@ EVENT_HCP_VENTING = 14
 EVENT_SEQUENCE_DONE = 15
 
 QR_PAYLOAD_PREFIX = "GDS1"
-QR_QUIET_ZONE_MODULES = 4
+QR_COMPACT_PAYLOAD_PREFIX = "G1"
+QR_QUIET_ZONE_MODULES = 0
 # OpenCV's QR detector is scale-sensitive for exact synthetic module sizes; stick to sizes
 # covered by the decoder self-test instead of arbitrary fractional scaling.
-QR_SAFE_MODULE_PIXEL_SIZES = (60, 48, 40, 24, 20, 16, 12, 10, 8)
+QR_SAFE_MODULE_PIXEL_SIZES = tuple(range(64, 7, -1))
 
 EVENT_NAMES = {
     EVENT_IDLE: "idle",
@@ -83,25 +84,47 @@ def phone_sync_qr_payload(seq: int, event_code: int, elapsed_tenths: int) -> str
     seq &= 0xFFFFFF
     event_code &= 0xFF
     elapsed_tenths &= 0xFFFF
-    body = f"{QR_PAYLOAD_PREFIX}:{seq:06X}:{event_code:02X}:{elapsed_tenths:04X}"
+    body = f"{QR_COMPACT_PAYLOAD_PREFIX}{seq:06X}{event_code:02X}{elapsed_tenths:04X}"
     crc = qr_payload_crc8(body.encode("ascii"))
-    return f"{body}:{crc:02X}"
+    return f"{body}{crc:02X}"
 
 
 def parse_phone_sync_qr_payload(payload: str) -> dict[str, int]:
-    parts = payload.strip().split(":")
-    if len(parts) != 5 or parts[0] != QR_PAYLOAD_PREFIX:
-        raise ValueError("not a garage phone-sync QR payload")
-    body = ":".join(parts[:4])
-    expected_crc = qr_payload_crc8(body.encode("ascii"))
-    actual_crc = int(parts[4], 16)
-    if actual_crc != expected_crc:
-        raise ValueError("QR payload CRC mismatch")
-    return {
-        "seq": int(parts[1], 16),
-        "event_code": int(parts[2], 16),
-        "elapsed_tenths": int(parts[3], 16),
-    }
+    payload = payload.strip()
+    if payload.startswith(QR_COMPACT_PAYLOAD_PREFIX) and len(payload) == 16:
+        body = payload[:14]
+        expected_crc = qr_payload_crc8(body.encode("ascii"))
+        actual_crc = int(payload[14:16], 16)
+        if actual_crc != expected_crc:
+            raise ValueError("QR payload CRC mismatch")
+        return {
+            "seq": int(payload[2:8], 16),
+            "event_code": int(payload[8:10], 16),
+            "elapsed_tenths": int(payload[10:14], 16),
+        }
+
+    parts = payload.split(":")
+    if len(parts) == 5 and parts[0] == QR_PAYLOAD_PREFIX:
+        body = ":".join(parts[:4])
+        expected_crc = qr_payload_crc8(body.encode("ascii"))
+        actual_crc = int(parts[4], 16)
+        if actual_crc != expected_crc:
+            raise ValueError("QR payload CRC mismatch")
+        return {
+            "seq": int(parts[1], 16),
+            "event_code": int(parts[2], 16),
+            "elapsed_tenths": int(parts[3], 16),
+        }
+
+    raise ValueError("not a garage phone-sync QR payload")
+
+
+def create_phone_sync_qr_encoder() -> Any:
+    params = cv2.QRCodeEncoder_Params()
+    params.version = 1
+    params.correction_level = cv2.QRCodeEncoder_CORRECT_LEVEL_Q
+    params.mode = cv2.QRCodeEncoder_MODE_ALPHANUMERIC
+    return cv2.QRCodeEncoder_create(params)
 
 
 COMMAND_EVENT = {
@@ -769,7 +792,7 @@ class FullscreenDisplay:
         self.root.configure(background="black")
         self.canvas = tk.Canvas(self.root, background="black", highlightthickness=0)
         self.canvas.pack(fill=tk.BOTH, expand=True)
-        self.qr_encoder = cv2.QRCodeEncoder_create()
+        self.qr_encoder = create_phone_sync_qr_encoder()
         self.qr_cache_payload: str | None = None
         self.qr_cache_matrix: np.ndarray | None = None
         self.root.bind("<Escape>", self.on_exit)
@@ -808,26 +831,13 @@ class FullscreenDisplay:
         accent = "#000000" if flash["active"] else "#f4d35e"
         canvas.create_rectangle(0, 0, w, h, fill=bg, outline=bg)
 
-        margin = max(16, int(min(w, h) * 0.018))
-        header_size = max(16, min(30, int(h * 0.022)))
-        small_size = max(13, min(24, int(h * 0.018)))
-        status_size = max(28, min(58, int(h * 0.045)))
+        margin = max(6, int(min(w, h) * 0.006))
+        small_size = max(11, min(20, int(h * 0.014)))
+        status_size = max(18, min(34, int(h * 0.026)))
         line_gap = int(small_size * 1.35)
 
         title = "GARAGE SYNC / DRY RUN" if self.coordinator.args.dry_run else "GARAGE SYNC"
         elapsed = state["run_elapsed_s"]
-        self.text(margin, margin, title, header_size, fg, "nw")
-        self.text(w - margin, margin, f"T {elapsed:07.1f}s", header_size, accent, "ne")
-        self.text(
-            margin,
-            margin + line_gap,
-            f"run {state['run_id']}   seq {self.coordinator.visual_seq:06d}   event {state['event_code']:02d} {state['event_name']}",
-            small_size,
-            accent,
-            "nw",
-        )
-        self.text(w - margin, margin + line_gap, "QR encodes seq/event/time + CRC", small_size, muted, "ne")
-
         hcp = state["hcp"]
         sequence = state["sequence"]
         current_step = sequence["current_step"] or {}
@@ -835,14 +845,12 @@ class FullscreenDisplay:
         if sequence["done"]:
             step_text = "done"
 
-        footer_height = margin + small_size * 4.4
-        status_block_height = status_size + small_size + max(18, margin)
-        qr_top = margin + line_gap * 2 + max(14, margin)
         qr_payload = phone_sync_qr_payload(self.coordinator.visual_seq, state["event_code"], state["run_elapsed_tenths"])
         qr_matrix = self.qr_matrix(qr_payload)
-        qr_size = self.qr_size(w, h, margin, qr_top, footer_height + status_block_height, qr_matrix.shape[0])
+        qr_size = self.qr_size(w, h, margin, qr_matrix.shape[0])
         qr_x = (w - qr_size) / 2
-        self.draw_qr_code(qr_x, qr_top, qr_size, qr_matrix)
+        qr_y = (h - qr_size) / 2
+        self.draw_qr_code(qr_x, qr_y, qr_size, qr_matrix)
 
         scheduled = state["scheduled"]
         if scheduled:
@@ -860,48 +868,44 @@ class FullscreenDisplay:
             status = "READY"
             center_color = fg
 
-        status_y = qr_top + qr_size + max(10, margin // 2)
-        self.text(w / 2, status_y, status, status_size, center_color, "n")
-        if scheduled:
+        left_width = max(0.0, qr_x - 2 * margin)
+        right_width = max(0.0, w - (qr_x + qr_size) - 2 * margin)
+        if left_width >= 130:
+            self.text(margin, margin, self.truncate(title, left_width, status_size), status_size, fg, "nw")
+            self.text(margin, margin + line_gap * 1.7, self.truncate(status, left_width, status_size), status_size, center_color, "nw")
+            self.text(margin, margin + line_gap * 3.6, self.truncate(f"seq {self.coordinator.visual_seq:06d}", left_width, small_size), small_size, accent, "nw")
+            self.text(margin, margin + line_gap * 4.8, self.truncate(f"event {state['event_code']:02d} {state['event_name']}", left_width, small_size), small_size, accent, "nw")
+            self.text(margin, margin + line_gap * 6.4, self.truncate(f"Sequence: {step_text}", left_width, small_size), small_size, "#f4d35e", "nw")
+            self.text(margin, margin + line_gap * 7.6, self.truncate(f"HCP: {hcp.get('garage_door_state', '-')}", left_width, small_size), small_size, fg, "nw")
+            self.text(margin, margin + line_gap * 8.8, self.truncate(f"Raw: {hcp.get('garage_door_raw_hcp_status_hex', '-')}", left_width, small_size), small_size, fg, "nw")
+        if scheduled and left_width >= 80:
             self.draw_countdown_bar(
                 margin,
-                status_y + status_size + max(8, margin // 3),
-                w - 2 * margin,
+                min(h - margin - small_size * 4, margin + line_gap * 11),
+                left_width,
                 max(12, small_size),
                 scheduled["remaining_s"],
                 scheduled.get("total_s", self.coordinator.args.command_delay),
                 scheduled["action"].upper(),
             )
-
-        footer_y = h - margin - small_size * 3.3
-        self.text(margin, footer_y, f"Sequence: {step_text}", small_size, "#f4d35e", "sw")
-        self.text(w - margin, footer_y, f"HCP: {hcp.get('garage_door_state', '-')}   position: {self.format_percent(hcp.get('cover_position'))}", small_size, fg, "se")
-        self.text(
-            margin,
-            footer_y + small_size * 1.25,
-            f"Raw: {hcp.get('garage_door_raw_hcp_status_hex', '-')}   valid: {hcp.get('garage_door_valid_hcp_broadcast', '-')}",
-            small_size,
-            fg,
-            "sw",
-        )
-        self.text(
-            w - margin,
-            footer_y + small_size * 1.25,
-            f"operation: {hcp.get('cover_operation', '-')}   obstruction: {hcp.get('garage_door_obstruction_state', '-')}   light: {hcp.get('garage_door_light', '-')}",
-            small_size,
-            fg,
-            "se",
-        )
-
-        mode = "DRY RUN   " if self.coordinator.args.dry_run else ""
-        instructions = f"{mode}SPACE=start/cancel   start delay={self.coordinator.args.initial_delay:g}s   M=marker   Q/Esc=finish"
-        self.text(w / 2, h - margin, instructions, small_size, "#d7dee8", "s")
+        if right_width >= 130:
+            x = w - margin
+            mode = "DRY RUN" if self.coordinator.args.dry_run else "LIVE"
+            self.text(x, margin, self.truncate(mode, right_width, status_size), status_size, fg, "ne")
+            self.text(x, margin + line_gap * 1.7, self.truncate(f"T {elapsed:07.1f}s", right_width, status_size), status_size, accent, "ne")
+            self.text(x, margin + line_gap * 3.6, self.truncate(f"run {state['run_id']}", right_width, small_size), small_size, muted, "ne")
+            self.text(x, margin + line_gap * 5.2, self.truncate(f"pos {self.format_percent(hcp.get('cover_position'))}", right_width, small_size), small_size, fg, "ne")
+            self.text(x, margin + line_gap * 6.4, self.truncate(f"op {hcp.get('cover_operation', '-')}", right_width, small_size), small_size, fg, "ne")
+            self.text(x, margin + line_gap * 7.6, self.truncate(f"valid {hcp.get('garage_door_valid_hcp_broadcast', '-')}", right_width, small_size), small_size, fg, "ne")
+            self.text(x, margin + line_gap * 8.8, self.truncate(f"obs {hcp.get('garage_door_obstruction_state', '-')}", right_width, small_size), small_size, fg, "ne")
+            self.text(x, h - margin - line_gap, self.truncate("SPACE start/cancel", right_width, small_size), small_size, "#d7dee8", "se")
+            self.text(x, h - margin, self.truncate("M marker   Q/Esc finish", right_width, small_size), small_size, "#d7dee8", "se")
         if state["error"]:
-            self.text(margin, status_y + status_size * 1.15, f"ERROR {state['error']}", small_size, "#ff6b6b", "nw")
+            self.text(margin, h - margin, self.truncate(f"ERROR {state['error']}", left_width or w - 2 * margin, small_size), small_size, "#ff6b6b", "sw")
 
-    def qr_size(self, width: int, height: int, margin: int, top: int, reserved_bottom: float, modules: int) -> int:
+    def qr_size(self, width: int, height: int, margin: int, modules: int) -> int:
         available_width = max(320, width - 2 * margin)
-        available_height = max(220.0, height - top - reserved_bottom)
+        available_height = max(220.0, height - 2 * margin)
         max_size = int(min(available_width, available_height))
         for module_px in QR_SAFE_MODULE_PIXEL_SIZES:
             size = modules * module_px
@@ -940,12 +944,20 @@ class FullscreenDisplay:
         if getattr(self, "qr_cache_payload", None) == payload and getattr(self, "qr_cache_matrix", None) is not None:
             return self.qr_cache_matrix
         if not hasattr(self, "qr_encoder"):
-            self.qr_encoder = cv2.QRCodeEncoder_create()
+            self.qr_encoder = create_phone_sync_qr_encoder()
         matrix = self.qr_encoder.encode(payload)
-        matrix = np.pad(matrix, QR_QUIET_ZONE_MODULES, mode="constant", constant_values=255)
+        if QR_QUIET_ZONE_MODULES > 0:
+            matrix = np.pad(matrix, QR_QUIET_ZONE_MODULES, mode="constant", constant_values=255)
         self.qr_cache_payload = payload
         self.qr_cache_matrix = matrix
         return matrix
+
+    @staticmethod
+    def truncate(text: str, max_width: float, font_size: int) -> str:
+        max_chars = max(4, int(max_width / max(font_size * 0.62, 1)))
+        if len(text) <= max_chars:
+            return text
+        return text[: max(1, max_chars - 1)] + "…"
 
     def text(self, x: float, y: float, text: str, size: int, color: str, anchor: str) -> None:
         self.canvas.create_text(

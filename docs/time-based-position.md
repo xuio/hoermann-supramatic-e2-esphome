@@ -73,7 +73,7 @@ Use [tools/run_hcp_timing_calibration.py](tools/run_hcp_timing_calibration.py) w
 
 The analyzer treats the first HCP open or closed endpoint bit after a command as the fully stopped endpoint, then shifts the ArUco curve so its end aligns to that HCP endpoint. The reported offset is therefore a combined command-to-motion-start and endpoint-report offset; splitting those requires simultaneous video and HCP capture.
 
-For a simultaneous phone video run, start with the door fully closed and use [tools/run_phone_video_sync_capture.py](tools/run_phone_video_sync_capture.py). It opens a fullscreen Tk display on the MacBook, starts the ESP persistent HCP logger, records a QR timecode timeline, shows live HCP feedback, and runs an automatic sequence after `Space`: full open, full close, venting from closed, open setup, venting from open, and final close. Each command is separated by visible countdown and settle periods.
+For a simultaneous phone video run, start with the door fully closed and use [tools/run_phone_video_sync_capture.py](tools/run_phone_video_sync_capture.py). It opens a fullscreen Tk display on the MacBook, starts the ESP persistent HCP logger, records a near full-height compact QR timecode timeline, shows live HCP feedback in side text, and runs an automatic sequence after `Space`: full open, full close, venting from closed, open setup, venting from open, and final close. Each command is separated by visible countdown and settle periods.
 
 Use `--dry-run` first if you only want to check the fullscreen layout and QR code. Dry run skips all ESPHome API and HTTP calls, sends no opener commands, and simulates HCP state changes locally so the sequence advances without hardware.
 

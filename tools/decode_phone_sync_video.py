@@ -15,6 +15,7 @@ import numpy as np
 from tools.run_phone_video_sync_capture import (
     EVENT_NAMES,
     QR_QUIET_ZONE_MODULES,
+    create_phone_sync_qr_encoder,
     parse_phone_sync_qr_payload,
     phone_sync_qr_payload,
 )
@@ -80,8 +81,9 @@ def decode_frame(detector: cv2.QRCodeDetector, frame_image: np.ndarray, frame: i
 
 def render_synthetic_qr(seq: int, event_code: int, elapsed_tenths: int, modules_px: int = 40) -> np.ndarray:
     payload = phone_sync_qr_payload(seq, event_code, elapsed_tenths)
-    matrix = cv2.QRCodeEncoder_create().encode(payload)
-    matrix = np.pad(matrix, QR_QUIET_ZONE_MODULES, mode="constant", constant_values=255)
+    matrix = create_phone_sync_qr_encoder().encode(payload)
+    if QR_QUIET_ZONE_MODULES > 0:
+        matrix = np.pad(matrix, QR_QUIET_ZONE_MODULES, mode="constant", constant_values=255)
     image = cv2.resize(matrix, (matrix.shape[1] * modules_px, matrix.shape[0] * modules_px), interpolation=cv2.INTER_NEAREST)
     return cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
 
