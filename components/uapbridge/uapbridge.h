@@ -76,6 +76,14 @@ class UAPBridge : public uart::UARTDevice, public Component {
     void set_error_state(bool value) { this->error_state = value; }
     bool get_prewarn_state() const { return this->prewarn_state; }
     void set_prewarn_state(bool value) { this->prewarn_state = value; }
+    bool get_obstruction_state() const { return this->obstruction_state; }
+    void set_obstruction_state(bool value) {
+      if (this->obstruction_state == value) {
+        return;
+      }
+      this->obstruction_state = value;
+      this->data_has_changed = true;
+    }
     bool get_pic16_com() const { return this->pic16_com; }
     void set_pic16_com(bool value) { this->pic16_com = value; }
     bool get_valid_broadcast() const { return this->valid_broadcast; }
@@ -105,6 +113,7 @@ class UAPBridge : public uart::UARTDevice, public Component {
     bool relay_enabled = false;
     bool error_state = false;
     bool prewarn_state = false;
+    bool obstruction_state = false;
     bool pic16_com = false;
     bool valid_broadcast = false;
     bool data_has_changed = false;

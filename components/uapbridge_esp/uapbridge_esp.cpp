@@ -428,11 +428,19 @@ bool UAPBridge_esp::set_command(bool cond, const hoermann_action_t command, bool
     } else {
       this->next_action = command;
       this->command_set_at = millis();
+      if (command == hoermann_action_open && this->obstruction_state) {
+        ESP_LOGI(TAG, "Clearing obstruction/close failure on accepted open command");
+        this->set_obstruction_state(false);
+      }
       ESP_LOGI(TAG, "Queued one-shot HCP command: %s (0x%04X)", this->action_name(command), (unsigned int) command);
       this->http_debug_emit_command_("queued", command);
       return true;
     }
   } else {
+    if (command == hoermann_action_open && this->obstruction_state && this->state == hoermann_state_open) {
+      ESP_LOGI(TAG, "Clearing obstruction/close failure because an open command was requested while HCP already reports open");
+      this->set_obstruction_state(false);
+    }
     ESP_LOGD(TAG, "Skipped HCP command %s because requested state already matches decoded state", this->action_name(command));
     this->http_debug_emit_command_("skipped", command, "state_already_matches");
     return false;
@@ -471,6 +479,7 @@ bool UAPBridge_esp::command_allowed(const hoermann_action_t command, bool bypass
   const hoermann_state_t gate_state = this->decode_status_state(this->broadcast_status);
   const bool gate_error = (this->broadcast_status & hoermann_state_error) != 0;
   const bool gate_prewarn = (this->broadcast_status & hoermann_state_prewarn) != 0;
+  const bool obstruction_recovery_open = this->obstruction_state && command == hoermann_action_open;
 
   if (command == hoermann_action_venting && !this->allow_remote_close && gate_state == hoermann_state_open) {
     ESP_LOGW(TAG, "Blocked venting command from open state because allow_remote_close is false");
@@ -478,14 +487,23 @@ bool UAPBridge_esp::command_allowed(const hoermann_action_t command, bool bypass
     return false;
   }
 
-  if (this->is_movement_command(command) && (gate_state == hoermann_state_unknown || gate_state == hoermann_state_stopped)) {
+  if (this->obstruction_state &&
+      (command == hoermann_action_close || command == hoermann_action_venting ||
+       (command == hoermann_action_impulse && !bypass_impulse_interlock))) {
+    ESP_LOGW(TAG, "Blocked HCP command %s because obstruction/close failure is active", this->action_name(command));
+    this->http_debug_emit_command_("blocked", command, "obstruction_active");
+    return false;
+  }
+
+  if (this->is_movement_command(command) && !obstruction_recovery_open &&
+      (gate_state == hoermann_state_unknown || gate_state == hoermann_state_stopped)) {
     ESP_LOGW(TAG, "Blocked movement HCP command %s because decoded door state is %s",
              this->action_name(command), this->state_string.c_str());
     this->http_debug_emit_command_("blocked", command, "unsafe_state");
     return false;
   }
 
-  if (this->is_movement_command(command) && (gate_error || gate_prewarn)) {
+  if (this->is_movement_command(command) && !obstruction_recovery_open && (gate_error || gate_prewarn)) {
     ESP_LOGW(TAG, "Blocked movement HCP command %s because error/prewarn is active", this->action_name(command));
     this->http_debug_emit_command_("blocked", command, "error_or_prewarn");
     return false;
@@ -550,6 +568,9 @@ void UAPBridge_esp::apply_broadcast_status(uint16_t status, const char *frame_ty
   const hoermann_state_t new_state = this->decode_status_state(status);
   if (new_state == hoermann_state_opening || new_state == hoermann_state_closing) {
     this->last_moving_broadcast_ms = millis();
+  }
+  if (new_state == hoermann_state_closed) {
+    this->set_obstruction_state(false);
   }
   if (new_state != this->state) {
     this->handle_state_change(new_state);
@@ -1378,6 +1399,8 @@ std::string UAPBridge_esp::http_debug_stats_json_() {
   json += std::to_string(this->http_debug_last_rx_us_);
   json += ",\"valid_broadcast\":";
   json += this->valid_broadcast ? "true" : "false";
+  json += ",\"obstruction\":";
+  json += this->obstruction_state ? "true" : "false";
   json += ",\"raw_status\":";
   json += std::to_string(this->broadcast_status);
   json += ",\"command_sequence\":";
@@ -2082,6 +2105,7 @@ uint8_t UAPBridge_esp::persistent_log_reason_code_(const char *reason) const {
   if (strcmp(reason, "bus_state_stale") == 0) return 11;
   if (strcmp(reason, "stop_before_fetch") == 0) return 12;
   if (strcmp(reason, "venting_from_open_close_disabled") == 0) return 13;
+  if (strcmp(reason, "obstruction_active") == 0) return 14;
   return 255;
 }
 
@@ -2145,6 +2169,7 @@ const char *UAPBridge_esp::persistent_log_reason_name_(uint8_t reason) const {
     case 11: return "bus_state_stale";
     case 12: return "stop_before_fetch";
     case 13: return "venting_from_open_close_disabled";
+    case 14: return "obstruction_active";
     case 255: return "other";
     default: return "unknown";
   }

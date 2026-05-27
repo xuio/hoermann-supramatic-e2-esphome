@@ -15,12 +15,14 @@ UAPBridgeCommunication = uapbridge_ns.class_("UAPBridgeCommunication", binary_se
 UAPBridgeRelaySensor = uapbridge_ns.class_("UAPBridgeRelaySensor", binary_sensor.BinarySensor, cg.Component)
 UAPBridgeErrorSensor = uapbridge_ns.class_("UAPBridgeErrorSensor", binary_sensor.BinarySensor, cg.Component)
 UAPBridgePrewarnSensor = uapbridge_ns.class_("UAPBridgePrewarnSensor", binary_sensor.BinarySensor, cg.Component)
+UAPBridgeObstructionSensor = uapbridge_ns.class_("UAPBridgeObstructionSensor", binary_sensor.BinarySensor, cg.Component)
 UAPBridgeGotValidBroadcast = uapbridge_ns.class_("UAPBridgeGotValidBroadcast", binary_sensor.BinarySensor, cg.Component)
 
 CONF_PIC16_COM = "pic16_com"
 CONF_RELAY_STATE = "relay_state"
 CONF_ERROR_STATE = "error_state"
 CONF_PREWARN_STATE = "prewarn_state"
+CONF_OBSTRUCTION_STATE = "obstruction_state"
 CONF_GOT_VALID_BROADCAST = "got_valid_broadcast"
 
 CONFIG_SCHEMA = cv.Schema(
@@ -44,6 +46,11 @@ CONFIG_SCHEMA = cv.Schema(
             UAPBridgePrewarnSensor
         ).extend({
             cv.Optional("device_class", default=DEVICE_CLASS_SAFETY): cv.string,
+        }),
+        cv.Optional(CONF_OBSTRUCTION_STATE): binary_sensor.binary_sensor_schema(
+            UAPBridgeObstructionSensor
+        ).extend({
+            cv.Optional("device_class", default=DEVICE_CLASS_PROBLEM): cv.string,
         }),
         cv.Optional(CONF_GOT_VALID_BROADCAST): binary_sensor.binary_sensor_schema(
             UAPBridgeGotValidBroadcast
@@ -76,6 +83,11 @@ async def to_code(config):
         prewarn_sens = await binary_sensor.new_binary_sensor(conf)
         await cg.register_component(prewarn_sens, conf)
         cg.add(prewarn_sens.set_uapbridge_parent(parent))
+
+    if conf := config.get(CONF_OBSTRUCTION_STATE):
+        obstruction_sens = await binary_sensor.new_binary_sensor(conf)
+        await cg.register_component(obstruction_sens, conf)
+        cg.add(obstruction_sens.set_uapbridge_parent(parent))
 
     if conf := config.get(CONF_GOT_VALID_BROADCAST):
         got_valid_broadcast_sens = await binary_sensor.new_binary_sensor(conf)

@@ -102,12 +102,14 @@ The component is vendored under [components](components). It is based on the ESP
 - `command_timeout`, default `1200ms`, expires queued one-shot commands if the drive does not poll.
 - `diagnostic_mode`, default `false`, logs raw frames, CRC status, decoded status bits, command queueing, command sending, and state transitions when temporarily enabled for captures.
 - `trust_light_feedback`, default `true`, uses the decoded HCP light bit as authoritative. The SupraMatic E2 YAML sets this to `false` because the observed one-byte E2 broadcasts do not carry reliable light state; the Home Assistant light is therefore optimistic and each UI state change sends one toggle command.
+- `close_obstruction_grace`, default `5s`, latches the `obstruction_state` diagnostic when a full close estimate has elapsed but the HCP closed bit never appears. This covers the observed E2 display `5` behavior where no explicit HCP error bit was captured.
 - `http_debug_port`, set to `8080` in the primary YAML, exposes the live UAP1 emulator monitor without adding a second UART reader. It streams raw RX, TX responses, decoded frames, command queue/block/send events, gaps, stats, and recent history while the emulator continues to answer the opener.
 - `persistent_log`, default `false`, adds an on-demand filesystem-backed protocol capture on a dedicated SPIFFS partition. It stages compact binary records in RAM, periodically flushes them to flash, and can be enabled and dumped at runtime over HTTP so obstruction or error tests can be captured even if no browser stream is open.
 - `listen_only`, when set true, receives and logs HCP frames without answering scan/status requests. Use this only for first bus capture.
 - `valid_broadcast_timeout`, default `10s`, clears the valid-broadcast diagnostic and marks state unknown if the bus goes stale.
 - `got_valid_broadcast` is set only after a CRC-valid HCP broadcast.
 - Unknown states are treated conservatively; the cover is never reported closed unless the closed bit is decoded. Toggle remains disabled; use the explicit impulse button for deliberate protocol testing.
+- `obstruction_state` is a separate problem binary sensor for close-failure detection. While it is active, close, venting, and generic impulse are blocked; open remains allowed as the recovery direction and clears the latch when accepted or when HCP already reports open.
 - Optional `time_based_position` support exposes a Shelly-style position-capable cover in Home Assistant. Position is estimated from calibrated open/close durations and corrected by decoded HCP end states.
 - `api.reboot_timeout: 0s` is set in every YAML so proxy/monitor/main firmware does not reboot just because Home Assistant or an API client is offline.
 
@@ -182,7 +184,7 @@ uapbridge_esp:
   auto_correction: false
 ```
 
-This enables Home Assistant open, close, stop, venting, light, and generic impulse commands. Use this mode only while physically present at the door during bring-up. Temporarily set `diagnostic_mode: true` only when capturing protocol logs. Even with all commands enabled, the firmware still requires a fresh valid HCP broadcast, a known non-stopped state, and no active error/prewarn before it accepts movement commands.
+This enables Home Assistant open, close, stop, venting, light, and generic impulse commands. Use this mode only while physically present at the door during bring-up. Temporarily set `diagnostic_mode: true` only when capturing protocol logs. Even with all commands enabled, the firmware still requires a fresh valid HCP broadcast, a known non-stopped state, and no active error/prewarn before it accepts movement commands. An active close-failure/obstruction latch blocks close, venting, and generic impulse while still allowing open as a recovery command.
 
 After command behavior and state mapping are verified, set `allow_remote_impulse: false` again unless you explicitly need the generic impulse command. If remote closing should remain disabled after testing, set `allow_remote_close: false`.
 
@@ -208,9 +210,10 @@ cover:
     time_based_position: true
     open_duration: 18s
     close_duration: 18s
+    close_obstruction_grace: 5s
 ```
 
-This is an estimate, not measured position data from the opener. Timing starts when the command is actually sent on the next HCP status response, or when HCP status reports movement. The firmware only reports exact `0%` after the HCP closed bit is decoded; timing alone is clamped above closed so Home Assistant is not told the door is definitely closed when it is not confirmed. Intermediate position targets require a reliable stop path. See [docs/time-based-position.md](docs/time-based-position.md).
+This is an estimate, not measured position data from the opener. Timing starts when the command is actually sent on the next HCP status response, or when HCP status reports movement. The firmware only reports exact `0%` after the HCP closed bit is decoded; timing alone is clamped above closed so Home Assistant is not told the door is definitely closed when it is not confirmed. If a close reaches the calibrated travel time and the HCP closed bit still does not appear after `close_obstruction_grace`, `Garage Door Obstruction State` turns on and the estimate remains non-closed. Intermediate position targets require a reliable stop path. See [docs/time-based-position.md](docs/time-based-position.md).
 
 Because Home Assistant may hide the position slider for a `device_class: garage` cover, the primary YAML also exposes `Garage Door Target Position` as a number entity. Use that slider for percentage tests. `Garage Door Open Duration` and `Garage Door Close Duration` show the automatically learned runtime calibration values in seconds; clean full open/close runs update and persist them automatically.
 
@@ -289,7 +292,7 @@ The monitor also exposes `/events` as a Server-Sent Events stream, `/recent` for
 14. Enable `allow_remote_close: true` only after state feedback is reliable and safety devices are verified. Until then, close commands are expected to show `CMD ... blocked close ... reason=close_disabled`.
 15. Test open and close while physically present at the door.
 16. Enable and test `allow_remote_impulse: true` only if you explicitly need the generic impulse command for protocol diagnosis.
-17. Log and verify states for closed, opening, open, closing, stopped halfway, venting/partial-open, light on/off, and any error/prewarn state.
+17. Log and verify states for closed, opening, open, closing, stopped halfway, venting/partial-open, light on/off, obstruction/close-failure, and any error/prewarn state.
 18. Only after reliable state and safety behavior, expose the cover through Home Assistant's HomeKit Bridge.
 
 ## Capturing E2 State Logs
@@ -309,7 +312,7 @@ Temporarily enable `diagnostic_mode: true`, or flash the monitor/proxy firmware 
 - Stopped halfway.
 - Venting / partial-open.
 - Light on and off.
-- Error or prewarn, if available.
+- Obstruction/close-failure and error/prewarn, if available.
 
 For each state, copy the lines containing:
 
@@ -321,7 +324,7 @@ For each state, copy the lines containing:
 
 If E2 state decoding differs from the E3-derived mapping, those raw status frames are the data needed to adjust the bit mapping without changing the hardware.
 
-When configuring HomeKit Bridge, include only the garage cover and optionally the garage light. Exclude venting controls, diagnostics, raw state helpers, and error/prewarn sensors from HomeKit. The default YAML does not expose a generic impulse button; add one only for deliberate protocol diagnosis.
+When configuring HomeKit Bridge, include the garage cover, optionally the garage light, and optionally the `Garage Door Obstruction State` problem sensor if you want the obstruction latch visible in Apple Home. Exclude venting controls, diagnostics, raw state helpers, and generic error/prewarn sensors from HomeKit unless you explicitly want them as separate sensors. The default YAML does not expose a generic impulse button; add one only for deliberate protocol diagnosis.
 
 ## Notes
 

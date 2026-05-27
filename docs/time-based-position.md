@@ -12,6 +12,7 @@ cover:
     time_based_position: true
     open_duration: 18s
     close_duration: 18s
+    close_obstruction_grace: 5s
     position_publish_interval: 1s
     position_deadband: 2%
     venting_position: 20%
@@ -35,16 +36,19 @@ These values show the active learned durations from the cover component. You can
 - Intermediate targets move in the needed direction, estimate travel progress, then send stop at the estimated target.
 - The movement timer is armed by the Home Assistant command, but it does not start counting from the request timestamp. It starts after the one-shot HCP command is actually sent in a status response, or when decoded HCP status reports opening/closing.
 - During the short start/prewarn window after a command is sent, old opposite end-state broadcasts are ignored so an intermediate target is not discarded before movement is reported.
+- Ambiguous E2 `stopped` / `0x0000` status is ignored while an estimated movement is active. Captures showed the E2 can emit that value during a close attempt, so treating it as a real stop breaks calibration and percentage control.
 - New targets in the current travel direction retarget the active estimate. A target in the opposite direction first sends stop and requires a second explicit command after the door stops.
 - The estimate is corrected to `0%`, `100%`, or the configured venting percentage when the HCP status decoder sees closed, open, or venting.
 - The firmware restores the last estimated cover position after reboot, but a restored exact closed value is clamped above `0%` until the HCP closed bit is decoded again.
 - Full open/close timing completion keeps the cover operation as opening/closing until the corresponding HCP end-state bit confirms the final state.
+- For a full close, if the close duration plus `close_obstruction_grace` elapses without the HCP closed bit, the firmware latches `Garage Door Obstruction State`, stops the estimate at a conservative non-closed value, and blocks further close/venting/impulse commands. An explicit open command is still allowed as recovery and clears the latch when accepted, or when HCP already reports open.
 - If a full end-to-end travel starts from the opposite end and reaches the expected end state, the firmware automatically stores the learned travel duration in flash.
 
 ## Safety Limits
 
 - Timed position is an estimate, not a measured encoder position.
 - The firmware will not publish exact `0%` closed from timing alone. It only publishes `0%` after the HCP closed bit is decoded.
+- The obstruction latch is inferred from a failed timed close, not from a confirmed E2 error-code field. Keep protocol logging available during further obstruction tests so a future explicit E2 error bit can replace or refine the inference if one is found.
 - `position_deadband` is limited to `20%` or less at ESPHome config validation time so a broad deadband cannot hide large position errors.
 - Downward position moves require `allow_remote_close: true`; the default YAML keeps it `false` until you have verified state decoding and obstruction protection.
 - Intermediate target stopping relies on the existing safe stop path. With the default `use_unverified_stop_command: false`, the firmware sends the impulse stop fallback only after a recent decoded moving broadcast. If E2 moving-state decoding is wrong or stale, an intermediate stop may be rejected and the door may continue to an end stop.

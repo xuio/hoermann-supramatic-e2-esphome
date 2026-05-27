@@ -97,6 +97,7 @@ cover:
     time_based_position: true
     open_duration: 18s
     close_duration: 18s
+    close_obstruction_grace: 5s
     position_publish_interval: 1s
     position_deadband: 2%
     venting_position: 20%
@@ -118,6 +119,8 @@ binary_sensor:
       name: "${friendly_name} Error State"
     prewarn_state:
       name: "${friendly_name} Prewarn State"
+    obstruction_state:
+      name: "${friendly_name} Obstruction State"
     got_valid_broadcast:
       name: "${friendly_name} Valid HCP Broadcast"
 

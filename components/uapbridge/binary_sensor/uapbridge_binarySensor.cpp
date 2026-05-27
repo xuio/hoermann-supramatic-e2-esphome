@@ -68,6 +68,21 @@ void UAPBridgePrewarnSensor::dump_config() {
   ESP_LOGCONFIG(TAG, "UAPBridgePrewarnSensor");
 }
 
+void UAPBridgeObstructionSensor::setup() {
+  this->parent_->add_on_state_callback([this]() { this->on_event_triggered(); });
+  this->publish_state(this->parent_->get_obstruction_state());
+}
+
+void UAPBridgeObstructionSensor::on_event_triggered() {
+  if (this->parent_->get_obstruction_state() != this->state) {
+    this->publish_state(this->parent_->get_obstruction_state());
+  }
+}
+
+void UAPBridgeObstructionSensor::dump_config() {
+  ESP_LOGCONFIG(TAG, "UAPBridgeObstructionSensor");
+}
+
 // GotValidBroadcast Sensor (formerly DataHasChanged)
 void UAPBridgeGotValidBroadcast::setup() {
   this->parent_->add_on_state_callback([this]() { this->on_event_triggered(); });

@@ -20,6 +20,7 @@ class UAPBridgeCover : public cover::Cover, public Component {
   uint32_t get_open_duration() const { return this->open_duration_ms_; }
   void set_close_duration(uint32_t value);
   uint32_t get_close_duration() const { return this->close_duration_ms_; }
+  void set_close_obstruction_grace(uint32_t value) { this->close_obstruction_grace_ms_ = value; }
   void set_position_publish_interval(uint32_t value) { this->position_publish_interval_ms_ = value; }
   void set_position_deadband(float value) { this->position_deadband_ = value; }
   void set_venting_position(float value) { this->venting_position_ = value; }
@@ -32,6 +33,7 @@ class UAPBridgeCover : public cover::Cover, public Component {
     bool time_based_position_ = false;
     uint32_t open_duration_ms_ = 18000;
     uint32_t close_duration_ms_ = 18000;
+    uint32_t close_obstruction_grace_ms_ = 5000;
     uint32_t position_publish_interval_ms_ = 1000;
     float position_deadband_ = 0.02f;
     float venting_position_ = 0.2f;
@@ -45,6 +47,7 @@ class UAPBridgeCover : public cover::Cover, public Component {
     uint32_t pending_command_sequence_ = 0;
     uint32_t pending_started_ms_ = 0;
     bool waiting_for_end_state_ = false;
+    uint32_t end_state_wait_started_ms_ = 0;
     uint32_t movement_start_grace_until_ms_ = 0;
     bool travel_measurement_active_ = false;
     cover::CoverOperation travel_measurement_operation_ = cover::COVER_OPERATION_IDLE;
@@ -62,6 +65,9 @@ class UAPBridgeCover : public cover::Cover, public Component {
     bool should_ignore_old_end_state_(UAPBridge::hoermann_state_t state) const;
     void recompute_position_();
     bool is_at_target_() const;
+    bool target_is_end_state_() const;
+    void latch_close_obstruction_(const char *reason);
+    void service_end_state_wait_();
     void complete_estimated_target_();
     void sync_known_position_(float position, const char *reason);
     void stop_estimated_movement_(const char *reason);

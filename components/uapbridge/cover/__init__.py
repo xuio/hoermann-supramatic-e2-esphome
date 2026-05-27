@@ -9,6 +9,7 @@ from esphome.const import (
 DEPENDENCIES = ["uapbridge"]
 
 CONF_CLOSE_DURATION = "close_duration"
+CONF_CLOSE_OBSTRUCTION_GRACE = "close_obstruction_grace"
 CONF_LEARN_TRAVEL_DURATIONS = "learn_travel_durations"
 CONF_OPEN_DURATION = "open_duration"
 CONF_POSITION_DEADBAND = "position_deadband"
@@ -31,6 +32,7 @@ CONFIG_SCHEMA = cv.All(
     cv.Optional(CONF_TIME_BASED_POSITION, default=False): cv.boolean,
     cv.Optional(CONF_OPEN_DURATION, default="18s"): cv.positive_time_period_milliseconds,
     cv.Optional(CONF_CLOSE_DURATION, default="18s"): cv.positive_time_period_milliseconds,
+    cv.Optional(CONF_CLOSE_OBSTRUCTION_GRACE, default="5s"): cv.positive_time_period_milliseconds,
     cv.Optional(CONF_POSITION_PUBLISH_INTERVAL, default="1s"): cv.positive_time_period_milliseconds,
     cv.Optional(CONF_POSITION_DEADBAND, default="2%"): position_deadband,
     cv.Optional(CONF_VENTING_POSITION, default="20%"): cv.percentage,
@@ -47,6 +49,7 @@ async def to_code(config):
     cg.add(var.set_time_based_position(config[CONF_TIME_BASED_POSITION]))
     cg.add(var.set_open_duration(config[CONF_OPEN_DURATION].total_milliseconds))
     cg.add(var.set_close_duration(config[CONF_CLOSE_DURATION].total_milliseconds))
+    cg.add(var.set_close_obstruction_grace(config[CONF_CLOSE_OBSTRUCTION_GRACE].total_milliseconds))
     cg.add(var.set_position_publish_interval(config[CONF_POSITION_PUBLISH_INTERVAL].total_milliseconds))
     cg.add(var.set_position_deadband(config[CONF_POSITION_DEADBAND]))
     cg.add(var.set_venting_position(config[CONF_VENTING_POSITION]))
