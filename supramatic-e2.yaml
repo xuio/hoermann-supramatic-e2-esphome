@@ -113,6 +113,14 @@ cover:
     venting_position: 3.6%
     learn_travel_durations: false
     use_motion_curve: true
+    # Recovered from timing-aligned AUTO_02/AUTO_04 interrupted-stop runs.
+    # These coefficients are only used for intermediate percentage targets.
+    # Full open/close still uses the measured endpoint curve plus HCP end bits.
+    use_interrupted_stop_model: true
+    open_stop_slope: 0.975103
+    open_stop_intercept: 0.0208324
+    close_stop_slope: 0.992568
+    close_stop_intercept: -0.00163212
 
 switch:
   - platform: uapbridge

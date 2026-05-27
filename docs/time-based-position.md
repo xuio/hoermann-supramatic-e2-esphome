@@ -22,6 +22,11 @@ cover:
     venting_position: 3.6%
     learn_travel_durations: false
     use_motion_curve: true
+    use_interrupted_stop_model: true
+    open_stop_slope: 0.975103
+    open_stop_intercept: 0.0208324
+    close_stop_slope: 0.992568
+    close_stop_intercept: -0.00163212
 ```
 
 Home Assistant sees a normal cover position where `0%` is closed and `100%` is open. This matches the convention used by Home Assistant cover entities and Shelly cover mode.
@@ -34,6 +39,9 @@ The SupraMatic E2 defaults above are calibrated from the 2026-05-27 ArUco marker
 - `open_start_delay` / `close_start_delay`: delay between the HCP command being transmitted and visible door motion beginning.
 - `open_report_delay` / `close_report_delay`: delay between visible end of travel and the HCP end-state report.
 - `use_motion_curve`: interpolate through the measured soft-start/soft-stop curve instead of assuming a linear position over time.
+- `use_interrupted_stop_model`: for intermediate targets only, stop slightly before or after the requested percentage so the abrupt-stop behavior settles closer to the requested final opening.
+- `open_stop_slope` / `open_stop_intercept`: opening-side model, `settled_position = slope * stop_position + intercept`.
+- `close_stop_slope` / `close_stop_intercept`: closing-side model, `settled_position = slope * stop_position + intercept`.
 - `venting_position`: used only if a future HCP status frame decodes as native venting; current position calibration does not depend on the vent command.
 
 The main E2 YAML keeps automatic travel-duration learning disabled so the video-derived timing values remain authoritative. The component still exposes configuration numbers:
@@ -48,7 +56,8 @@ These values show the active calibration from the cover component. You can still
 ## Behavior
 
 - Fully open and fully close still use the native HCP open/close commands.
-- Intermediate targets move in the needed direction, estimate travel progress, then send stop at the estimated target.
+- Fully open and fully close keep using the timing-aligned endpoint curve and still wait for the HCP open/closed end-state bit before final correction.
+- Intermediate targets move in the needed direction, estimate travel progress, then send stop at an inverse-model trigger position. The configured E2 model stops opening early and closing slightly above the requested target so the actual settled position lands closer to the requested percentage.
 - The movement timer is armed by the Home Assistant command, but it does not start counting from the request timestamp. It starts after the one-shot HCP command is actually sent in a status response. When moving away from a known `Open` or `Closed` end state, the estimator also waits until the HCP status leaves that old endpoint; this prevents timed stop/follow-up commands if the opener ignores a close/open command.
 - The visible position remains at the start value during the configured start delay, then advances through the configured empirical motion curve over the visible motion duration.
 - During the short start/prewarn window after a command is sent, old opposite end-state broadcasts are ignored so an intermediate target is not discarded before movement is reported.
@@ -56,6 +65,7 @@ These values show the active calibration from the cover component. You can still
 - Ambiguous E2 `stopped` / `0x0000` status is ignored while an estimated movement is active. Captures showed the E2 can emit that value during a close attempt, so treating it as a real stop breaks calibration and percentage control.
 - New targets in the current travel direction retarget the active estimate. A target in the opposite direction first sends stop and requires a second explicit command after the door stops.
 - After an estimated intermediate stop, follow-up open/close commands are allowed from the cover's own estimated intermediate position even if the HCP broadcast still decodes as `0x0000`; this is required for reset moves between percentage tests.
+- The interrupted-stop model was recovered from timing-aligned AUTO_02 and AUTO_04 percentage-stop captures. The currently configured inverse formulas are `open_stop = (target - 0.0208324) / 0.975103` and `close_stop = (target + 0.00163212) / 0.992568`. The fitted settled-position error was about `0.30 pp` RMSE opening and `0.10 pp` RMSE closing on the usable interrupted-stop samples.
 - The estimate is corrected to `0%` or `100%` when the HCP status decoder sees closed or open. Native venting is intentionally not part of the current calibration path; use normal percentage targets for partial-open testing.
 - The firmware restores the last estimated cover position after reboot, but a restored exact closed value is clamped above `0%` until the HCP closed bit is decoded again.
 - Full open/close timing completion keeps the cover operation as opening/closing until the corresponding HCP end-state bit confirms the final state.

@@ -34,6 +34,11 @@ class UAPBridgeCover : public cover::Cover, public Component {
   void set_venting_position(float value) { this->venting_position_ = value; }
   void set_learn_travel_durations(bool value) { this->learn_travel_durations_ = value; }
   void set_use_motion_curve(bool value) { this->use_motion_curve_ = value; }
+  void set_use_interrupted_stop_model(bool value) { this->use_interrupted_stop_model_ = value; }
+  void set_open_stop_slope(float value) { this->open_stop_slope_ = value; }
+  void set_open_stop_intercept(float value) { this->open_stop_intercept_ = value; }
+  void set_close_stop_slope(float value) { this->close_stop_slope_ = value; }
+  void set_close_stop_intercept(float value) { this->close_stop_intercept_ = value; }
  protected:
     UAPBridge *parent_;
     cover::CoverOperation previousOperation_ = cover::COVER_OPERATION_IDLE;
@@ -52,7 +57,14 @@ class UAPBridgeCover : public cover::Cover, public Component {
     float venting_position_ = 0.2f;
     bool learn_travel_durations_ = true;
     bool use_motion_curve_ = false;
+    bool use_interrupted_stop_model_ = false;
+    float open_stop_slope_ = 1.0f;
+    float open_stop_intercept_ = 0.0f;
+    float close_stop_slope_ = 1.0f;
+    float close_stop_intercept_ = 0.0f;
     float target_position_ = 1.0f;
+    float stop_trigger_position_ = 1.0f;
+    bool stop_trigger_position_valid_ = false;
     uint32_t last_recompute_time_ = 0;
     uint32_t last_publish_time_ = 0;
     uint32_t movement_started_ms_ = 0;
@@ -92,6 +104,11 @@ class UAPBridgeCover : public cover::Cover, public Component {
     void recompute_position_();
     bool is_at_target_() const;
     bool target_is_end_state_() const;
+    void update_stop_trigger_position_();
+    void clear_stop_trigger_position_();
+    float stop_trigger_position_for_target_(cover::CoverOperation operation, float target) const;
+    float active_stop_trigger_position_() const;
+    float predicted_settled_position_for_stop_(cover::CoverOperation operation, float stop_position) const;
     void latch_close_obstruction_(const char *reason);
     void service_end_state_wait_();
     void complete_estimated_target_();

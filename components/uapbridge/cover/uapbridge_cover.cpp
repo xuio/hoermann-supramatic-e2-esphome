@@ -156,6 +156,14 @@ void UAPBridgeCover::dump_config() {
     ESP_LOGCONFIG(TAG, "  Venting Position: %.1f%%", this->venting_position_ * 100.0f);
     ESP_LOGCONFIG(TAG, "  Learn Travel Durations: %s", this->learn_travel_durations_ ? "true" : "false");
     ESP_LOGCONFIG(TAG, "  Empirical Motion Curve: %s", this->use_motion_curve_ ? "true" : "false");
+    ESP_LOGCONFIG(TAG, "  Interrupted Stop Model: %s",
+                  this->use_interrupted_stop_model_ ? "true" : "false");
+    if (this->use_interrupted_stop_model_) {
+      ESP_LOGCONFIG(TAG, "    Open settle = %.6f * stop + %.3f%%",
+                    this->open_stop_slope_, this->open_stop_intercept_ * 100.0f);
+      ESP_LOGCONFIG(TAG, "    Close settle = %.6f * stop + %.3f%%",
+                    this->close_stop_slope_, this->close_stop_intercept_ * 100.0f);
+    }
   }
 }
 
@@ -230,6 +238,7 @@ void UAPBridgeCover::control(const cover::CoverCall& call) {
         this->clear_departure_wait_("explicit stop command");
         this->current_operation = cover::COVER_OPERATION_IDLE;
         this->target_position_ = this->position;
+        this->clear_stop_trigger_position_();
         this->movement_started_ms_ = 0;
         this->publish_if_changed_(true, false);
       } else if (this->time_based_position_) {
@@ -335,6 +344,7 @@ void UAPBridgeCover::control_time_based_position_(float target) {
       if (this->parent_->action_stop()) {
         this->clear_pending_movement_("Home Assistant target reached before queued command was fetched");
         this->target_position_ = this->position;
+        this->clear_stop_trigger_position_();
         this->publish_if_changed_(true, false);
       } else {
         ESP_LOGW(TAG, "Could not cancel queued command for requested %.0f%%", target * 100.0f);
@@ -367,6 +377,7 @@ void UAPBridgeCover::control_time_based_position_(float target) {
         this->clear_departure_wait_("Home Assistant target reached before HCP departure");
         this->current_operation = cover::COVER_OPERATION_IDLE;
         this->target_position_ = this->position;
+        this->clear_stop_trigger_position_();
         this->movement_started_ms_ = 0;
         this->publish_if_changed_(true, false);
       } else {
@@ -426,6 +437,7 @@ void UAPBridgeCover::control_time_based_position_(float target) {
 
     if (operation == this->current_operation) {
       this->target_position_ = target;
+      this->update_stop_trigger_position_();
       ESP_LOGI(TAG, "Retargeted active estimated movement to %.0f%%", this->target_position_ * 100.0f);
       this->publish_if_changed_(true, false);
       return;
@@ -543,6 +555,7 @@ void UAPBridgeCover::arm_pending_movement_(cover::CoverOperation operation, floa
   this->pending_command_sequence_ = this->parent_->get_command_sequence();
   this->pending_started_ms_ = millis();
   this->target_position_ = this->pending_target_position_;
+  this->clear_stop_trigger_position_();
   this->end_state_wait_started_ms_ = 0;
   ESP_LOGI(TAG, "Queued estimated %s toward %.0f%%; waiting for HCP command transmission: %s",
            operation == cover::COVER_OPERATION_OPENING ? "opening" : "closing",
@@ -584,6 +597,7 @@ void UAPBridgeCover::clear_pending_movement_(const char *reason) {
   ESP_LOGD(TAG, "Cleared pending estimated movement: %s", reason);
   this->pending_movement_ = false;
   this->pending_operation_ = cover::COVER_OPERATION_IDLE;
+  this->pending_target_position_ = this->position;
 }
 
 void UAPBridgeCover::start_departure_wait_(cover::CoverOperation operation, float target,
@@ -600,6 +614,7 @@ void UAPBridgeCover::start_departure_wait_(cover::CoverOperation operation, floa
   this->movement_start_grace_until_ms_ = 0;
   this->movement_started_ms_ = 0;
   this->travel_measurement_active_ = false;
+  this->clear_stop_trigger_position_();
   ESP_LOGI(TAG, "Waiting for HCP state to leave %s before estimating %s toward %.0f%%: %s",
            old_state == UAPBridge::hoermann_state_t::hoermann_state_open ? "open" : "closed",
            operation == cover::COVER_OPERATION_OPENING ? "opening" : "closing",
@@ -642,6 +657,7 @@ void UAPBridgeCover::service_departure_wait_() {
   this->clear_departure_wait_("HCP did not leave previous end state after command");
   this->target_position_ = this->position;
   this->current_operation = cover::COVER_OPERATION_IDLE;
+  this->clear_stop_trigger_position_();
   this->publish_if_changed_(true, false);
 }
 
@@ -652,6 +668,7 @@ void UAPBridgeCover::clear_departure_wait_(const char *reason) {
   ESP_LOGD(TAG, "Cleared HCP departure wait: %s", reason);
   this->waiting_for_departure_ = false;
   this->departure_operation_ = cover::COVER_OPERATION_IDLE;
+  this->departure_target_position_ = this->position;
   this->departure_wait_started_ms_ = 0;
 }
 
@@ -681,9 +698,15 @@ void UAPBridgeCover::start_estimated_movement_(cover::CoverOperation operation, 
   this->movement_start_position_ = this->position;
   this->movement_start_grace_until_ms_ = movement_confirmed ? 0 : now + 5000;
   this->begin_travel_measurement_(operation);
+  this->update_stop_trigger_position_();
   ESP_LOGI(TAG, "Started estimated %s toward %.0f%% from %.0f%%: %s",
            operation == cover::COVER_OPERATION_OPENING ? "opening" : "closing",
            this->target_position_ * 100.0f, this->movement_start_position_ * 100.0f, reason);
+  if (this->use_interrupted_stop_model_ && !this->target_is_end_state_()) {
+    ESP_LOGI(TAG, "Interrupted target %.1f%% will stop at estimated %.1f%% and settle near %.1f%%",
+             this->target_position_ * 100.0f, this->stop_trigger_position_ * 100.0f,
+             this->predicted_settled_position_for_stop_(operation, this->stop_trigger_position_) * 100.0f);
+  }
   this->publish_if_changed_(true, false);
 }
 
@@ -746,11 +769,12 @@ void UAPBridgeCover::recompute_position_() {
 }
 
 bool UAPBridgeCover::is_at_target_() const {
+  const float trigger = this->active_stop_trigger_position_();
   switch (this->current_operation) {
     case cover::COVER_OPERATION_OPENING:
-      return this->position >= this->target_position_;
+      return this->position >= trigger;
     case cover::COVER_OPERATION_CLOSING:
-      return this->position <= this->target_position_;
+      return this->position <= trigger;
     case cover::COVER_OPERATION_IDLE:
     default:
       return true;
@@ -759,6 +783,71 @@ bool UAPBridgeCover::is_at_target_() const {
 
 bool UAPBridgeCover::target_is_end_state_() const {
   return this->is_open_target_(this->target_position_) || this->is_closed_target_(this->target_position_);
+}
+
+void UAPBridgeCover::update_stop_trigger_position_() {
+  if (this->current_operation == cover::COVER_OPERATION_IDLE || this->target_is_end_state_() ||
+      !this->use_interrupted_stop_model_) {
+    this->stop_trigger_position_ = this->target_position_;
+    this->stop_trigger_position_valid_ = true;
+    return;
+  }
+
+  this->stop_trigger_position_ =
+      this->stop_trigger_position_for_target_(this->current_operation, this->target_position_);
+  this->stop_trigger_position_valid_ = true;
+}
+
+void UAPBridgeCover::clear_stop_trigger_position_() {
+  this->stop_trigger_position_ = this->target_position_;
+  this->stop_trigger_position_valid_ = false;
+}
+
+float UAPBridgeCover::stop_trigger_position_for_target_(cover::CoverOperation operation, float target) const {
+  target = clamp(target, 0.0f, 1.0f);
+  if (!this->use_interrupted_stop_model_ || this->is_open_target_(target) || this->is_closed_target_(target)) {
+    return target;
+  }
+
+  if (operation == cover::COVER_OPERATION_OPENING) {
+    if (this->open_stop_slope_ <= 0.0f) {
+      return target;
+    }
+    float trigger = (target - this->open_stop_intercept_) / this->open_stop_slope_;
+    trigger = clamp(trigger, 0.0f, 1.0f);
+    return std::min(trigger, target);
+  }
+
+  if (operation == cover::COVER_OPERATION_CLOSING) {
+    if (this->close_stop_slope_ <= 0.0f) {
+      return target;
+    }
+    float trigger = (target - this->close_stop_intercept_) / this->close_stop_slope_;
+    trigger = clamp(trigger, 0.0f, 1.0f);
+    return std::max(trigger, target);
+  }
+
+  return target;
+}
+
+float UAPBridgeCover::active_stop_trigger_position_() const {
+  return this->stop_trigger_position_valid_ ? this->stop_trigger_position_ : this->target_position_;
+}
+
+float UAPBridgeCover::predicted_settled_position_for_stop_(cover::CoverOperation operation,
+                                                           float stop_position) const {
+  stop_position = clamp(stop_position, 0.0f, 1.0f);
+  if (!this->use_interrupted_stop_model_) {
+    return stop_position;
+  }
+
+  if (operation == cover::COVER_OPERATION_OPENING) {
+    return clamp(this->open_stop_slope_ * stop_position + this->open_stop_intercept_, 0.0f, 1.0f);
+  }
+  if (operation == cover::COVER_OPERATION_CLOSING) {
+    return clamp(this->close_stop_slope_ * stop_position + this->close_stop_intercept_, 0.0f, 1.0f);
+  }
+  return stop_position;
 }
 
 void UAPBridgeCover::latch_close_obstruction_(const char *reason) {
@@ -791,11 +880,15 @@ void UAPBridgeCover::service_end_state_wait_() {
 void UAPBridgeCover::complete_estimated_target_() {
   const auto operation = this->current_operation;
   const float target = this->target_position_;
+  const float stop_trigger = this->active_stop_trigger_position_();
+  const float estimated_stop_position = this->position;
+  const float predicted_settle = this->predicted_settled_position_for_stop_(operation, estimated_stop_position);
 
   if (!this->target_is_end_state_()) {
     if (!this->parent_->action_stop()) {
       ESP_LOGW(TAG, "Could not stop at estimated %.0f%% target; continuing estimate toward end stop", target * 100.0f);
       this->target_position_ = operation == cover::COVER_OPERATION_OPENING ? cover::COVER_OPEN : cover::COVER_CLOSED;
+      this->update_stop_trigger_position_();
       return;
     }
     this->position = target;
@@ -805,7 +898,12 @@ void UAPBridgeCover::complete_estimated_target_() {
     this->movement_start_grace_until_ms_ = 0;
     this->movement_started_ms_ = 0;
     this->travel_measurement_active_ = false;
-    ESP_LOGI(TAG, "Stopped at estimated intermediate position %.0f%%", target * 100.0f);
+    this->clear_stop_trigger_position_();
+    ESP_LOGI(TAG,
+             "Stopped for intermediate target %.1f%% at estimated %.1f%% "
+             "(trigger %.1f%%, predicted settled %.1f%%)",
+             target * 100.0f, estimated_stop_position * 100.0f,
+             stop_trigger * 100.0f, predicted_settle * 100.0f);
     this->publish_if_changed_(true);
     return;
   }
@@ -834,6 +932,7 @@ void UAPBridgeCover::sync_known_position_(float position, const char *reason) {
   this->movement_start_grace_until_ms_ = 0;
   this->movement_started_ms_ = 0;
   this->travel_measurement_active_ = false;
+  this->clear_stop_trigger_position_();
   ESP_LOGI(TAG, "Synced cover position to %.0f%% from %s", this->position * 100.0f, reason);
   this->publish_if_changed_(true);
 }
@@ -849,6 +948,7 @@ void UAPBridgeCover::stop_estimated_movement_(const char *reason) {
   this->movement_start_grace_until_ms_ = 0;
   this->movement_started_ms_ = 0;
   this->travel_measurement_active_ = false;
+  this->clear_stop_trigger_position_();
   ESP_LOGI(TAG, "Stopped estimated movement at %.0f%%: %s", this->position * 100.0f, reason);
   this->publish_if_changed_(true);
 }
@@ -867,6 +967,7 @@ void UAPBridgeCover::force_non_closed_estimate_(const char *reason) {
     this->position = std::max(this->position_deadband_, 0.01f);
   }
   this->target_position_ = this->position;
+  this->clear_stop_trigger_position_();
   ESP_LOGW(TAG, "Publishing conservative non-closed estimate %.0f%%: %s",
            this->position * 100.0f, reason);
   this->publish_if_changed_(true, false);
