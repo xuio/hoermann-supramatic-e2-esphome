@@ -519,8 +519,8 @@ class NativeApiWorker(threading.Thread):
             from aioesphomeapi import APIClient  # type: ignore
         except ImportError as err:
             raise RuntimeError(
-                "aioesphomeapi is required. Use the existing virtualenv or install it with: "
-                "python3 -m pip install aioesphomeapi"
+                "aioesphomeapi is required. Run this tool through uv from the project root:\n"
+                "  uv run garage-phone-sync"
             ) from err
 
         self.loop = asyncio.get_running_loop()

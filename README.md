@@ -8,6 +8,23 @@ Waveshare ESP32-S3-ETH over Ethernet -> Home Assistant ESPHome native API -> Hom
 
 It does not implement HomeKit on the ESP32, does not use cloud services, does not require a physical Hörmann UAP1, and does not use a second MCU.
 
+## Python Tools
+
+Python helper tools are managed with `uv` and pinned to Python 3.11 via [.python-version](.python-version). From the repository root, run tools with the console commands from [pyproject.toml](pyproject.toml):
+
+```bash
+uv sync
+uv run garage-phone-sync --dry-run
+```
+
+If you are not currently in the repository directory, pass the project directory explicitly. This avoids launching Python from `<home-directory>` and accidentally looking for `<home-directory>/tools/...`:
+
+```bash
+uv --directory  run garage-phone-sync --dry-run
+```
+
+The fullscreen phone sync tool uses Tk. The current `uv` environment has Tk available; if that ever fails on a different Python installation, install the matching Homebrew `python-tk` package.
+
 ## Hardware Target
 
 - Opener: Hörmann SupraMatic E2, Series 2 / HCP1-era.
@@ -136,12 +153,12 @@ proxy_auth_token: "..." # only needed when proxy allow_tx is enabled
 
 [secrets.example.yaml](secrets.example.yaml) contains a syntactically valid placeholder for ESPHome validation. Generate a real ESPHome API encryption key before flashing hardware you will actually use.
 
-Use the pinned ESPHome version from [requirements.txt](requirements.txt) when validating or building:
+Use the pinned ESPHome version from [pyproject.toml](pyproject.toml) and [uv.lock](uv.lock) when validating or building:
 
 ```bash
 cp secrets.example.yaml secrets.yaml
-uv run --python 3.12 --with-requirements requirements.txt esphome config supramatic-e2.yaml
-uv run --python 3.12 --with-requirements requirements.txt esphome compile supramatic-e2.yaml
+uv run esphome config supramatic-e2.yaml
+uv run esphome compile supramatic-e2.yaml
 ```
 
 ## OTA Updates
@@ -151,20 +168,20 @@ All YAML variants include ESPHome OTA over Ethernet using `ota_password_supramat
 Update the currently running main firmware:
 
 ```bash
-esphome upload supramatic-e2.yaml --device supramatic-e2.local
+uv run esphome upload supramatic-e2.yaml --device supramatic-e2.local
 ```
 
 Update the proxy or monitor firmware when that mode is already running:
 
 ```bash
-esphome upload supramatic-e2-proxy.yaml --device supramatic-e2-proxy.local
-esphome upload supramatic-e2-monitor.yaml --device supramatic-e2-monitor.local
+uv run esphome upload supramatic-e2-proxy.yaml --device supramatic-e2-proxy.local
+uv run esphome upload supramatic-e2-monitor.yaml --device supramatic-e2-monitor.local
 ```
 
 When switching modes, target the hostname of the firmware currently running on the board, not the hostname in the YAML you are about to flash. For example, if the board is currently running the main firmware and you want to switch to monitor mode:
 
 ```bash
-esphome upload supramatic-e2-monitor.yaml --device supramatic-e2.local
+uv run esphome upload supramatic-e2-monitor.yaml --device supramatic-e2.local
 ```
 
 After the reboot, the board will advertise the new hostname from the flashed YAML. Home Assistant entities will also change when switching between main, proxy, and monitor firmware because only the main firmware exposes the garage-door cover.
@@ -227,7 +244,7 @@ Use [tools/garage_test_wizard.py](tools/garage_test_wizard.py) for a guided end-
 The wizard can drive Home Assistant automatically when a long-lived access token is provided:
 
 ```bash
-HA_TOKEN="..." python3 tools/garage_test_wizard.py
+HA_TOKEN="..." uv run garage-test-wizard
 ```
 
 Without `HA_TOKEN`, it still controls ESP recording and pauses with exact manual Home Assistant instructions for each command. Every movement requires a manual confirmation before the next step.
@@ -241,15 +258,13 @@ The first ArUco video analysis is stored in [docs/research/analysis/garage-door-
 To align those video curves with real HCP endpoint timing, use the HCP-only calibration runner. It starts the ESP persistent protocol logger, sends full-travel commands through the ESPHome native API, downloads the protocol log, then writes an HCP-to-video timing report and overlay plot:
 
 ```bash
-python3 -m venv /tmp/garage-venv
-/tmp/garage-venv/bin/python -m pip install aioesphomeapi matplotlib
-/tmp/garage-venv/bin/python tools/run_hcp_timing_calibration.py
+uv run garage-hcp-timing-calibration
 ```
 
 The runner uses the API encryption key from `secrets.yaml` and asks for physical-presence confirmation before moving the door unless `--yes` is passed. The offline parser can also be run on any saved persistent log:
 
 ```bash
-python3 tools/analyze_hcp_timing.py \
+uv run garage-analyze-hcp-timing \
   --persistent-log captures/<bundle>/persistent-log.json \
   --curve-lookup docs/research/analysis/garage-door-motion-20260527/curve_lookup.json
 ```
@@ -257,7 +272,7 @@ python3 tools/analyze_hcp_timing.py \
 For a new phone video capture with synchronized protocol logging, use the fullscreen sync display. Start with the door fully closed, start your phone recording with the MacBook screen visible, then press `Space`. The automatic sequence starts after a visible `15s` countdown and records full-open, full-close, vent-from-closed, open setup, vent-from-open, and final close movements while the screen shows a visual code and live HCP feedback:
 
 ```bash
-/tmp/garage-venv/bin/python tools/run_phone_video_sync_capture.py --esp-host <local-ip>
+uv run garage-phone-sync --esp-host <local-ip>
 ```
 
 Controls: `Space` starts the sequence or cancels a pending countdown, `M` emits a manual marker flash, and `Q`/`Esc` finishes the capture and downloads the ESP persistent log.
@@ -265,7 +280,7 @@ Controls: `Space` starts the sequence or cancels a pending countdown, `M` emits 
 To verify the fullscreen visuals before moving the opener, run the same tool in dry-run mode. It does not connect to the ESP, does not start persistent logging, and simulates HCP state feedback locally so the automatic sequence can complete:
 
 ```bash
-/tmp/garage-venv/bin/python tools/run_phone_video_sync_capture.py --dry-run
+uv run garage-phone-sync --dry-run
 ```
 
 ## Protocol Diagnostics
@@ -304,7 +319,7 @@ Proxy mode listens on TCP port `6638` and streams line-based events such as `RX 
 Use the helper client:
 
 ```bash
-python3 tools/hcp_proxy_client.py --host supramatic-e2-proxy.local
+uv run garage-hcp-proxy-client --host supramatic-e2-proxy.local
 ```
 
 See [docs/proxy-mode.md](docs/proxy-mode.md) for the full TCP protocol. Passive capture is the primary use. Fully live laptop-side UAP1 emulation over TCP may miss the opener's poll response window, so keep timing-critical status response logic on the ESP32 unless measurements prove otherwise.
@@ -329,7 +344,7 @@ Or stream plain text:
 
 ```bash
 curl -N http://supramatic-e2-monitor.local:8080/stream
-python3 tools/hcp_proxy_client.py --host supramatic-e2-monitor.local --http-stream
+uv run garage-hcp-proxy-client --host supramatic-e2-monitor.local --http-stream
 ```
 
 The monitor also exposes `/events` as a Server-Sent Events stream, `/recent` for the in-memory capture tail, and `/stats` for JSON counters. See [docs/http-monitor-mode.md](docs/http-monitor-mode.md).
@@ -360,7 +375,7 @@ The monitor also exposes `/events` as a Server-Sent Events stream, `/recent` for
 Use:
 
 ```bash
-esphome logs supramatic-e2.yaml
+uv run esphome logs supramatic-e2.yaml
 ```
 
 Temporarily enable `diagnostic_mode: true`, or flash the monitor/proxy firmware for passive capture, then collect logs while moving the door through:

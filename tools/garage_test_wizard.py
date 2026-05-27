@@ -405,7 +405,7 @@ class GarageTestWizard:
             print()
             print("Home Assistant API token not set. The wizard will use manual HA instructions.")
             print("To automate HA commands, run with:")
-            print("  HA_TOKEN='long-lived-access-token' python3 tools/garage_test_wizard.py")
+            print("  HA_TOKEN='long-lived-access-token' uv run garage-test-wizard")
         print()
         self.snapshot("preflight")
         stats = self.esp.get("/stats", timeout=10, retries=2)

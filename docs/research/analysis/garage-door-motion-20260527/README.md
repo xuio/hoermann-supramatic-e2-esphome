@@ -78,7 +78,6 @@ Closing, from open:
 Regenerate with:
 
 ```bash
-uv run --with opencv-contrib-python-headless --with numpy --with matplotlib \
-  tools/analyze_garage_aruco_video.py \
+uv run garage-analyze-aruco-video \
   --output-dir captures/aruco-video-analysis-20260527-4k60-fixed-endpoints
 ```

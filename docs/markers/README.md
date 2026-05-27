@@ -25,6 +25,5 @@ Keep the phone or camera fixed, avoid wide-angle mode, and record full open and 
 Regenerate the PDFs with:
 
 ```bash
-uv run --with opencv-contrib-python-headless --with reportlab --with pillow \
-  tools/generate_aruco_marker_pdfs.py
+uv run garage-generate-aruco-markers
 ```

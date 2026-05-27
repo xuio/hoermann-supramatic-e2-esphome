@@ -20,8 +20,8 @@ try:
 except ImportError as err:  # pragma: no cover - dependency check for CLI use
     raise SystemExit(
         "OpenCV with aruco support is required. Run:\n"
-        "  uv run --with opencv-contrib-python-headless --with reportlab --with pillow "
-        "tools/generate_aruco_marker_pdfs.py"
+        "  uv sync\n"
+        "  uv run garage-generate-aruco-markers"
     ) from err
 
 

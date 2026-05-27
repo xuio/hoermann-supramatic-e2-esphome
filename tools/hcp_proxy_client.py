@@ -3,8 +3,8 @@
 
 Default usage is passive capture:
 
-    python3 tools/hcp_proxy_client.py --host supramatic-e2-proxy.local
-    python3 tools/hcp_proxy_client.py --host supramatic-e2-monitor.local --http-stream
+    uv run garage-hcp-proxy-client --host supramatic-e2-proxy.local
+    uv run garage-hcp-proxy-client --host supramatic-e2-monitor.local --http-stream
 
 Active TX is intentionally explicit and requires proxy firmware with
 `allow_tx: true` plus `--token`.

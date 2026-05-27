@@ -21,9 +21,9 @@ The filesystem-backed capture is designed to hold at least five minutes of conti
 Adding the filesystem partition changes the ESP32 partition table. A normal ESPHome OTA uploads only the application image; the partition table must be sent once with the dedicated OTA mode after a firmware containing `allow_partition_access: true` is already running:
 
 ```bash
-esphome upload supramatic-e2.yaml --device <local-ip>
-esphome upload supramatic-e2.yaml --device <local-ip> --partition-table
-esphome upload supramatic-e2.yaml --device <local-ip>
+uv run esphome upload supramatic-e2.yaml --device <local-ip>
+uv run esphome upload supramatic-e2.yaml --device <local-ip> --partition-table
+uv run esphome upload supramatic-e2.yaml --device <local-ip>
 ```
 
 The final application upload after the partition-table update ensures the garage firmware is present in the app slot selected by the new table. Then run `/persistent_log/format` once if the summary reports `format_required:true`.

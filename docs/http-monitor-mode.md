@@ -35,7 +35,7 @@ Examples:
 curl -N http://supramatic-e2-monitor.local:8080/stream
 curl http://supramatic-e2-monitor.local:8080/recent
 curl http://supramatic-e2-monitor.local:8080/stats
-python3 tools/hcp_proxy_client.py --host supramatic-e2-monitor.local --http-stream
+uv run garage-hcp-proxy-client --host supramatic-e2-monitor.local --http-stream
 ```
 
 `/events` is the browser-friendly Server-Sent Events endpoint. It emits `hello`, `rx`, and `gap` events with JSON payloads.

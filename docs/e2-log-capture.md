@@ -3,7 +3,7 @@
 Temporarily set `diagnostic_mode: true` in `supramatic-e2.yaml`, then run:
 
 ```bash
-esphome logs supramatic-e2.yaml
+uv run esphome logs supramatic-e2.yaml
 ```
 
 Capture one block per physical door state.

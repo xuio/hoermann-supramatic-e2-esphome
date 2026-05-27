@@ -65,13 +65,13 @@ rs485_proxy:
 Passive capture:
 
 ```bash
-python3 tools/hcp_proxy_client.py --host supramatic-e2-proxy.local
+uv run garage-hcp-proxy-client --host supramatic-e2-proxy.local
 ```
 
 Active authenticated transmission, only after flashing with `allow_tx: true` and `auth_token`, should use a frame generated from the current master request counter. Do not replay this placeholder as-is:
 
 ```bash
-python3 tools/hcp_proxy_client.py --host supramatic-e2-proxy.local --token "$PROXY_TOKEN" --tx-break "<counter-derived-frame>"
+uv run garage-hcp-proxy-client --host supramatic-e2-proxy.local --token "$PROXY_TOKEN" --tx-break "<counter-derived-frame>"
 ```
 
 The script prints raw proxy events and decodes CRC-valid HCP candidates it recognizes: broadcasts, slave scans, and UAP1 status requests.
