@@ -287,7 +287,7 @@ For a second validation run after the firmware has already learned or loaded the
 uv run garage-phone-sync --esp-host <local-ip> --sequence position_targets_no_calibration
 ```
 
-Controls: `Space` starts the sequence or cancels a pending countdown, `M` emits a manual marker flash, and `Q`/`Esc` finishes the capture and downloads the ESP persistent log. If `Q`/`Esc` is pressed while the cover is moving, the runner first sends a stop command and waits briefly before starting the HTTP log download.
+Controls: `Space` starts the sequence or cancels a pending countdown, `M` emits a manual marker flash, and `Q`/`Esc` finishes the capture and downloads the ESP persistent log. If `Q`/`Esc` is pressed while the cover is moving, the runner first sends a stop command and waits for the cover to become idle, up to a short timeout, before starting the HTTP log download.
 
 The old venting capture preset is still available as `--sequence full_and_vent`, but the current calibration path ignores the native vent command. If percentage control is accurate enough, partial-open behavior should be handled by sending a normal cover target instead.
 
@@ -304,6 +304,8 @@ For timing alignment, prefer ESP-side persistent-log command/HCP timestamps over
 Position estimates now wait for HCP endpoint departure when moving away from a known open or closed end state. If the opener stays at the old endpoint after a command, the firmware cancels the estimate instead of sending a timed stop against a door that never moved.
 
 The capture runner downloads the compact binary persistent log by default. The expanded JSON log can still be requested with `--download-json-log`, but avoid doing that while the opener is moving because serving the large JSON response is much heavier on the ESP.
+
+For the synchronized phone runs, the ESP keeps raw RX/TX bytes and decoded frames but logs only larger inter-frame gaps. This keeps the persistent log useful while reducing flash writes and bus-service jitter during long captures.
 
 To verify the fullscreen visuals before moving the opener, run the same tool in dry-run mode. It does not connect to the ESP, does not start persistent logging, and simulates HCP state feedback locally so the automatic sequence can complete:
 

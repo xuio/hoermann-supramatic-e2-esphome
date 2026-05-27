@@ -1076,7 +1076,12 @@ class FullscreenDisplay:
         self.worker.submit_cover_command("stop")
 
     def service_pending_exit(self) -> None:
-        if self.exit_pending and time.monotonic() >= self.exit_due_monotonic:
+        if not self.exit_pending:
+            return
+        state = self.coordinator.display_state()
+        hcp = state.get("hcp", {})
+        moving = not self.coordinator.is_idle_cover_operation(hcp.get("cover_operation"))
+        if not moving or time.monotonic() >= self.exit_due_monotonic:
             self.coordinator.request_exit()
 
     def run(self) -> None:
@@ -1502,7 +1507,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--vent-observe-duration", type=float, default=20.0, help="Seconds to keep recording after a vent command when HCP reports only Stopped/idle instead of Venting")
     parser.add_argument("--vent-motion-timeout", type=float, default=35.0, help="Maximum seconds to wait for a vent command before aborting if the opener still appears to be moving")
     parser.add_argument("--target-tolerance", type=float, default=3.0, help="Allowed percentage-point error when waiting for an automatic target-position step")
-    parser.add_argument("--exit-stop-grace", type=float, default=3.0, help="Seconds to wait after sending stop when Q/Esc is pressed while the cover is moving")
+    parser.add_argument("--exit-stop-grace", type=float, default=5.0, help="Maximum seconds to wait for idle after sending stop when Q/Esc is pressed while the cover is moving")
     parser.add_argument("--download-json-log", action="store_true", help="Also download the expanded JSON persistent log; normally the compact binary log is enough and is safer for the live bus")
     parser.add_argument("--dry-run", action="store_true", help="Show the fullscreen visuals and simulated HCP feedback without contacting the ESP or moving the opener")
     parser.add_argument("--dry-run-motion-duration", type=float, default=3.0, help="Seconds before each simulated dry-run command reaches its target state")

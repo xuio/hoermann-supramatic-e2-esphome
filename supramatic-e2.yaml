@@ -80,8 +80,8 @@ uapbridge_esp:
   trust_light_feedback: false
   http_debug_port: 8080
   http_debug_send_gaps: true
-  http_debug_gap_threshold: 3ms
-  http_debug_history_size: 200
+  http_debug_gap_threshold: 50ms
+  http_debug_history_size: 80
   # Can also be toggled at runtime:
   #   /persistent_log/start
   #   /persistent_log/stop
