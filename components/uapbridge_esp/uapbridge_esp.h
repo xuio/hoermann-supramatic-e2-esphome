@@ -31,6 +31,7 @@
 #define UAPBRIDGE_PERSISTENT_LOG_RAM_CAPACITY 4096
 #define UAPBRIDGE_PERSISTENT_LOG_MAX_FILE_BYTES (3 * 1024 * 1024)
 #define UAPBRIDGE_PERSISTENT_LOG_DATA_LEN 32
+#define UAPBRIDGE_FRAME_SCAN_BUFFER_LEN 24
 
 namespace esphome {
 namespace uapbridge_esp {
@@ -75,6 +76,9 @@ class UAPBridge_esp : public esphome::uapbridge::UAPBridge {
     void set_light(bool state);
     std::string get_diagnostic_string() override;
     uint16_t get_raw_status() override;
+    uint32_t get_status_transition_count() const { return this->broadcast_status_transition_sequence_; }
+    uint32_t get_unknown_valid_frame_count() const { return this->unknown_valid_frame_count_; }
+    std::string get_last_valid_frame_hex() const { return this->last_valid_frame_hex_; }
 
   protected:
     hoermann_state_t state = hoermann_state_stopped;
@@ -87,6 +91,11 @@ class UAPBridge_esp : public esphome::uapbridge::UAPBridge {
     void loop_slow();
     void receive();
     void process_rx_window();
+    void reset_hcp_frame_scanner_();
+    void observe_hcp_frame_candidate_(uint8_t byte, uint32_t timestamp_us);
+    void record_hcp_frame_candidate_(const uint8_t *frame, uint8_t len);
+    const char *classify_hcp_frame_(const uint8_t *frame, uint8_t len) const;
+    bool is_hcp_rx_destination_(uint8_t address) const;
     void transmit();
     void transmit_prepared_response();
     bool set_command(bool cond, const hoermann_action_t command, bool bypass_impulse_interlock = false);
@@ -98,7 +107,7 @@ class UAPBridge_esp : public esphome::uapbridge::UAPBridge {
     void apply_broadcast_status(uint16_t status, const char *frame_type = nullptr);
     void expire_pending_command();
     void expire_valid_broadcast();
-    uint8_t calc_crc8(uint8_t *p_data, uint8_t length);
+    uint8_t calc_crc8(const uint8_t *p_data, uint8_t length);
     void handle_state_change(hoermann_state_t new_state);
     char* print_data(uint8_t *p_data, uint8_t from, uint8_t to);
     void update_boolean_state(const char * name, bool &current_state, bool new_state);
@@ -228,6 +237,12 @@ class UAPBridge_esp : public esphome::uapbridge::UAPBridge {
     uint32_t http_debug_last_keepalive_ms_{0};
     uint32_t broadcast_status_transition_sequence_{0};
     uint32_t broadcast_status_overflow_count_{0};
+    uint32_t valid_frame_scan_sequence_{0};
+    uint32_t unknown_valid_frame_count_{0};
+    std::string last_valid_frame_hex_{"none"};
+    uint8_t frame_scan_buffer_[UAPBRIDGE_FRAME_SCAN_BUFFER_LEN]{};
+    uint8_t frame_scan_len_{0};
+    uint32_t frame_scan_last_rx_us_{0};
     BroadcastStatusRecord broadcast_status_records_[UAPBRIDGE_STATUS_RECORD_COUNT]{};
     std::deque<std::string> http_debug_recent_lines_;
     const uint8_t crc_table[256] = {

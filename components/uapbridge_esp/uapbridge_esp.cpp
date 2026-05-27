@@ -1,5 +1,6 @@
 #include "uapbridge_esp.h"
 
+#include <algorithm>
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
@@ -199,14 +200,15 @@ void UAPBridge_esp::receive() {
     }
     uint8_t byte = 0;
     if(this->read_byte(&byte)){
+      const uint32_t now = micros();
       if (this->http_debug_enabled_() || this->persistent_log_enabled_) {
-        const uint32_t now = micros();
         if (this->http_debug_send_gaps_ && this->http_debug_last_rx_us_ != 0) {
           const uint32_t gap = now - this->http_debug_last_rx_us_;
           if (gap > this->http_debug_gap_threshold_us_) {
             flush_debug_batch();
             this->append_persistent_log_gap_(now, gap);
             this->http_debug_emit_gap_(now, gap);
+            this->reset_hcp_frame_scanner_();
           }
         }
         if (debug_batch_len == 0) {
@@ -220,6 +222,7 @@ void UAPBridge_esp::receive() {
       }
 
       this->rx_data[4] = byte;
+      this->observe_hcp_frame_candidate_(byte, now);
       //if read was successful
       this->byte_cnt++;
       this->process_rx_window();
@@ -369,6 +372,87 @@ void UAPBridge_esp::process_rx_window() {
       ESP_LOGVV(TAG, "Just printed: %s", print_data(this->rx_data, 0, 5));
     }	
 #endif
+}
+
+void UAPBridge_esp::reset_hcp_frame_scanner_() {
+  this->frame_scan_len_ = 0;
+  this->frame_scan_last_rx_us_ = 0;
+}
+
+void UAPBridge_esp::observe_hcp_frame_candidate_(uint8_t byte, uint32_t timestamp_us) {
+  if (this->frame_scan_last_rx_us_ != 0 &&
+      timestamp_us - this->frame_scan_last_rx_us_ > this->http_debug_gap_threshold_us_) {
+    this->frame_scan_len_ = 0;
+  }
+  this->frame_scan_last_rx_us_ = timestamp_us;
+
+  if (this->frame_scan_len_ < sizeof(this->frame_scan_buffer_)) {
+    this->frame_scan_buffer_[this->frame_scan_len_++] = byte;
+  } else {
+    memmove(this->frame_scan_buffer_, this->frame_scan_buffer_ + 1, sizeof(this->frame_scan_buffer_) - 1);
+    this->frame_scan_buffer_[sizeof(this->frame_scan_buffer_) - 1] = byte;
+  }
+
+  const uint8_t max_total_len = std::min<uint8_t>(this->frame_scan_len_, 18);
+  for (uint8_t total_len = max_total_len; total_len >= 3; total_len--) {
+    const uint8_t start = this->frame_scan_len_ - total_len;
+    const uint8_t *frame = this->frame_scan_buffer_ + start;
+    const uint8_t payload_len = frame[1] & 0x0F;
+    if (payload_len + 3 != total_len) {
+      continue;
+    }
+    if (!this->is_hcp_rx_destination_(frame[0])) {
+      continue;
+    }
+    if (this->calc_crc8(frame, total_len) != 0x00) {
+      continue;
+    }
+
+    this->record_hcp_frame_candidate_(frame, total_len);
+    return;
+  }
+}
+
+void UAPBridge_esp::record_hcp_frame_candidate_(const uint8_t *frame, uint8_t len) {
+  this->valid_frame_scan_sequence_++;
+  this->last_valid_frame_hex_ = this->http_debug_hex_encode_(frame, len);
+  const char *known_type = this->classify_hcp_frame_(frame, len);
+  if (known_type != nullptr) {
+    return;
+  }
+
+  this->unknown_valid_frame_count_++;
+  uint8_t copy[UAPBRIDGE_PERSISTENT_LOG_DATA_LEN]{};
+  const uint8_t stored_len = len > sizeof(copy) ? sizeof(copy) : len;
+  memcpy(copy, frame, stored_len);
+  this->http_debug_emit_frame_("unknown-valid", copy, 0, stored_len, true);
+  ESP_LOGW(TAG, "Observed unknown CRC-valid HCP frame len=%u data=%s",
+           len, this->last_valid_frame_hex_.c_str());
+}
+
+const char *UAPBridge_esp::classify_hcp_frame_(const uint8_t *frame, uint8_t len) const {
+  if (frame == nullptr || len < 3) {
+    return nullptr;
+  }
+  const uint8_t payload_len = frame[1] & 0x0F;
+  if (payload_len + 3 != len) {
+    return nullptr;
+  }
+  if (frame[0] == BROADCAST_ADDR && (payload_len == 1 || payload_len == 2)) {
+    return payload_len == 1 ? "broadcast-len1" : "broadcast";
+  }
+  if (frame[0] == UAP1_ADDR && payload_len == 1 && frame[2] == CMD_SLAVE_STATUS_REQUEST) {
+    return "status-request";
+  }
+  if (frame[0] == UAP1_ADDR && payload_len == 2 && frame[2] == CMD_SLAVE_SCAN &&
+      frame[3] == UAP1_ADDR_MASTER) {
+    return "scan";
+  }
+  return nullptr;
+}
+
+bool UAPBridge_esp::is_hcp_rx_destination_(uint8_t address) const {
+  return address == BROADCAST_ADDR || address == UAP1_ADDR;
 }
 
 void UAPBridge_esp::transmit() {
@@ -713,7 +797,7 @@ void UAPBridge_esp::set_light(bool state) {
   ESP_LOGD(TAG, "Light state set to %s", state ? "ON" : "OFF");
 }
 
-uint8_t UAPBridge_esp::calc_crc8(uint8_t *p_data, uint8_t length) {
+uint8_t UAPBridge_esp::calc_crc8(const uint8_t *p_data, uint8_t length) {
   uint8_t i;
   uint8_t data;
   uint8_t crc = 0xF3;
@@ -1420,6 +1504,13 @@ std::string UAPBridge_esp::http_debug_stats_json_() {
   json += std::to_string(this->broadcast_status_overflow_count_);
   json += ",\"status_transition_sequence\":";
   json += std::to_string(this->broadcast_status_transition_sequence_);
+  json += ",\"valid_frame_scan_sequence\":";
+  json += std::to_string(this->valid_frame_scan_sequence_);
+  json += ",\"unknown_valid_frame_count\":";
+  json += std::to_string(this->unknown_valid_frame_count_);
+  json += ",\"last_valid_frame_hex\":\"";
+  json += this->last_valid_frame_hex_;
+  json += "\"";
   json += "}\n";
   return json;
 }
@@ -2119,6 +2210,7 @@ uint8_t UAPBridge_esp::persistent_log_source_code_(const char *source) const {
   if (strcmp(source, "broadcast-invalid") == 0) return 21;
   if (strcmp(source, "broadcast-len1-invalid") == 0) return 22;
   if (strcmp(source, "status-request-invalid") == 0) return 23;
+  if (strcmp(source, "unknown-valid") == 0) return 24;
   return 255;
 }
 
@@ -2186,6 +2278,7 @@ const char *UAPBridge_esp::persistent_log_source_name_(uint8_t source) const {
     case 21: return "broadcast-invalid";
     case 22: return "broadcast-len1-invalid";
     case 23: return "status-request-invalid";
+    case 24: return "unknown-valid";
     case 255: return "other";
     default: return "unknown";
   }

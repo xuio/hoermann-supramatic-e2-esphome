@@ -105,6 +105,7 @@ The component is vendored under [components](components). It is based on the ESP
 - `close_obstruction_grace`, default `5s`, latches the `obstruction_state` diagnostic when a full close estimate has elapsed but the HCP closed bit never appears. This covers the observed E2 display `5` behavior where no explicit HCP error bit was captured.
 - `http_debug_port`, set to `8080` in the primary YAML, exposes the live UAP1 emulator monitor without adding a second UART reader. It streams raw RX, TX responses, decoded frames, command queue/block/send events, gaps, stats, and recent history while the emulator continues to answer the opener.
 - `persistent_log`, default `false`, adds an on-demand filesystem-backed protocol capture on a dedicated SPIFFS partition. It stages compact binary records in RAM, periodically flushes them to flash, and can be enabled and dumped at runtime over HTTP so obstruction or error tests can be captured even if no browser stream is open.
+- A passive CRC-valid frame scanner runs alongside the known UAP1 parser. It records the last valid HCP frame, counts status transitions, and counts/logs unknown CRC-valid frames so longer or undocumented E2 frames are visible without changing command behavior.
 - `listen_only`, when set true, receives and logs HCP frames without answering scan/status requests. Use this only for first bus capture.
 - `valid_broadcast_timeout`, default `10s`, clears the valid-broadcast diagnostic and marks state unknown if the bus goes stale.
 - `got_valid_broadcast` is set only after a CRC-valid HCP broadcast.
@@ -219,9 +220,20 @@ Because Home Assistant may hide the position slider for a `device_class: garage`
 
 The E2 light feedback bit is not available in the observed one-byte broadcasts. The light entity is optimistic for manual toggles, and the primary YAML enables courtesy-light estimation: when HCP state reports opening or closing, Home Assistant is told the light is on and the estimate expires after `courtesy_light_duration`.
 
+## Protocol Diagnostics
+
+The primary YAML exposes these diagnostic entities for protocol work:
+
+- `Garage Door Raw HCP Status` and `Garage Door Raw HCP Status Hex`.
+- `Garage Door Last HCP Frame`.
+- `Garage Door HCP Status Transitions`.
+- `Garage Door Unknown Valid HCP Frames`.
+
+`Unknown Valid HCP Frames` should normally stay at zero. If it increments during obstruction, prewarn, venting, or light tests, dump `/recent`, `/stats`, and the persistent log before power-cycling; those frames are the best candidates for additional E2-specific decoding.
+
 ## Persistent Protocol Log
 
-The main firmware can capture raw RX, TX, gaps, decoded frame candidates, command events, and status transitions into a dedicated `hcp_logs` SPIFFS filesystem while UAP1 emulation continues to run. Records are staged in RAM as compact binary data with repeat-count compression for identical adjacent records, then flushed to flash periodically. The HTTP dump expands the capture into readable JSON with timestamps, repeat counts, raw hex, CRC status, decoded status bits, and command names.
+The main firmware can capture raw RX, TX, gaps, decoded frame candidates, unknown CRC-valid frames, command events, and status transitions into a dedicated `hcp_logs` SPIFFS filesystem while UAP1 emulation continues to run. Records are staged in RAM as compact binary data with repeat-count compression for identical adjacent records, then flushed to flash periodically. The HTTP dump expands the capture into readable JSON with timestamps, repeat counts, raw hex, CRC status, decoded status bits, and command names.
 
 The default partition reserves 4 MB for captures and caps the active file at 3 MB, which is intended to hold at least five minutes of continuous HCP traffic. Use it only around diagnostic tests because it periodically writes flash while enabled:
 
@@ -324,7 +336,7 @@ For each state, copy the lines containing:
 
 If E2 state decoding differs from the E3-derived mapping, those raw status frames are the data needed to adjust the bit mapping without changing the hardware.
 
-When configuring HomeKit Bridge, include the garage cover, optionally the garage light, and optionally the `Garage Door Obstruction State` problem sensor if you want the obstruction latch visible in Apple Home. Exclude venting controls, diagnostics, raw state helpers, and generic error/prewarn sensors from HomeKit unless you explicitly want them as separate sensors. The default YAML does not expose a generic impulse button; add one only for deliberate protocol diagnosis.
+ESPHome exposes `Garage Door Obstruction State`, but the HomeKit garage-door obstruction characteristic is a Home Assistant HomeKit Bridge setting. In Home Assistant, link `binary_sensor.garage_door_obstruction_state` as `linked_obstruction_sensor` for `cover.garage_door` instead of exposing it as a separate Apple Home sensor. Include the garage cover and optionally the garage light. Exclude venting controls, diagnostics, raw state helpers, and generic error/prewarn sensors from HomeKit unless you explicitly want them as separate sensors. The default YAML does not expose a generic impulse button; add one only for deliberate protocol diagnosis.
 
 ## Notes
 

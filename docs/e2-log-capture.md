@@ -18,6 +18,7 @@ Capture one block per physical door state.
 | Venting / partial-open |  |  |  |  |
 | Light on |  |  |  |  |
 | Light off |  |  |  |  |
+| Obstruction / close failure |  |  |  |  |
 | Error / prewarn |  |  |  |  |
 
 Useful log lines look like:
@@ -28,9 +29,10 @@ Decoded status 0x....
 State changed from ... to ...
 Queued one-shot HCP command: ...
 Sending one-shot HCP command: ...
+Observed unknown CRC-valid HCP frame ...
 ```
 
-If the cover state is wrong, the raw broadcast and decoded status lines are the important part. Do not rely on HomeKit behavior until Home Assistant shows the correct garage cover state.
+If the cover state is wrong, the raw broadcast and decoded status lines are the important part. The main firmware also exposes `Garage Door Last HCP Frame`, `Garage Door HCP Status Transitions`, and `Garage Door Unknown Valid HCP Frames`; note those values before and after each physical test. Do not rely on HomeKit behavior until Home Assistant shows the correct garage cover state.
 
 For short error or obstruction captures, prefer the main firmware's persistent protocol log because it records raw RX/TX details even when no live log client is connected:
 

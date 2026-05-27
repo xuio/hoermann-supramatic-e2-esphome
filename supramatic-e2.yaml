@@ -188,10 +188,59 @@ number:
       - lambda: |-
           id(garage_door_cover).set_close_duration((uint32_t) (x * 1000.0f));
 
+sensor:
+  - platform: template
+    id: garage_door_raw_hcp_status
+    name: "${friendly_name} Raw HCP Status"
+    icon: mdi:code-tags
+    entity_category: diagnostic
+    accuracy_decimals: 0
+    update_interval: 1s
+    lambda: |-
+      return id(garage_door_comp).get_raw_status();
+  - platform: template
+    id: garage_door_status_transition_count
+    name: "${friendly_name} HCP Status Transitions"
+    icon: mdi:counter
+    entity_category: diagnostic
+    accuracy_decimals: 0
+    state_class: total_increasing
+    update_interval: 1s
+    lambda: |-
+      return id(garage_door_comp).get_status_transition_count();
+  - platform: template
+    id: garage_door_unknown_valid_frame_count
+    name: "${friendly_name} Unknown Valid HCP Frames"
+    icon: mdi:counter
+    entity_category: diagnostic
+    accuracy_decimals: 0
+    state_class: total_increasing
+    update_interval: 1s
+    lambda: |-
+      return id(garage_door_comp).get_unknown_valid_frame_count();
+
 text_sensor:
   - platform: uapbridge
     id: garage_door_state
     name: "${friendly_name} State"
+  - platform: template
+    id: garage_door_raw_hcp_status_hex
+    name: "${friendly_name} Raw HCP Status Hex"
+    icon: mdi:code-tags
+    entity_category: diagnostic
+    update_interval: 1s
+    lambda: |-
+      char buffer[8];
+      snprintf(buffer, sizeof(buffer), "0x%04X", id(garage_door_comp).get_raw_status());
+      return std::string(buffer);
+  - platform: template
+    id: garage_door_last_hcp_frame
+    name: "${friendly_name} Last HCP Frame"
+    icon: mdi:code-tags
+    entity_category: diagnostic
+    update_interval: 1s
+    lambda: |-
+      return id(garage_door_comp).get_last_valid_frame_hex();
   - platform: ethernet_info
     ip_address:
       name: "${friendly_name} IP Address"
