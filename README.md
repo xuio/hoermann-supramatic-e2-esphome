@@ -238,6 +238,22 @@ For video-based curve fitting, print the A4 ArUco marker PDFs in [docs/markers](
 
 The first ArUco video analysis is stored in [docs/research/analysis/garage-door-motion-20260527](docs/research/analysis/garage-door-motion-20260527). It fits separate opening and closing curves from the bottom-segment marker path: opening about `10.215 s`, closing about `18.565 s`.
 
+To align those video curves with real HCP endpoint timing, use the HCP-only calibration runner. It starts the ESP persistent protocol logger, sends full-travel commands through the ESPHome native API, downloads the protocol log, then writes an HCP-to-video timing report and overlay plot:
+
+```bash
+python3 -m venv /tmp/garage-venv
+/tmp/garage-venv/bin/python -m pip install aioesphomeapi matplotlib
+/tmp/garage-venv/bin/python tools/run_hcp_timing_calibration.py
+```
+
+The runner uses the API encryption key from `secrets.yaml` and asks for physical-presence confirmation before moving the door unless `--yes` is passed. The offline parser can also be run on any saved persistent log:
+
+```bash
+python3 tools/analyze_hcp_timing.py \
+  --persistent-log captures/<bundle>/persistent-log.json \
+  --curve-lookup docs/research/analysis/garage-door-motion-20260527/curve_lookup.json
+```
+
 ## Protocol Diagnostics
 
 The primary YAML exposes these diagnostic entities for protocol work:

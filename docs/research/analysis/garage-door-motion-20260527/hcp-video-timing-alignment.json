@@ -1,0 +1,114 @@
+{
+  "curve_assumptions": {
+    "direction_model": "opening and closing are fitted independently because the opener uses different speeds",
+    "floor_marker_distance_m": 1.07,
+    "marker_size_m": 0.1,
+    "opening_height_m": 2.1,
+    "position_model": "sectional-door empirical bottom-segment marker trajectory normalized between closed/open endpoint marker positions; this captures the visible curved-track path but is not a calibrated 3D reconstruction of clear-opening height"
+  },
+  "cycles": [
+    {
+      "action": "open",
+      "aligned_video_motion_start_log_time_s": 8822.152,
+      "aligned_video_motion_start_relative_to_command_s": 2.610000000000582,
+      "alignment_assumption": "HCP endpoint bit is treated as the full-stop endpoint; without simultaneous video this combines motor start delay and endpoint report delay",
+      "command_hex": "0x1001",
+      "command_log_time_s": 8819.542,
+      "command_relative_to_log_start_s": 2.4349999999994907,
+      "command_seq": 239,
+      "direction": "opening",
+      "endpoint_frame_hex": "",
+      "endpoint_log_time_s": 8832.367,
+      "endpoint_relative_to_command_s": 12.825000000000728,
+      "endpoint_seq": 1398,
+      "endpoint_state": "open",
+      "endpoint_status_hex": "0x0001",
+      "hcp_minus_video_duration_s": 2.610000000000724,
+      "transitions": [
+        {
+          "hex": "000102CA",
+          "relative_s": 0.09799999999995634,
+          "seq": 249,
+          "source": "broadcast-len1",
+          "state": "closed",
+          "status_hex": "0x0002",
+          "time_s": 8819.64
+        },
+        {
+          "hex": "",
+          "relative_s": 0.23400000000037835,
+          "seq": 263,
+          "source": "broadcast-len1",
+          "state": "unknown_or_stopped",
+          "status_hex": "0x0000",
+          "time_s": 8819.776
+        },
+        {
+          "hex": "",
+          "relative_s": 12.825000000000728,
+          "seq": 1398,
+          "source": "broadcast-len1",
+          "state": "open",
+          "status_hex": "0x0001",
+          "time_s": 8832.367
+        }
+      ],
+      "video_duration_s": 10.215000000000003
+    },
+    {
+      "action": "close",
+      "aligned_video_motion_start_log_time_s": 8842.405999999999,
+      "aligned_video_motion_start_relative_to_command_s": 3.708999999998923,
+      "alignment_assumption": "HCP endpoint bit is treated as the full-stop endpoint; without simultaneous video this combines motor start delay and endpoint report delay",
+      "command_hex": "0x1002",
+      "command_log_time_s": 8838.697,
+      "command_relative_to_log_start_s": 21.590000000000146,
+      "command_seq": 1951,
+      "direction": "closing",
+      "endpoint_frame_hex": "",
+      "endpoint_log_time_s": 8860.971,
+      "endpoint_relative_to_command_s": 22.273999999999432,
+      "endpoint_seq": 3868,
+      "endpoint_state": "closed",
+      "endpoint_status_hex": "0x0002",
+      "hcp_minus_video_duration_s": 3.708999999999431,
+      "transitions": [
+        {
+          "hex": "000101C3",
+          "relative_s": 0.10200000000077125,
+          "seq": 1961,
+          "source": "broadcast-len1",
+          "state": "open",
+          "status_hex": "0x0001",
+          "time_s": 8838.799
+        },
+        {
+          "hex": "",
+          "relative_s": 0.375,
+          "seq": 1975,
+          "source": "broadcast-len1",
+          "state": "unknown_or_stopped",
+          "status_hex": "0x0000",
+          "time_s": 8839.072
+        },
+        {
+          "hex": "",
+          "relative_s": 22.273999999999432,
+          "seq": 3868,
+          "source": "broadcast-len1",
+          "state": "closed",
+          "status_hex": "0x0002",
+          "time_s": 8860.971
+        }
+      ],
+      "video_duration_s": 18.565
+    }
+  ],
+  "persistent_log": {
+    "dropped_bytes": 0,
+    "dropped_records": 0,
+    "first_record_time_s": 8817.107,
+    "format_version": null,
+    "record_count": 4406
+  }
+}

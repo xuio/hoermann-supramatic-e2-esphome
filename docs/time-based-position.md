@@ -66,3 +66,9 @@ These values show the active learned durations from the cover component. You can
 For repeatable position tests, use [tools/garage_test_wizard.py](tools/garage_test_wizard.py). It records full-open clear height in meters and asks for measured clear opening height after each target. The saved CSV gives actual position and target error without guessing percentages by eye.
 
 The Loxone Hörmann Air adapter is a useful reference point: it integrates through the Hörmann BUS, supports the Garage/Gate block including partially-open input, and documents automatic learning of travel durations. This firmware follows the same practical model, but keeps the timing estimate local and inspectable in ESPHome logs.
+
+## HCP / Video Timing Alignment
+
+Use [tools/run_hcp_timing_calibration.py](tools/run_hcp_timing_calibration.py) when the video curve has already been extracted and you only need a normal HCP run. It commands a full open/close sequence through the ESPHome native API, captures the ESP persistent protocol log, and then calls [tools/analyze_hcp_timing.py](tools/analyze_hcp_timing.py).
+
+The analyzer treats the first HCP open or closed endpoint bit after a command as the fully stopped endpoint, then shifts the ArUco curve so its end aligns to that HCP endpoint. The reported offset is therefore a combined command-to-motion-start and endpoint-report offset; splitting those requires simultaneous video and HCP capture.
