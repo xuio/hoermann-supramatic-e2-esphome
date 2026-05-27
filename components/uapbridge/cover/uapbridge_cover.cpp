@@ -381,7 +381,13 @@ void UAPBridgeCover::control_time_based_position_(float target) {
     return;
   }
 
-  const bool accepted = operation == cover::COVER_OPERATION_OPENING ? this->parent_->action_open() : this->parent_->action_close();
+  const bool from_estimated_intermediate =
+      !this->is_closed_target_(this->position) && !this->is_open_target_(this->position);
+  const bool accepted = operation == cover::COVER_OPERATION_OPENING
+                            ? (from_estimated_intermediate ? this->parent_->action_open_from_estimated_position()
+                                                           : this->parent_->action_open())
+                            : (from_estimated_intermediate ? this->parent_->action_close_from_estimated_position()
+                                                           : this->parent_->action_close());
   if (!accepted) {
     ESP_LOGW(TAG, "Position request %.0f%% was rejected by UAP bridge safety gates", target * 100.0f);
     this->publish_if_changed_(true, false);

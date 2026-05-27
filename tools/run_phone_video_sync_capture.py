@@ -1417,7 +1417,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--secrets-file", type=Path, default=Path("secrets.yaml"))
     parser.add_argument("--command-delay", type=float, default=10.0, help="Fallback delay for manual scheduled commands")
     parser.add_argument("--initial-delay", type=float, default=15.0, help="Delay after Space before the first automatic command")
-    parser.add_argument("--settle-delay", type=float, default=10.0, help="Delay between one reached HCP state and the next command")
+    parser.add_argument("--settle-delay", type=float, default=1.0, help="Delay between one reached HCP state and the next command")
     parser.add_argument("--motion-timeout", type=float, default=90.0, help="Maximum seconds to wait for each HCP target state")
     parser.add_argument("--vent-observe-duration", type=float, default=20.0, help="Seconds to keep recording after a vent command when HCP reports only Stopped/idle instead of Venting")
     parser.add_argument("--vent-motion-timeout", type=float, default=35.0, help="Maximum seconds to wait for a vent command before aborting if the opener still appears to be moving")

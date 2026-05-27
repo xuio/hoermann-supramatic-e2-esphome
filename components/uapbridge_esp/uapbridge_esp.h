@@ -59,6 +59,8 @@ class UAPBridge_esp : public esphome::uapbridge::UAPBridge {
 
     bool action_open() override;
     bool action_close() override;
+    bool action_open_from_estimated_position() override;
+    bool action_close_from_estimated_position() override;
     bool action_stop() override;
     bool action_venting() override;
     bool action_toggle_light() override;
@@ -98,8 +100,10 @@ class UAPBridge_esp : public esphome::uapbridge::UAPBridge {
     bool is_hcp_rx_destination_(uint8_t address) const;
     void transmit();
     void transmit_prepared_response();
-    bool set_command(bool cond, const hoermann_action_t command, bool bypass_impulse_interlock = false);
-    bool command_allowed(const hoermann_action_t command, bool bypass_impulse_interlock = false);
+    bool set_command(bool cond, const hoermann_action_t command, bool bypass_impulse_interlock = false,
+                     bool bypass_unsafe_state = false);
+    bool command_allowed(const hoermann_action_t command, bool bypass_impulse_interlock = false,
+                         bool bypass_unsafe_state = false);
     bool is_movement_command(const hoermann_action_t command);
     bool bus_state_is_fresh() const;
     bool moving_state_is_fresh() const;

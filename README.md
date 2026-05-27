@@ -281,7 +281,7 @@ For a new phone video capture with synchronized protocol logging, use the fullsc
 uv run garage-phone-sync --esp-host <local-ip> --sequence position_targets
 ```
 
-For a second validation run after the firmware has already learned or loaded the calibrated timings, skip the initial full-open/full-close calibration pair and test only target accuracy. Start fully closed:
+For a second validation run after the firmware has already learned or loaded the calibrated timings, skip the initial full-open/full-close calibration pair and test only target accuracy. Start fully closed. The runner uses a `1s` settle delay between phases by default:
 
 ```bash
 uv run garage-phone-sync --esp-host <local-ip> --sequence position_targets_no_calibration

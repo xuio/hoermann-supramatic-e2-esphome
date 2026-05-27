@@ -499,8 +499,9 @@ void UAPBridge_esp::transmit_prepared_response() {
 /**
  * Helper to set next Command and *not* skip Current Command before end was sent
  */
-bool UAPBridge_esp::set_command(bool cond, const hoermann_action_t command, bool bypass_impulse_interlock) {
-  if (!this->command_allowed(command, bypass_impulse_interlock)) {
+bool UAPBridge_esp::set_command(bool cond, const hoermann_action_t command, bool bypass_impulse_interlock,
+                                bool bypass_unsafe_state) {
+  if (!this->command_allowed(command, bypass_impulse_interlock, bypass_unsafe_state)) {
     return false;
   }
   if (cond) {
@@ -531,7 +532,8 @@ bool UAPBridge_esp::set_command(bool cond, const hoermann_action_t command, bool
   }
 }
 
-bool UAPBridge_esp::command_allowed(const hoermann_action_t command, bool bypass_impulse_interlock) {
+bool UAPBridge_esp::command_allowed(const hoermann_action_t command, bool bypass_impulse_interlock,
+                                    bool bypass_unsafe_state) {
   if (this->listen_only) {
     ESP_LOGW(TAG, "Blocked HCP command %s because listen_only is true", this->action_name(command));
     this->http_debug_emit_command_("blocked", command, "listen_only");
@@ -580,7 +582,8 @@ bool UAPBridge_esp::command_allowed(const hoermann_action_t command, bool bypass
     return false;
   }
 
-  if (this->is_movement_command(command) && !raw_stop_allowed_without_moving_status && !obstruction_recovery_open &&
+  if (this->is_movement_command(command) && !bypass_unsafe_state && !raw_stop_allowed_without_moving_status &&
+      !obstruction_recovery_open &&
       (gate_state == hoermann_state_unknown || gate_state == hoermann_state_stopped)) {
     ESP_LOGW(TAG, "Blocked movement HCP command %s because decoded door state is %s",
              this->action_name(command), this->state_string.c_str());
@@ -722,6 +725,16 @@ bool UAPBridge_esp::action_open() {
 bool UAPBridge_esp::action_close() {
   ESP_LOGD(TAG, "Action: close called");
   return this->set_command(this->state != hoermann_state_closed, hoermann_action_close);
+}
+
+bool UAPBridge_esp::action_open_from_estimated_position() {
+  ESP_LOGD(TAG, "Action: open from estimated position called");
+  return this->set_command(this->state != hoermann_state_open, hoermann_action_open, false, true);
+}
+
+bool UAPBridge_esp::action_close_from_estimated_position() {
+  ESP_LOGD(TAG, "Action: close from estimated position called");
+  return this->set_command(this->state != hoermann_state_closed, hoermann_action_close, false, true);
 }
 
 bool UAPBridge_esp::action_stop() {

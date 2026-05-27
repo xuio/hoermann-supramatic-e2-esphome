@@ -54,6 +54,7 @@ These values show the active calibration from the cover component. You can still
 - During the short start/prewarn window after a command is sent, old opposite end-state broadcasts are ignored so an intermediate target is not discarded before movement is reported.
 - Ambiguous E2 `stopped` / `0x0000` status is ignored while an estimated movement is active. Captures showed the E2 can emit that value during a close attempt, so treating it as a real stop breaks calibration and percentage control.
 - New targets in the current travel direction retarget the active estimate. A target in the opposite direction first sends stop and requires a second explicit command after the door stops.
+- After an estimated intermediate stop, follow-up open/close commands are allowed from the cover's own estimated intermediate position even if the HCP broadcast still decodes as `0x0000`; this is required for reset moves between percentage tests.
 - The estimate is corrected to `0%` or `100%` when the HCP status decoder sees closed or open. Native venting is intentionally not part of the current calibration path; use normal percentage targets for partial-open testing.
 - The firmware restores the last estimated cover position after reboot, but a restored exact closed value is clamped above `0%` until the HCP closed bit is decoded again.
 - Full open/close timing completion keeps the cover operation as opening/closing until the corresponding HCP end-state bit confirms the final state.
@@ -92,7 +93,7 @@ The analyzer treats the first HCP open or closed endpoint bit after a command as
 
 For a simultaneous phone video run, start with the door fully closed and use [tools/run_phone_video_sync_capture.py](tools/run_phone_video_sync_capture.py). It opens a fullscreen Tk display on the MacBook, starts the ESP persistent HCP logger, records a near full-height compact QR timecode timeline, and runs the default `position_targets` sequence after `Space`: full open, full close, `25%` from closed, full close, `50%` from closed, full close, full open, `75%` from open, full open, `50%` from open, and final close. Each command is separated by a timed delay and settle period.
 
-For a second position-only run, use `--sequence position_targets_no_calibration`. It assumes the door starts fully closed and skips the initial full-open/full-close calibration pair, then tests `25%`, `50%`, and `75%` from closed plus `75%`, `50%`, and `25%` from open with endpoint resets between targets.
+For a second position-only run, use `--sequence position_targets_no_calibration`. It assumes the door starts fully closed and skips the initial full-open/full-close calibration pair, then tests `25%`, `50%`, and `75%` from closed plus `75%`, `50%`, and `25%` from open with endpoint resets between targets. The runner uses a `1s` settle delay between phases by default.
 
 Use `--dry-run` first if you only want to check the fullscreen layout and QR code. Dry run skips all ESPHome API and HTTP calls, sends no opener commands, and simulates HCP state changes locally so the sequence advances without hardware.
 

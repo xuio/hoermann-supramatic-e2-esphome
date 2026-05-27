@@ -56,6 +56,8 @@ class UAPBridge : public uart::UARTDevice, public Component {
 
     virtual bool action_open() = 0;
     virtual bool action_close() = 0;
+    virtual bool action_open_from_estimated_position() { return this->action_open(); }
+    virtual bool action_close_from_estimated_position() { return this->action_close(); }
     virtual bool action_stop() = 0;
     virtual bool action_venting() = 0;
     virtual bool action_toggle_light() = 0;
