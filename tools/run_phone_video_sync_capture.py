@@ -9,6 +9,7 @@ import datetime as dt
 import json
 import os
 import re
+import socket
 import threading
 import time
 import tkinter as tk
@@ -1209,6 +1210,25 @@ def stop_and_download(coordinator: CaptureCoordinator, esp: EspHttpClient) -> No
         print(f"Saved {filename}: {len(result.body)} bytes")
 
 
+def wait_for_tcp(host: str, port: int, timeout_s: float) -> bool:
+    deadline = time.monotonic() + max(0.0, timeout_s)
+    last_error: str | None = None
+    while True:
+        try:
+            with socket.create_connection((host, port), timeout=3):
+                if last_error:
+                    print(f"ESP HTTP port is reachable again at {host}:{port}", flush=True)
+                return True
+        except OSError as err:
+            last_error = str(err)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                print(f"ESP HTTP port is not reachable at {host}:{port}: {last_error}", flush=True)
+                return False
+            print(f"Waiting for ESP HTTP port {host}:{port}: {last_error}", flush=True)
+            time.sleep(min(2.0, remaining))
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Fullscreen phone video sync display and HCP command coordinator")
     parser.add_argument("--esp-host", default=os.environ.get("ESP_HOST", "supramatic-e2.local"))
@@ -1224,6 +1244,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--motion-timeout", type=float, default=90.0, help="Maximum seconds to wait for each HCP target state")
     parser.add_argument("--dry-run", action="store_true", help="Show the fullscreen visuals and simulated HCP feedback without contacting the ESP or moving the opener")
     parser.add_argument("--dry-run-motion-duration", type=float, default=3.0, help="Seconds before each simulated dry-run command reaches its target state")
+    parser.add_argument("--startup-reachability-timeout", type=float, default=45.0, help="Seconds to wait for the ESP HTTP port before starting the real capture")
     parser.add_argument(
         "--show-overlay-text",
         action="store_true",
@@ -1258,6 +1279,8 @@ def main() -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
     coordinator = CaptureCoordinator(args, output_dir)
     esp = None if args.dry_run else EspHttpClient(args.esp_host, args.esp_http_port)
+    persistent_log_started = False
+    worker_started = False
     worker: Any
     if args.dry_run:
         worker = DryRunWorker(coordinator, args.dry_run_motion_duration)
@@ -1267,8 +1290,12 @@ def main() -> int:
 
     try:
         if esp is not None:
+            if not wait_for_tcp(args.esp_host, args.esp_http_port, args.startup_reachability_timeout):
+                raise SystemExit("ESP HTTP port is not reachable; capture was not started")
             start_persistent_log(coordinator, esp)
+            persistent_log_started = True
         worker.start()
+        worker_started = True
         if not worker.ready.wait(timeout=20):
             raise SystemExit("Timed out connecting to ESPHome native API")
         print()
@@ -1280,11 +1307,14 @@ def main() -> int:
         coordinator.add_event("control", "keyboard_interrupt", {})
     finally:
         coordinator.stop_event.set()
-        worker.stop()
-        if worker.is_alive():
-            worker.join(timeout=5)
-        if esp is not None:
+        if worker_started:
+            worker.stop()
+            if worker.is_alive():
+                worker.join(timeout=5)
+        if esp is not None and persistent_log_started:
             stop_and_download(coordinator, esp)
+        elif esp is not None:
+            print("Skipping persistent log stop/download because logging did not start.", flush=True)
         coordinator.manifest["finished_at"] = utc_now_iso()
         coordinator.save_manifest()
         coordinator.close()
