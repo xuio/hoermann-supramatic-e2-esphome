@@ -1,0 +1,9 @@
+class,model,rmse_pp,mae_pp,max_abs_error_pp,notes
+opening_from_closed,current_target_equals_settled_assumption,17.217655915410216,16.33738139099692,24.008819657182535,current firmware effectively expects settled position to match requested target
+opening_from_closed,linear_target_to_settled: settled=0.277994*target+27.823918,3.277756105578161,3.090298092439897,4.63544713865987,diagnostic fit only; target-to-settled is not directly the firmware control law
+opening_from_closed,linear_stop_position_to_settled: settled=0.983005*stop_position+1.874637,0.381075883144855,0.3210336012464528,0.4815504018696757,first practical interrupted-stop response model
+opening_from_closed,piecewise_empirical_lookup,0.0,0.0,0.0,passes through AUTO_04 training points exactly; needs another run to validate interpolation/extrapolation
+closing_from_open,current_target_equals_settled_assumption,7.653086091250328,7.616826346519407,8.424123811030213,current firmware effectively expects settled position to match requested target
+closing_from_open,linear_target_to_settled: settled=0.964090*target+-5.821305,0.1279341078417159,0.12061743359991202,0.18092615039983428,diagnostic fit only; target-to-settled is not directly the firmware control law
+closing_from_open,linear_stop_position_to_settled: settled=0.990061*stop_position+-0.122683,0.04053207656362073,0.03821363137946676,0.05732044706921613,first practical interrupted-stop response model
+closing_from_open,piecewise_empirical_lookup,0.0,0.0,0.0,passes through AUTO_04 training points exactly; needs another run to validate interpolation/extrapolation

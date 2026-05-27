@@ -45,3 +45,22 @@ stop when predicted_settled_position reaches requested target
 For the first implementation, the interrupted profile can be a small empirical table per direction/start endpoint derived from AUTO_04 stop observations. Later captures can add more points without changing the protocol layer.
 
 ![Motion model timing comparison](motion_model_timing_comparison.png)
+
+## Fit Quality
+
+The current firmware model effectively assumes that the door settles at the requested target. AUTO_04 shows that this is not true for interrupted targets.
+
+| Class | Model | RMSE | Max error | Notes |
+| --- | --- | ---: | ---: | --- |
+| opening_from_closed | `current_target_equals_settled_assumption` | 17.22 pp | 24.01 pp | current firmware effectively expects settled position to match requested target |
+| opening_from_closed | `linear_stop_position_to_settled: settled=0.983005*stop_position+1.874637` | 0.38 pp | 0.48 pp | first practical interrupted-stop response model |
+| opening_from_closed | `piecewise_empirical_lookup` | 0.00 pp | 0.00 pp | passes through AUTO_04 training points exactly; needs another run to validate interpolation/extrapolation |
+| closing_from_open | `current_target_equals_settled_assumption` | 7.65 pp | 8.42 pp | current firmware effectively expects settled position to match requested target |
+| closing_from_open | `linear_stop_position_to_settled: settled=0.990061*stop_position+-0.122683` | 0.04 pp | 0.06 pp | first practical interrupted-stop response model |
+| closing_from_open | `piecewise_empirical_lookup` | 0.00 pp | 0.00 pp | passes through AUTO_04 training points exactly; needs another run to validate interpolation/extrapolation |
+
+The piecewise empirical model fits the AUTO_04 points exactly because it uses those points as the calibration table. That is useful for firmware implementation, but it is not yet validation. The next run should test interpolation points between these targets.
+
+![Interrupted target fit](interrupted_target_fit.png)
+
+![Interrupted stop response fit](interrupted_stop_response_fit.png)

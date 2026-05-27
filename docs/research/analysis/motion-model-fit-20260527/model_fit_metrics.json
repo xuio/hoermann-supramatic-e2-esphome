@@ -1,0 +1,68 @@
+{
+  "fit_metrics": [
+    {
+      "class": "opening_from_closed",
+      "model": "current_target_equals_settled_assumption",
+      "rmse_pp": 17.217655915410216,
+      "mae_pp": 16.33738139099692,
+      "max_abs_error_pp": 24.008819657182535,
+      "notes": "current firmware effectively expects settled position to match requested target"
+    },
+    {
+      "class": "opening_from_closed",
+      "model": "linear_target_to_settled: settled=0.277994*target+27.823918",
+      "rmse_pp": 3.277756105578161,
+      "mae_pp": 3.090298092439897,
+      "max_abs_error_pp": 4.63544713865987,
+      "notes": "diagnostic fit only; target-to-settled is not directly the firmware control law"
+    },
+    {
+      "class": "opening_from_closed",
+      "model": "linear_stop_position_to_settled: settled=0.983005*stop_position+1.874637",
+      "rmse_pp": 0.381075883144855,
+      "mae_pp": 0.3210336012464528,
+      "max_abs_error_pp": 0.4815504018696757,
+      "notes": "first practical interrupted-stop response model"
+    },
+    {
+      "class": "opening_from_closed",
+      "model": "piecewise_empirical_lookup",
+      "rmse_pp": 0.0,
+      "mae_pp": 0.0,
+      "max_abs_error_pp": 0.0,
+      "notes": "passes through AUTO_04 training points exactly; needs another run to validate interpolation/extrapolation"
+    },
+    {
+      "class": "closing_from_open",
+      "model": "current_target_equals_settled_assumption",
+      "rmse_pp": 7.653086091250328,
+      "mae_pp": 7.616826346519407,
+      "max_abs_error_pp": 8.424123811030213,
+      "notes": "current firmware effectively expects settled position to match requested target"
+    },
+    {
+      "class": "closing_from_open",
+      "model": "linear_target_to_settled: settled=0.964090*target+-5.821305",
+      "rmse_pp": 0.1279341078417159,
+      "mae_pp": 0.12061743359991202,
+      "max_abs_error_pp": 0.18092615039983428,
+      "notes": "diagnostic fit only; target-to-settled is not directly the firmware control law"
+    },
+    {
+      "class": "closing_from_open",
+      "model": "linear_stop_position_to_settled: settled=0.990061*stop_position+-0.122683",
+      "rmse_pp": 0.04053207656362073,
+      "mae_pp": 0.03821363137946676,
+      "max_abs_error_pp": 0.05732044706921613,
+      "notes": "first practical interrupted-stop response model"
+    },
+    {
+      "class": "closing_from_open",
+      "model": "piecewise_empirical_lookup",
+      "rmse_pp": 0.0,
+      "mae_pp": 0.0,
+      "max_abs_error_pp": 0.0,
+      "notes": "passes through AUTO_04 training points exactly; needs another run to validate interpolation/extrapolation"
+    }
+  ]
+}
