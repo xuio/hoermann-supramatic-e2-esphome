@@ -81,6 +81,12 @@ uapbridge_esp:
   http_debug_send_gaps: true
   http_debug_gap_threshold: 3ms
   http_debug_history_size: 200
+  # Can also be toggled at runtime:
+  #   /persistent_log/start
+  #   /persistent_log/stop
+  #   /persistent_log/clear
+  #   /persistent_log
+  persistent_log: false
 
 cover:
   - platform: uapbridge

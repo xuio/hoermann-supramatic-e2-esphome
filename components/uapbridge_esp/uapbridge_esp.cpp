@@ -6,6 +6,41 @@
 namespace esphome {
 namespace uapbridge_esp {
 static const char *const TAG = "uapbridge_esp";
+static constexpr uint32_t UAPBRIDGE_PERSISTENT_LOG_MAGIC = 0x5531504C;  // "U1PL"
+static constexpr uint32_t UAPBRIDGE_PERSISTENT_LOG_VERSION = 0x00020001;
+static constexpr uint32_t UAPBRIDGE_PERSISTENT_LOG_PREF_KEY = 0xA5E20031;
+static constexpr uint8_t UAPBRIDGE_PLOG_TYPE_RX = 1;
+static constexpr uint8_t UAPBRIDGE_PLOG_TYPE_TX = 2;
+static constexpr uint8_t UAPBRIDGE_PLOG_TYPE_GAP = 3;
+static constexpr uint8_t UAPBRIDGE_PLOG_TYPE_FRAME = 4;
+static constexpr uint8_t UAPBRIDGE_PLOG_TYPE_CMD = 5;
+static constexpr uint8_t UAPBRIDGE_PLOG_TYPE_STATUS = 6;
+static constexpr uint8_t UAPBRIDGE_PLOG_TYPE_CONTROL = 7;
+static constexpr uint8_t UAPBRIDGE_PLOG_FLAG_CRC_OK = 0x01;
+static constexpr uint8_t UAPBRIDGE_PLOG_FIXED_PAYLOAD_LEN = 34;
+static constexpr uint8_t UAPBRIDGE_PLOG_MAX_RECORD_TOTAL_LEN =
+    1 + UAPBRIDGE_PLOG_FIXED_PAYLOAD_LEN + UAPBRIDGE_PERSISTENT_LOG_DATA_LEN;
+static constexpr uint32_t UAPBRIDGE_PERSISTENT_LOG_SAVE_INTERVAL_MS = 5000;
+
+static void plog_write_u16(uint8_t *dst, uint16_t value) {
+  dst[0] = value & 0xFF;
+  dst[1] = (value >> 8) & 0xFF;
+}
+
+static void plog_write_u32(uint8_t *dst, uint32_t value) {
+  dst[0] = value & 0xFF;
+  dst[1] = (value >> 8) & 0xFF;
+  dst[2] = (value >> 16) & 0xFF;
+  dst[3] = (value >> 24) & 0xFF;
+}
+
+static uint16_t plog_read_u16(const uint8_t *src) {
+  return (uint16_t) src[0] | ((uint16_t) src[1] << 8);
+}
+
+static uint32_t plog_read_u32(const uint8_t *src) {
+  return (uint32_t) src[0] | ((uint32_t) src[1] << 8) | ((uint32_t) src[2] << 16) | ((uint32_t) src[3] << 24);
+}
 
 static const char UAPBRIDGE_HTTP_INDEX_HTML[] =
     "<!doctype html><html><head><meta charset=\"utf-8\">"
@@ -15,14 +50,16 @@ static const char UAPBRIDGE_HTTP_INDEX_HTML[] =
     "pre{white-space:pre-wrap;background:#05070a;border:1px solid #2a3440;padding:12px;min-height:70vh}"
     "a{color:#8cc8ff}</style></head><body>"
     "<h1>UAP1 HCP Monitor</h1><p><a href=\"/stats\">stats</a> <a href=\"/recent\">recent</a> "
+    "<a href=\"/broadcast_status\">broadcast status</a> <a href=\"/persistent_log\">persistent log</a> "
     "<a href=\"/stream\">plain stream</a></p><pre id=\"log\"></pre>"
     "<script>const log=document.getElementById('log');function add(x){log.textContent+=x+'\\n';"
     "log.scrollTop=log.scrollHeight;}const es=new EventSource('/events');"
-    "for(const t of ['hello','rx','tx','gap','frame','cmd'])es.addEventListener(t,e=>add(t.toUpperCase()+' '+e.data));"
+    "for(const t of ['hello','rx','tx','gap','frame','cmd','status'])es.addEventListener(t,e=>add(t.toUpperCase()+' '+e.data));"
     "es.onerror=()=>add('stream error or reconnecting');</script></body></html>";
 
 void UAPBridge_esp::setup() {
   esphome::uapbridge::UAPBridge::setup();
+  this->setup_persistent_log_();
   if (this->http_debug_enabled_()) {
     this->setup_http_debug_server_();
   }
@@ -38,6 +75,9 @@ void UAPBridge_esp::dump_config() {
     ESP_LOGCONFIG(TAG, "  HTTP Debug Gap Threshold: %uus", (unsigned int) this->http_debug_gap_threshold_us_);
     ESP_LOGCONFIG(TAG, "  HTTP Debug History Size: %u", this->http_debug_history_size_);
   }
+  ESP_LOGCONFIG(TAG, "  Persistent Protocol Log: %s", this->persistent_log_enabled_ ? "enabled" : "disabled");
+  ESP_LOGCONFIG(TAG, "  Persistent Protocol Log Capacity: %u bytes",
+                (unsigned int) UAPBRIDGE_PERSISTENT_LOG_CAPACITY);
 }
 
 void UAPBridge_esp::loop() {
@@ -46,6 +86,7 @@ void UAPBridge_esp::loop() {
   this->http_debug_accept_client_();
   this->http_debug_service_pending_client_();
   this->http_debug_service_keepalive_();
+  this->service_persistent_log_save_();
 
   if (this->data_has_changed) {
     ESP_LOGD(TAG, "UAPBridge_esp::loop() - received Data has changed.");
@@ -127,6 +168,7 @@ void UAPBridge_esp::receive() {
 
   auto flush_debug_batch = [&]() {
     if (debug_batch_len > 0) {
+      this->append_persistent_log_raw_(UAPBRIDGE_PLOG_TYPE_RX, debug_batch, debug_batch_len, debug_batch_timestamp);
       this->http_debug_emit_rx_(debug_batch, debug_batch_len, debug_batch_timestamp);
       debug_batch_len = 0;
     }
@@ -147,12 +189,13 @@ void UAPBridge_esp::receive() {
     }
     uint8_t byte = 0;
     if(this->read_byte(&byte)){
-      if (this->http_debug_enabled_()) {
+      if (this->http_debug_enabled_() || this->persistent_log_enabled_) {
         const uint32_t now = micros();
         if (this->http_debug_send_gaps_ && this->http_debug_last_rx_us_ != 0) {
           const uint32_t gap = now - this->http_debug_last_rx_us_;
           if (gap > this->http_debug_gap_threshold_us_) {
             flush_debug_batch();
+            this->append_persistent_log_gap_(now, gap);
             this->http_debug_emit_gap_(now, gap);
           }
         }
@@ -173,7 +216,7 @@ void UAPBridge_esp::receive() {
     }
   }
 
-  if (this->http_debug_enabled_()) {
+  if (this->http_debug_enabled_() || this->persistent_log_enabled_) {
     flush_debug_batch();
   }
 }
@@ -225,7 +268,7 @@ void UAPBridge_esp::process_rx_window() {
         ESP_LOGV(TAG, "->      Broadcast");
         const uint16_t new_status = this->rx_data[2] | ((uint16_t)this->rx_data[3] << 8);
         this->broadcast_status = new_status;
-        this->apply_broadcast_status(new_status);
+        this->apply_broadcast_status(new_status, "broadcast");
         this->last_valid_broadcast_ms = millis();
         if (!this->valid_broadcast) {
           this->valid_broadcast = true;
@@ -254,7 +297,7 @@ void UAPBridge_esp::process_rx_window() {
         ESP_LOGV(TAG, "->      Broadcast len1");
         const uint16_t new_status = this->rx_data[3];
         this->broadcast_status = new_status;
-        this->apply_broadcast_status(new_status);
+        this->apply_broadcast_status(new_status, "broadcast-len1");
         this->last_valid_broadcast_ms = millis();
         if (!this->valid_broadcast) {
           this->valid_broadcast = true;
@@ -340,6 +383,7 @@ void UAPBridge_esp::transmit() {
   this->parent_->load_settings(false);
   this->write_array(this->tx_data, this->tx_length);
   this->flush();
+  this->append_persistent_log_raw_(UAPBRIDGE_PLOG_TYPE_TX, this->tx_data, this->tx_length, micros());
   this->http_debug_emit_tx_(this->tx_data, this->tx_length, micros());
 
   if (this->rts_pin_ != nullptr) {
@@ -492,7 +536,7 @@ UAPBridge_esp::hoermann_state_t UAPBridge_esp::decode_status_state(uint16_t stat
   return hoermann_state_unknown;
 }
 
-void UAPBridge_esp::apply_broadcast_status(uint16_t status) {
+void UAPBridge_esp::apply_broadcast_status(uint16_t status, const char *frame_type) {
   const hoermann_state_t new_state = this->decode_status_state(status);
   if (new_state == hoermann_state_opening || new_state == hoermann_state_closing) {
     this->last_moving_broadcast_ms = millis();
@@ -506,6 +550,9 @@ void UAPBridge_esp::apply_broadcast_status(uint16_t status) {
   this->update_boolean_state("vent", this->venting_enabled, (status & hoermann_state_venting) != 0);
   this->update_boolean_state("err", this->error_state, (status & hoermann_state_error) != 0);
   this->update_boolean_state("prewarn", this->prewarn_state, (status & hoermann_state_prewarn) != 0);
+  if (frame_type != nullptr) {
+    this->record_broadcast_status_(status, frame_type);
+  }
 }
 
 void UAPBridge_esp::expire_pending_command() {
@@ -916,6 +963,41 @@ void UAPBridge_esp::http_debug_handle_request_(std::unique_ptr<socket::Socket> c
                                     this->http_debug_stats_json_());
     return;
   }
+  if (path == "/broadcast_status") {
+    this->http_debug_send_response_(std::move(client), "200 OK", "application/json",
+                                    this->http_debug_broadcast_status_json_());
+    return;
+  }
+  if (path == "/persistent_log") {
+    this->save_persistent_log_(true);
+    this->http_debug_send_response_(std::move(client), "200 OK", "application/json",
+                                    this->http_debug_persistent_log_json_());
+    return;
+  }
+  if (path == "/persistent_log/start") {
+    this->persistent_log_enabled_ = true;
+    this->append_persistent_log_record_(UAPBRIDGE_PLOG_TYPE_CONTROL, 0, 1, 0, 0, this->broadcast_status,
+                                        nullptr, 0, 0, micros());
+    this->save_persistent_log_(true);
+    this->http_debug_send_response_(std::move(client), "200 OK", "application/json",
+                                    this->http_debug_persistent_log_json_());
+    return;
+  }
+  if (path == "/persistent_log/stop") {
+    this->append_persistent_log_record_(UAPBRIDGE_PLOG_TYPE_CONTROL, 0, 2, 0, 0, this->broadcast_status,
+                                        nullptr, 0, 0, micros());
+    this->persistent_log_enabled_ = false;
+    this->save_persistent_log_(true);
+    this->http_debug_send_response_(std::move(client), "200 OK", "application/json",
+                                    this->http_debug_persistent_log_json_());
+    return;
+  }
+  if (path == "/persistent_log/clear") {
+    this->clear_persistent_log_();
+    this->http_debug_send_response_(std::move(client), "200 OK", "application/json",
+                                    this->http_debug_persistent_log_json_());
+    return;
+  }
   if (path == "/recent") {
     this->http_debug_send_response_(std::move(client), "200 OK", "text/plain; charset=utf-8",
                                     this->http_debug_recent_body_());
@@ -1089,6 +1171,7 @@ void UAPBridge_esp::http_debug_emit_gap_(uint32_t timestamp_us, uint32_t gap_us)
 
 void UAPBridge_esp::http_debug_emit_frame_(const char *frame_type, uint8_t *p_data, uint8_t from, uint8_t to,
                                            bool crc_valid) {
+  this->append_persistent_log_frame_(frame_type, p_data, from, to, crc_valid);
   if (!this->http_debug_enabled_()) {
     return;
   }
@@ -1122,6 +1205,7 @@ void UAPBridge_esp::http_debug_emit_frame_(const char *frame_type, uint8_t *p_da
 }
 
 void UAPBridge_esp::http_debug_emit_command_(const char *phase, hoermann_action_t command, const char *reason) {
+  this->append_persistent_log_command_(phase, command, reason);
   if (!this->http_debug_enabled_()) {
     return;
   }
@@ -1169,6 +1253,46 @@ void UAPBridge_esp::http_debug_emit_command_(const char *phase, hoermann_action_
   }
   json += "}";
   this->http_debug_send_stream_line_("cmd", json, plain);
+}
+
+void UAPBridge_esp::http_debug_emit_status_transition_(uint16_t status, const char *frame_type) {
+  this->append_persistent_log_status_(status, frame_type);
+  if (!this->http_debug_enabled_()) {
+    return;
+  }
+
+  const uint32_t seq = ++this->broadcast_status_transition_sequence_;
+  char status_word[8];
+  snprintf(status_word, sizeof(status_word), "0x%04X", (unsigned int) status);
+
+  std::string plain = "STATUS ";
+  plain += std::to_string(seq);
+  plain += " ";
+  plain += std::to_string(millis());
+  plain += " ";
+  plain += frame_type != nullptr ? frame_type : "broadcast";
+  plain += " ";
+  plain += status_word;
+  plain += " state=";
+  plain += this->state_string;
+  this->http_debug_append_recent_(plain);
+
+  std::string json = "{\"seq\":";
+  json += std::to_string(seq);
+  json += ",\"millis\":";
+  json += std::to_string(millis());
+  json += ",\"frame_type\":\"";
+  json += frame_type != nullptr ? frame_type : "broadcast";
+  json += "\",\"status\":";
+  json += std::to_string(status);
+  json += ",\"hex\":\"";
+  json += status_word;
+  json += "\",\"state\":\"";
+  json += this->state_string;
+  json += "\",\"bits\":";
+  json += this->http_debug_status_bits_json_(status);
+  json += "}";
+  this->http_debug_send_stream_line_("status", json, plain);
 }
 
 void UAPBridge_esp::http_debug_service_keepalive_() {
@@ -1241,7 +1365,188 @@ std::string UAPBridge_esp::http_debug_stats_json_() {
   json += this->http_debug_stream_client_ == nullptr ? "false" : "true";
   json += ",\"history_size\":";
   json += std::to_string(this->http_debug_history_size_);
+  json += ",\"broadcast_status_record_count\":";
+  json += std::to_string(this->broadcast_status_record_count_());
+  json += ",\"broadcast_status_overflow_count\":";
+  json += std::to_string(this->broadcast_status_overflow_count_);
+  json += ",\"status_transition_sequence\":";
+  json += std::to_string(this->broadcast_status_transition_sequence_);
   json += "}\n";
+  return json;
+}
+
+std::string UAPBridge_esp::http_debug_broadcast_status_json_() {
+  std::string json = "{\"raw_status\":";
+  json += std::to_string(this->broadcast_status);
+  json += ",\"state\":\"";
+  json += this->state_string;
+  json += "\",\"valid_broadcast\":";
+  json += this->valid_broadcast ? "true" : "false";
+  json += ",\"transition_sequence\":";
+  json += std::to_string(this->broadcast_status_transition_sequence_);
+  json += ",\"overflow_count\":";
+  json += std::to_string(this->broadcast_status_overflow_count_);
+  json += ",\"records\":[";
+  bool first = true;
+  for (const auto &record : this->broadcast_status_records_) {
+    if (!record.used) {
+      continue;
+    }
+    if (!first) {
+      json += ",";
+    }
+    first = false;
+    char status_word[8];
+    snprintf(status_word, sizeof(status_word), "0x%04X", (unsigned int) record.status);
+    json += "{\"status\":";
+    json += std::to_string(record.status);
+    json += ",\"hex\":\"";
+    json += status_word;
+    json += "\",\"count\":";
+    json += std::to_string(record.count);
+    json += ",\"first_ms\":";
+    json += std::to_string(record.first_ms);
+    json += ",\"last_ms\":";
+    json += std::to_string(record.last_ms);
+    json += ",\"bits\":";
+    json += this->http_debug_status_bits_json_(record.status);
+    json += "}";
+  }
+  json += "]}\n";
+  return json;
+}
+
+std::string UAPBridge_esp::http_debug_persistent_log_json_() {
+  std::string json = "{\"enabled\":";
+  json += this->persistent_log_enabled_ ? "true" : "false";
+  json += ",\"ready\":";
+  json += this->persistent_log_ready_ ? "true" : "false";
+  json += ",\"storage\":\"preferences\"";
+  json += ",\"compression\":\"binary_ring_rle\"";
+  json += ",\"format_version\":";
+  json += std::to_string(UAPBRIDGE_PERSISTENT_LOG_VERSION);
+  json += ",\"capacity\":";
+  json += std::to_string(UAPBRIDGE_PERSISTENT_LOG_CAPACITY);
+  json += ",\"used\":";
+  json += std::to_string(this->persistent_log_store_.used);
+  json += ",\"dropped_records\":";
+  json += std::to_string(this->persistent_log_store_.dropped_records);
+  json += ",\"dropped_bytes\":";
+  json += std::to_string(this->persistent_log_store_.dropped_bytes);
+  json += ",\"next_seq\":";
+  json += std::to_string(this->persistent_log_store_.next_seq);
+  json += ",\"records\":[";
+
+  uint16_t pos = (this->persistent_log_store_.head + UAPBRIDGE_PERSISTENT_LOG_CAPACITY -
+                  this->persistent_log_store_.used) % UAPBRIDGE_PERSISTENT_LOG_CAPACITY;
+  uint16_t remaining = this->persistent_log_store_.used;
+  bool first = true;
+  while (remaining > 0) {
+    const uint8_t total_len = this->persistent_log_store_.data[pos];
+    if (total_len == 0 || total_len > remaining || total_len > UAPBRIDGE_PLOG_MAX_RECORD_TOTAL_LEN) {
+      json += first ? "" : ",";
+      json += "{\"decode_error\":\"invalid persistent log record\"}";
+      break;
+    }
+
+    uint8_t record[UAPBRIDGE_PLOG_MAX_RECORD_TOTAL_LEN]{};
+    for (uint8_t i = 0; i < total_len; i++) {
+      record[i] = this->persistent_log_store_.data[(pos + i) % UAPBRIDGE_PERSISTENT_LOG_CAPACITY];
+    }
+    const uint8_t *payload = record + 1;
+    const uint8_t type = payload[0];
+    const uint8_t flags = payload[1];
+    const uint8_t source = payload[2];
+    const uint8_t phase = payload[3];
+    const uint8_t reason = payload[4];
+    const uint8_t data_len = payload[5];
+    const uint32_t seq = plog_read_u32(payload + 6);
+    const uint32_t first_ms = plog_read_u32(payload + 10);
+    const uint32_t last_ms = plog_read_u32(payload + 14);
+    const uint32_t first_us = plog_read_u32(payload + 18);
+    const uint32_t last_us = plog_read_u32(payload + 22);
+    const uint16_t status = plog_read_u16(payload + 26);
+    const uint16_t action = plog_read_u16(payload + 28);
+    const uint16_t state = plog_read_u16(payload + 30);
+    const uint16_t repeat = plog_read_u16(payload + 32);
+
+    if (!first) {
+      json += ",";
+    }
+    first = false;
+    char status_word[8];
+    char action_word[8];
+    snprintf(status_word, sizeof(status_word), "0x%04X", (unsigned int) status);
+    snprintf(action_word, sizeof(action_word), "0x%04X", (unsigned int) action);
+    const char *action_name = action == 0 ? "none" : this->action_name((hoermann_action_t) action);
+    json += "{\"seq\":";
+    json += std::to_string(seq);
+    json += ",\"type\":\"";
+    json += this->persistent_log_type_name_(type);
+    json += "\",\"source\":\"";
+    json += this->persistent_log_source_name_(source);
+    json += "\",\"phase\":\"";
+    json += this->persistent_log_phase_name_(phase);
+    json += "\",\"reason\":\"";
+    json += this->persistent_log_reason_name_(reason);
+    json += "\",\"flags\":";
+    json += std::to_string(flags);
+    json += ",\"crc\":\"";
+    json += (flags & UAPBRIDGE_PLOG_FLAG_CRC_OK) ? "ok" : "unknown_or_bad";
+    json += "\",\"first_ms\":";
+    json += std::to_string(first_ms);
+    json += ",\"last_ms\":";
+    json += std::to_string(last_ms);
+    json += ",\"first_micros\":";
+    json += std::to_string(first_us);
+    json += ",\"last_micros\":";
+    json += std::to_string(last_us);
+    json += ",\"repeat\":";
+    json += std::to_string(repeat == 0 ? 1 : repeat);
+    json += ",\"status\":";
+    json += std::to_string(status);
+    json += ",\"status_hex\":\"";
+    json += status_word;
+    json += "\",\"action\":\"";
+    json += action_name;
+    json += "\",\"action_hex\":\"";
+    json += action_word;
+    json += "\",\"state\":";
+    json += std::to_string(state);
+    json += ",\"bits\":";
+    json += this->http_debug_status_bits_json_(status);
+    json += ",\"hex\":\"";
+    json += this->http_debug_hex_encode_(payload + UAPBRIDGE_PLOG_FIXED_PAYLOAD_LEN, data_len);
+    json += "\"}";
+
+    pos = (pos + total_len) % UAPBRIDGE_PERSISTENT_LOG_CAPACITY;
+    remaining -= total_len;
+  }
+
+  json += "]}\n";
+  return json;
+}
+
+std::string UAPBridge_esp::http_debug_status_bits_json_(uint16_t status) {
+  std::string json = "{\"open\":";
+  json += (status & hoermann_state_open) != 0 ? "true" : "false";
+  json += ",\"closed\":";
+  json += (status & hoermann_state_closed) != 0 ? "true" : "false";
+  json += ",\"relay\":";
+  json += (status & hoermann_state_opt_relay) != 0 ? "true" : "false";
+  json += ",\"light\":";
+  json += (status & hoermann_state_light_relay) != 0 ? "true" : "false";
+  json += ",\"error\":";
+  json += (status & hoermann_state_error) != 0 ? "true" : "false";
+  json += ",\"direction_closing\":";
+  json += (status & hoermann_state_direction) != 0 ? "true" : "false";
+  json += ",\"moving\":";
+  json += (status & hoermann_state_moving) != 0 ? "true" : "false";
+  json += ",\"venting\":";
+  json += (status & hoermann_state_venting) != 0 ? "true" : "false";
+  json += ",\"prewarn\":";
+  json += (status & hoermann_state_prewarn) != 0 ? "true" : "false";
+  json += "}";
   return json;
 }
 
@@ -1271,6 +1576,400 @@ std::string UAPBridge_esp::http_debug_path_from_request_line_(const std::string 
     path.resize(query_start);
   }
   return path;
+}
+
+void UAPBridge_esp::record_broadcast_status_(uint16_t status, const char *frame_type) {
+  const uint32_t now = millis();
+  for (auto &record : this->broadcast_status_records_) {
+    if (record.used && record.status == status) {
+      record.count++;
+      record.last_ms = now;
+      if (status != this->previous_recorded_broadcast_status_) {
+        this->http_debug_emit_status_transition_(status, frame_type);
+        this->previous_recorded_broadcast_status_ = status;
+      }
+      return;
+    }
+  }
+
+  for (auto &record : this->broadcast_status_records_) {
+    if (!record.used) {
+      record.used = true;
+      record.status = status;
+      record.count = 1;
+      record.first_ms = now;
+      record.last_ms = now;
+      if (status != this->previous_recorded_broadcast_status_) {
+        this->http_debug_emit_status_transition_(status, frame_type);
+        this->previous_recorded_broadcast_status_ = status;
+      }
+      return;
+    }
+  }
+
+  this->broadcast_status_overflow_count_++;
+  if (status != this->previous_recorded_broadcast_status_) {
+    this->http_debug_emit_status_transition_(status, frame_type);
+    this->previous_recorded_broadcast_status_ = status;
+  }
+}
+
+uint8_t UAPBridge_esp::broadcast_status_record_count_() const {
+  uint8_t count = 0;
+  for (const auto &record : this->broadcast_status_records_) {
+    if (record.used) {
+      count++;
+    }
+  }
+  return count;
+}
+
+void UAPBridge_esp::setup_persistent_log_() {
+  if (global_preferences == nullptr) {
+    ESP_LOGW(TAG, "Persistent protocol log unavailable: preferences backend is not ready");
+    this->reset_persistent_log_store_();
+    return;
+  }
+
+  this->persistent_log_pref_ =
+      global_preferences->make_preference<PersistentLogStore>(UAPBRIDGE_PERSISTENT_LOG_PREF_KEY, true);
+  if (!this->persistent_log_pref_.load(&this->persistent_log_store_) ||
+      this->persistent_log_store_.magic != UAPBRIDGE_PERSISTENT_LOG_MAGIC ||
+      this->persistent_log_store_.version != UAPBRIDGE_PERSISTENT_LOG_VERSION ||
+      this->persistent_log_store_.head >= UAPBRIDGE_PERSISTENT_LOG_CAPACITY ||
+      this->persistent_log_store_.used > UAPBRIDGE_PERSISTENT_LOG_CAPACITY) {
+    this->reset_persistent_log_store_();
+    this->save_persistent_log_(true);
+  }
+
+  this->persistent_log_last_record_pos_ = 0xFFFF;
+  this->persistent_log_last_record_len_ = 0;
+  if (this->persistent_log_store_.used > 0) {
+    uint16_t pos = (this->persistent_log_store_.head + UAPBRIDGE_PERSISTENT_LOG_CAPACITY -
+                    this->persistent_log_store_.used) % UAPBRIDGE_PERSISTENT_LOG_CAPACITY;
+    uint16_t remaining = this->persistent_log_store_.used;
+    while (remaining > 0) {
+      const uint8_t total_len = this->persistent_log_store_.data[pos];
+      if (total_len == 0 || total_len > remaining || total_len > UAPBRIDGE_PLOG_MAX_RECORD_TOTAL_LEN) {
+        this->reset_persistent_log_store_();
+        this->save_persistent_log_(true);
+        break;
+      }
+      this->persistent_log_last_record_pos_ = pos;
+      this->persistent_log_last_record_len_ = total_len;
+      pos = (pos + total_len) % UAPBRIDGE_PERSISTENT_LOG_CAPACITY;
+      remaining -= total_len;
+    }
+  }
+  this->persistent_log_ready_ = true;
+}
+
+void UAPBridge_esp::reset_persistent_log_store_() {
+  memset(&this->persistent_log_store_, 0, sizeof(this->persistent_log_store_));
+  this->persistent_log_store_.magic = UAPBRIDGE_PERSISTENT_LOG_MAGIC;
+  this->persistent_log_store_.version = UAPBRIDGE_PERSISTENT_LOG_VERSION;
+  this->persistent_log_store_.next_seq = 1;
+  this->persistent_log_last_record_pos_ = 0xFFFF;
+  this->persistent_log_last_record_len_ = 0;
+}
+
+void UAPBridge_esp::clear_persistent_log_() {
+  this->reset_persistent_log_store_();
+  this->persistent_log_dirty_ = true;
+  this->persistent_log_unsaved_records_ = 0;
+  this->save_persistent_log_(true);
+}
+
+void UAPBridge_esp::append_persistent_log_status_(uint16_t status, const char *frame_type) {
+  this->append_persistent_log_record_(UAPBRIDGE_PLOG_TYPE_STATUS, this->persistent_log_source_code_(frame_type),
+                                      0, 0, 0, status, nullptr, 0, 0, micros());
+}
+
+void UAPBridge_esp::append_persistent_log_command_(const char *phase, hoermann_action_t command, const char *reason) {
+  this->append_persistent_log_record_(UAPBRIDGE_PLOG_TYPE_CMD, 0, this->persistent_log_phase_code_(phase),
+                                      this->persistent_log_reason_code_(reason), (uint16_t) command,
+                                      this->broadcast_status, nullptr, 0, 0, micros());
+}
+
+void UAPBridge_esp::append_persistent_log_frame_(const char *frame_type, uint8_t *p_data, uint8_t from, uint8_t to,
+                                                 bool crc_valid) {
+  const uint8_t len = to > from ? to - from : 0;
+  const uint8_t stored_len = len > UAPBRIDGE_PERSISTENT_LOG_DATA_LEN ? UAPBRIDGE_PERSISTENT_LOG_DATA_LEN : len;
+  this->append_persistent_log_record_(UAPBRIDGE_PLOG_TYPE_FRAME, this->persistent_log_source_code_(frame_type),
+                                      0, 0, 0, this->broadcast_status, p_data + from, stored_len,
+                                      crc_valid ? UAPBRIDGE_PLOG_FLAG_CRC_OK : 0, micros());
+}
+
+void UAPBridge_esp::append_persistent_log_raw_(uint8_t type, const uint8_t *data, size_t len, uint32_t timestamp_us,
+                                               uint8_t source, uint8_t flags) {
+  while (len > 0) {
+    const uint8_t chunk = len > UAPBRIDGE_PERSISTENT_LOG_DATA_LEN ? UAPBRIDGE_PERSISTENT_LOG_DATA_LEN : len;
+    this->append_persistent_log_record_(type, source, 0, 0, 0, this->broadcast_status, data, chunk, flags, timestamp_us);
+    data += chunk;
+    len -= chunk;
+  }
+}
+
+void UAPBridge_esp::append_persistent_log_gap_(uint32_t timestamp_us, uint32_t gap_us) {
+  uint8_t data[4];
+  plog_write_u32(data, gap_us);
+  this->append_persistent_log_record_(UAPBRIDGE_PLOG_TYPE_GAP, 0, 0, 0, 0, this->broadcast_status, data,
+                                      sizeof(data), 0, timestamp_us);
+}
+
+void UAPBridge_esp::append_persistent_log_record_(uint8_t type, uint8_t source, uint8_t phase, uint8_t reason,
+                                                  uint16_t action, uint16_t status, const uint8_t *data,
+                                                  uint8_t len, uint8_t flags, uint32_t timestamp_us) {
+  if (!this->persistent_log_enabled_ && type != UAPBRIDGE_PLOG_TYPE_CONTROL) {
+    return;
+  }
+  if (!this->persistent_log_ready_ && this->persistent_log_store_.magic != UAPBRIDGE_PERSISTENT_LOG_MAGIC) {
+    this->reset_persistent_log_store_();
+  }
+
+  if (len > UAPBRIDGE_PERSISTENT_LOG_DATA_LEN) {
+    len = UAPBRIDGE_PERSISTENT_LOG_DATA_LEN;
+  }
+  const uint8_t payload_len = UAPBRIDGE_PLOG_FIXED_PAYLOAD_LEN + len;
+  const uint8_t total_len = 1 + payload_len;
+  const uint32_t now_ms = millis();
+  const uint32_t event_us = timestamp_us == 0 ? micros() : timestamp_us;
+  const uint16_t state_value = (uint16_t) this->state;
+
+  if (this->persistent_log_last_record_pos_ != 0xFFFF &&
+      this->persistent_log_last_record_len_ == total_len &&
+      this->persistent_log_last_record_pos_ < UAPBRIDGE_PERSISTENT_LOG_CAPACITY &&
+      this->persistent_log_store_.data[this->persistent_log_last_record_pos_] == total_len) {
+    uint8_t previous[UAPBRIDGE_PLOG_MAX_RECORD_TOTAL_LEN]{};
+    for (uint8_t i = 0; i < total_len; i++) {
+      previous[i] =
+          this->persistent_log_store_.data[(this->persistent_log_last_record_pos_ + i) %
+                                           UAPBRIDGE_PERSISTENT_LOG_CAPACITY];
+    }
+    uint8_t *payload = previous + 1;
+    bool same = payload[0] == type && payload[1] == flags && payload[2] == source && payload[3] == phase &&
+                payload[4] == reason && payload[5] == len && plog_read_u16(payload + 26) == status &&
+                plog_read_u16(payload + 28) == action && plog_read_u16(payload + 30) == state_value;
+    if (same && len > 0 && data != nullptr) {
+      same = memcmp(payload + UAPBRIDGE_PLOG_FIXED_PAYLOAD_LEN, data, len) == 0;
+    }
+    if (same) {
+      const uint16_t repeat = plog_read_u16(payload + 32);
+      if (repeat < 0xFFFF) {
+        plog_write_u32(payload + 14, now_ms);
+        plog_write_u32(payload + 22, event_us);
+        plog_write_u16(payload + 32, repeat + 1);
+        for (uint8_t i = 0; i < total_len; i++) {
+          this->persistent_log_store_.data[(this->persistent_log_last_record_pos_ + i) %
+                                           UAPBRIDGE_PERSISTENT_LOG_CAPACITY] = previous[i];
+        }
+        this->mark_persistent_log_dirty_();
+        return;
+      }
+    }
+  }
+
+  while (this->persistent_log_store_.used + total_len > UAPBRIDGE_PERSISTENT_LOG_CAPACITY) {
+    const uint16_t tail = (this->persistent_log_store_.head + UAPBRIDGE_PERSISTENT_LOG_CAPACITY -
+                           this->persistent_log_store_.used) % UAPBRIDGE_PERSISTENT_LOG_CAPACITY;
+    const uint8_t old_len = this->persistent_log_store_.data[tail];
+    if (old_len == 0 || old_len > this->persistent_log_store_.used ||
+        old_len > UAPBRIDGE_PLOG_MAX_RECORD_TOTAL_LEN) {
+      this->reset_persistent_log_store_();
+      break;
+    }
+    this->persistent_log_store_.used -= old_len;
+    this->persistent_log_store_.dropped_records++;
+    this->persistent_log_store_.dropped_bytes += old_len;
+    if (this->persistent_log_store_.used == 0) {
+      this->persistent_log_last_record_pos_ = 0xFFFF;
+      this->persistent_log_last_record_len_ = 0;
+    }
+  }
+
+  uint8_t record[UAPBRIDGE_PLOG_MAX_RECORD_TOTAL_LEN]{};
+  record[0] = total_len;
+  uint8_t *payload = record + 1;
+  payload[0] = type;
+  payload[1] = flags;
+  payload[2] = source;
+  payload[3] = phase;
+  payload[4] = reason;
+  payload[5] = len;
+  plog_write_u32(payload + 6, this->persistent_log_store_.next_seq++);
+  plog_write_u32(payload + 10, now_ms);
+  plog_write_u32(payload + 14, now_ms);
+  plog_write_u32(payload + 18, event_us);
+  plog_write_u32(payload + 22, event_us);
+  plog_write_u16(payload + 26, status);
+  plog_write_u16(payload + 28, action);
+  plog_write_u16(payload + 30, state_value);
+  plog_write_u16(payload + 32, 1);
+  if (len > 0 && data != nullptr) {
+    memcpy(payload + UAPBRIDGE_PLOG_FIXED_PAYLOAD_LEN, data, len);
+  }
+
+  const uint16_t write_pos = this->persistent_log_store_.head;
+  for (uint8_t i = 0; i < total_len; i++) {
+    this->persistent_log_store_.data[(write_pos + i) % UAPBRIDGE_PERSISTENT_LOG_CAPACITY] = record[i];
+  }
+  this->persistent_log_store_.head = (write_pos + total_len) % UAPBRIDGE_PERSISTENT_LOG_CAPACITY;
+  this->persistent_log_store_.used += total_len;
+  this->persistent_log_last_record_pos_ = write_pos;
+  this->persistent_log_last_record_len_ = total_len;
+  this->mark_persistent_log_dirty_();
+}
+
+void UAPBridge_esp::service_persistent_log_save_() {
+  if (!this->persistent_log_dirty_) {
+    return;
+  }
+  const uint32_t now = millis();
+  if (now - this->persistent_log_last_save_ms_ < UAPBRIDGE_PERSISTENT_LOG_SAVE_INTERVAL_MS) {
+    return;
+  }
+  this->save_persistent_log_(true);
+}
+
+bool UAPBridge_esp::save_persistent_log_(bool force) {
+  if (!force && !this->persistent_log_dirty_) {
+    return true;
+  }
+  if (global_preferences == nullptr) {
+    return false;
+  }
+  if (!this->persistent_log_pref_.save(&this->persistent_log_store_)) {
+    ESP_LOGW(TAG, "Failed to save persistent protocol log");
+    return false;
+  }
+  if (global_preferences != nullptr) {
+    global_preferences->sync();
+  }
+  this->persistent_log_dirty_ = false;
+  this->persistent_log_unsaved_records_ = 0;
+  this->persistent_log_last_save_ms_ = millis();
+  return true;
+}
+
+void UAPBridge_esp::mark_persistent_log_dirty_() {
+  this->persistent_log_dirty_ = true;
+  if (this->persistent_log_unsaved_records_ < 0xFF) {
+    this->persistent_log_unsaved_records_++;
+  }
+}
+
+uint8_t UAPBridge_esp::persistent_log_phase_code_(const char *phase) const {
+  if (phase == nullptr) return 0;
+  if (strcmp(phase, "start") == 0) return 1;
+  if (strcmp(phase, "stop") == 0) return 2;
+  if (strcmp(phase, "clear") == 0) return 3;
+  if (strcmp(phase, "queued") == 0) return 10;
+  if (strcmp(phase, "sent") == 0) return 11;
+  if (strcmp(phase, "blocked") == 0) return 12;
+  if (strcmp(phase, "expired") == 0) return 13;
+  if (strcmp(phase, "dropped") == 0) return 14;
+  if (strcmp(phase, "cancelled") == 0) return 15;
+  if (strcmp(phase, "skipped") == 0) return 16;
+  return 255;
+}
+
+uint8_t UAPBridge_esp::persistent_log_reason_code_(const char *reason) const {
+  if (reason == nullptr) return 0;
+  if (strcmp(reason, "listen_only") == 0) return 1;
+  if (strcmp(reason, "close_disabled") == 0) return 2;
+  if (strcmp(reason, "impulse_disabled") == 0) return 3;
+  if (strcmp(reason, "raw_stop_disabled") == 0) return 4;
+  if (strcmp(reason, "stale_broadcast") == 0) return 5;
+  if (strcmp(reason, "unsafe_state") == 0) return 6;
+  if (strcmp(reason, "error_or_prewarn") == 0) return 7;
+  if (strcmp(reason, "previous_command_pending") == 0) return 8;
+  if (strcmp(reason, "state_already_matches") == 0) return 9;
+  if (strcmp(reason, "status_request_timeout") == 0) return 10;
+  if (strcmp(reason, "bus_state_stale") == 0) return 11;
+  if (strcmp(reason, "stop_before_fetch") == 0) return 12;
+  if (strcmp(reason, "venting_from_open_close_disabled") == 0) return 13;
+  return 255;
+}
+
+uint8_t UAPBridge_esp::persistent_log_source_code_(const char *source) const {
+  if (source == nullptr) return 0;
+  if (strcmp(source, "broadcast") == 0) return 10;
+  if (strcmp(source, "broadcast-len1") == 0) return 11;
+  if (strcmp(source, "scan") == 0) return 12;
+  if (strcmp(source, "status-request") == 0) return 13;
+  if (strcmp(source, "scan-invalid") == 0) return 20;
+  if (strcmp(source, "broadcast-invalid") == 0) return 21;
+  if (strcmp(source, "broadcast-len1-invalid") == 0) return 22;
+  if (strcmp(source, "status-request-invalid") == 0) return 23;
+  return 255;
+}
+
+const char *UAPBridge_esp::persistent_log_type_name_(uint8_t type) const {
+  switch (type) {
+    case UAPBRIDGE_PLOG_TYPE_RX: return "rx";
+    case UAPBRIDGE_PLOG_TYPE_TX: return "tx";
+    case UAPBRIDGE_PLOG_TYPE_GAP: return "gap";
+    case UAPBRIDGE_PLOG_TYPE_FRAME: return "frame";
+    case UAPBRIDGE_PLOG_TYPE_CMD: return "command";
+    case UAPBRIDGE_PLOG_TYPE_STATUS: return "status";
+    case UAPBRIDGE_PLOG_TYPE_CONTROL: return "control";
+    default: return "unknown";
+  }
+}
+
+const char *UAPBridge_esp::persistent_log_phase_name_(uint8_t phase) const {
+  switch (phase) {
+    case 0: return "none";
+    case 1: return "start";
+    case 2: return "stop";
+    case 3: return "clear";
+    case 10: return "queued";
+    case 11: return "sent";
+    case 12: return "blocked";
+    case 13: return "expired";
+    case 14: return "dropped";
+    case 15: return "cancelled";
+    case 16: return "skipped";
+    case 255: return "other";
+    default: return "unknown";
+  }
+}
+
+const char *UAPBridge_esp::persistent_log_reason_name_(uint8_t reason) const {
+  switch (reason) {
+    case 0: return "none";
+    case 1: return "listen_only";
+    case 2: return "close_disabled";
+    case 3: return "impulse_disabled";
+    case 4: return "raw_stop_disabled";
+    case 5: return "stale_broadcast";
+    case 6: return "unsafe_state";
+    case 7: return "error_or_prewarn";
+    case 8: return "previous_command_pending";
+    case 9: return "state_already_matches";
+    case 10: return "status_request_timeout";
+    case 11: return "bus_state_stale";
+    case 12: return "stop_before_fetch";
+    case 13: return "venting_from_open_close_disabled";
+    case 255: return "other";
+    default: return "unknown";
+  }
+}
+
+const char *UAPBridge_esp::persistent_log_source_name_(uint8_t source) const {
+  switch (source) {
+    case 0: return "raw";
+    case 10: return "broadcast";
+    case 11: return "broadcast-len1";
+    case 12: return "scan";
+    case 13: return "status-request";
+    case 20: return "scan-invalid";
+    case 21: return "broadcast-invalid";
+    case 22: return "broadcast-len1-invalid";
+    case 23: return "status-request-invalid";
+    case 255: return "other";
+    default: return "unknown";
+  }
 }
 
 }  // namespace uapbridge_esp

@@ -103,6 +103,7 @@ The component is vendored under [components](components). It is based on the ESP
 - `diagnostic_mode`, default `false`, logs raw frames, CRC status, decoded status bits, command queueing, command sending, and state transitions when temporarily enabled for captures.
 - `trust_light_feedback`, default `true`, uses the decoded HCP light bit as authoritative. The SupraMatic E2 YAML sets this to `false` because the observed one-byte E2 broadcasts do not carry reliable light state; the Home Assistant light is therefore optimistic and each UI state change sends one toggle command.
 - `http_debug_port`, set to `8080` in the primary YAML, exposes the live UAP1 emulator monitor without adding a second UART reader. It streams raw RX, TX responses, decoded frames, command queue/block/send events, gaps, stats, and recent history while the emulator continues to answer the opener.
+- `persistent_log`, default `false`, adds an on-demand compressed raw protocol ring buffer in ESP internal preferences storage. It can be enabled and dumped at runtime over HTTP so short obstruction or error tests can be captured even if no browser stream is open.
 - `listen_only`, when set true, receives and logs HCP frames without answering scan/status requests. Use this only for first bus capture.
 - `valid_broadcast_timeout`, default `10s`, clears the valid-broadcast diagnostic and marks state unknown if the bus goes stale.
 - `got_valid_broadcast` is set only after a CRC-valid HCP broadcast.
@@ -214,6 +215,22 @@ This is an estimate, not measured position data from the opener. Timing starts w
 Because Home Assistant may hide the position slider for a `device_class: garage` cover, the primary YAML also exposes `Garage Door Target Position` as a number entity. Use that slider for percentage tests. `Garage Door Open Duration` and `Garage Door Close Duration` show the automatically learned runtime calibration values in seconds; clean full open/close runs update and persist them automatically.
 
 The E2 light feedback bit is not available in the observed one-byte broadcasts. The light entity is optimistic for manual toggles, and the primary YAML enables courtesy-light estimation: when HCP state reports opening or closing, Home Assistant is told the light is on and the estimate expires after `courtesy_light_duration`.
+
+## Persistent Protocol Log
+
+The main firmware can capture raw RX, TX, gaps, decoded frame candidates, command events, and status transitions into ESP internal storage while UAP1 emulation continues to run. The storage format is a compact binary ring buffer with repeat-count compression for identical adjacent records; the HTTP dump expands it into readable JSON with timestamps, repeat counts, raw hex, CRC status, decoded status bits, and command names.
+
+Use it only around short tests because it periodically writes flash while enabled:
+
+```bash
+curl http://supramatic-e2.local:8080/persistent_log/clear
+curl http://supramatic-e2.local:8080/persistent_log/start
+# reproduce the door state, obstruction, or command problem
+curl http://supramatic-e2.local:8080/persistent_log/stop
+curl http://supramatic-e2.local:8080/persistent_log > persistent-log.json
+```
+
+If mDNS is unreliable, replace `supramatic-e2.local` with the current IP address. See [docs/persistent-protocol-log.md](docs/persistent-protocol-log.md).
 
 ## Proxy Mode
 

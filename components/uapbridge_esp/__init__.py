@@ -11,6 +11,7 @@ CONF_HTTP_DEBUG_GAP_THRESHOLD = "http_debug_gap_threshold"
 CONF_HTTP_DEBUG_HISTORY_SIZE = "http_debug_history_size"
 CONF_HTTP_DEBUG_PORT = "http_debug_port"
 CONF_HTTP_DEBUG_SEND_GAPS = "http_debug_send_gaps"
+CONF_PERSISTENT_LOG = "persistent_log"
 
 # Create UAPBridge_esp namespace
 uapbridge_esp_ns = cg.esphome_ns.namespace("uapbridge_esp")
@@ -24,6 +25,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_HTTP_DEBUG_SEND_GAPS, default=True): cv.boolean,
             cv.Optional(CONF_HTTP_DEBUG_GAP_THRESHOLD, default="3ms"): cv.positive_time_period_microseconds,
             cv.Optional(CONF_HTTP_DEBUG_HISTORY_SIZE, default=200): cv.int_range(min=0, max=500),
+            cv.Optional(CONF_PERSISTENT_LOG, default=False): cv.boolean,
         }
     ).add_extra(cv.only_on_esp32),
     socket.consume_sockets(2, "uapbridge_esp_http_debug"),
@@ -45,3 +47,4 @@ async def to_code(config):
     cg.add(var.set_http_debug_send_gaps(config[CONF_HTTP_DEBUG_SEND_GAPS]))
     cg.add(var.set_http_debug_gap_threshold_us(config[CONF_HTTP_DEBUG_GAP_THRESHOLD].total_microseconds))
     cg.add(var.set_http_debug_history_size(config[CONF_HTTP_DEBUG_HISTORY_SIZE]))
+    cg.add(var.set_persistent_log_enabled(config[CONF_PERSISTENT_LOG]))

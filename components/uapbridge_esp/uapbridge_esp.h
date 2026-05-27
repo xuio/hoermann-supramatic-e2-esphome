@@ -6,6 +6,7 @@
 
 #include "esphome/components/socket/socket.h"
 #include "esphome/core/component.h"
+#include "esphome/core/preferences.h"
 #include "esphome/components/uart/uart.h"
 #include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
@@ -27,6 +28,9 @@
 #define CMD_SLAVE_STATUS_RESPONSE 0x29
 
 #define STOP_FALLBACK_MOVING_TIMEOUT_MS 1000
+#define UAPBRIDGE_STATUS_RECORD_COUNT 32
+#define UAPBRIDGE_PERSISTENT_LOG_CAPACITY 8192
+#define UAPBRIDGE_PERSISTENT_LOG_DATA_LEN 12
 
 namespace esphome {
 namespace uapbridge_esp {
@@ -63,6 +67,7 @@ class UAPBridge_esp : public esphome::uapbridge::UAPBridge {
     void set_http_debug_send_gaps(bool send_gaps) { this->http_debug_send_gaps_ = send_gaps; }
     void set_http_debug_gap_threshold_us(uint32_t gap_threshold_us) { this->http_debug_gap_threshold_us_ = gap_threshold_us; }
     void set_http_debug_history_size(uint16_t history_size) { this->http_debug_history_size_ = history_size; }
+    void set_persistent_log_enabled(bool enabled) { this->persistent_log_enabled_ = enabled; }
 
     hoermann_state_t get_state();
     std::string get_state_string();
@@ -90,7 +95,7 @@ class UAPBridge_esp : public esphome::uapbridge::UAPBridge {
     bool bus_state_is_fresh() const;
     bool moving_state_is_fresh() const;
     hoermann_state_t decode_status_state(uint16_t status) const;
-    void apply_broadcast_status(uint16_t status);
+    void apply_broadcast_status(uint16_t status, const char *frame_type = nullptr);
     void expire_pending_command();
     void expire_valid_broadcast();
     uint8_t calc_crc8(uint8_t *p_data, uint8_t length);
@@ -118,16 +123,63 @@ class UAPBridge_esp : public esphome::uapbridge::UAPBridge {
     void http_debug_emit_gap_(uint32_t timestamp_us, uint32_t gap_us);
     void http_debug_emit_frame_(const char *frame_type, uint8_t *p_data, uint8_t from, uint8_t to, bool crc_valid);
     void http_debug_emit_command_(const char *phase, hoermann_action_t command, const char *reason = nullptr);
+    void http_debug_emit_status_transition_(uint16_t status, const char *frame_type);
     void http_debug_append_recent_(const std::string &line);
     std::string http_debug_recent_body_();
     std::string http_debug_stats_json_();
+    std::string http_debug_broadcast_status_json_();
+    std::string http_debug_persistent_log_json_();
+    std::string http_debug_status_bits_json_(uint16_t status);
     std::string http_debug_hex_encode_(const uint8_t *data, size_t len);
     std::string http_debug_path_from_request_line_(const std::string &request_line);
+    void record_broadcast_status_(uint16_t status, const char *frame_type);
+    uint8_t broadcast_status_record_count_() const;
+    void setup_persistent_log_();
+    void reset_persistent_log_store_();
+    void clear_persistent_log_();
+    void append_persistent_log_status_(uint16_t status, const char *frame_type);
+    void append_persistent_log_command_(const char *phase, hoermann_action_t command, const char *reason);
+    void append_persistent_log_frame_(const char *frame_type, uint8_t *p_data, uint8_t from, uint8_t to,
+                                      bool crc_valid);
+    void append_persistent_log_raw_(uint8_t type, const uint8_t *data, size_t len, uint32_t timestamp_us,
+                                    uint8_t source = 0, uint8_t flags = 0);
+    void append_persistent_log_gap_(uint32_t timestamp_us, uint32_t gap_us);
+    void append_persistent_log_record_(uint8_t type, uint8_t source, uint8_t phase, uint8_t reason,
+                                       uint16_t action, uint16_t status, const uint8_t *data = nullptr,
+                                       uint8_t len = 0, uint8_t flags = 0, uint32_t timestamp_us = 0);
+    void service_persistent_log_save_();
+    bool save_persistent_log_(bool force = false);
+    void mark_persistent_log_dirty_();
+    uint8_t persistent_log_phase_code_(const char *phase) const;
+    uint8_t persistent_log_reason_code_(const char *reason) const;
+    uint8_t persistent_log_source_code_(const char *source) const;
+    const char *persistent_log_type_name_(uint8_t type) const;
+    const char *persistent_log_phase_name_(uint8_t phase) const;
+    const char *persistent_log_reason_name_(uint8_t reason) const;
+    const char *persistent_log_source_name_(uint8_t source) const;
+    struct BroadcastStatusRecord {
+      bool used{false};
+      uint16_t status{0};
+      uint32_t count{0};
+      uint32_t first_ms{0};
+      uint32_t last_ms{0};
+    };
+    struct PersistentLogStore {
+      uint32_t magic{0};
+      uint32_t version{0};
+      uint32_t next_seq{1};
+      uint16_t head{0};
+      uint16_t used{0};
+      uint32_t dropped_records{0};
+      uint32_t dropped_bytes{0};
+      uint8_t data[UAPBRIDGE_PERSISTENT_LOG_CAPACITY]{};
+    };
     // internal function variables
     uint32_t last_call       = 0;
     uint32_t last_call_slow   = 0;
     uint16_t broadcast_status = 0;
     uint16_t last_logged_status = 0xFFFF;
+    uint16_t previous_recorded_broadcast_status_ = 0xFFFF;
     bool auto_correction_in_progress = false;
     bool last_error_bit = false;
     uint32_t command_set_at = 0;
@@ -144,6 +196,15 @@ class UAPBridge_esp : public esphome::uapbridge::UAPBridge {
     bool http_debug_send_gaps_{true};
     uint32_t http_debug_gap_threshold_us_{3000};
     uint16_t http_debug_history_size_{200};
+    bool persistent_log_enabled_{false};
+    bool persistent_log_ready_{false};
+    bool persistent_log_dirty_{false};
+    uint8_t persistent_log_unsaved_records_{0};
+    uint32_t persistent_log_last_save_ms_{0};
+    uint16_t persistent_log_last_record_pos_{0xFFFF};
+    uint8_t persistent_log_last_record_len_{0};
+    ESPPreferenceObject persistent_log_pref_;
+    PersistentLogStore persistent_log_store_{};
     std::unique_ptr<socket::ListenSocket> http_debug_server_;
     std::unique_ptr<socket::Socket> http_debug_pending_client_;
     std::unique_ptr<socket::Socket> http_debug_stream_client_;
@@ -160,6 +221,9 @@ class UAPBridge_esp : public esphome::uapbridge::UAPBridge {
     uint32_t http_debug_rx_bytes_{0};
     uint32_t http_debug_tx_bytes_{0};
     uint32_t http_debug_last_keepalive_ms_{0};
+    uint32_t broadcast_status_transition_sequence_{0};
+    uint32_t broadcast_status_overflow_count_{0};
+    BroadcastStatusRecord broadcast_status_records_[UAPBRIDGE_STATUS_RECORD_COUNT]{};
     std::deque<std::string> http_debug_recent_lines_;
     const uint8_t crc_table[256] = {
       0x00, 0x07, 0x0E, 0x09, 0x1C, 0x1B, 0x12, 0x15, 0x38, 0x3F, 0x36, 0x31, 0x24, 0x23, 0x2A, 0x2D,
