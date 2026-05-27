@@ -254,13 +254,13 @@ python3 tools/analyze_hcp_timing.py \
   --curve-lookup docs/research/analysis/garage-door-motion-20260527/curve_lookup.json
 ```
 
-For a new phone video capture with synchronized protocol logging, use the fullscreen sync display. Start your phone recording with the MacBook screen visible, then press the arrow key for the desired movement. The command is sent after the on-screen countdown, while the screen shows a visual code and live HCP feedback:
+For a new phone video capture with synchronized protocol logging, use the fullscreen sync display. Start with the door fully closed, start your phone recording with the MacBook screen visible, then press `Space`. The automatic sequence starts after a visible `15s` countdown and records full-open, full-close, vent-from-closed, open setup, vent-from-open, and final close movements while the screen shows a visual code and live HCP feedback:
 
 ```bash
 /tmp/garage-venv/bin/python tools/run_phone_video_sync_capture.py --esp-host <local-ip>
 ```
 
-Controls: `Up` schedules open after `10s`, `Down` schedules close after `10s`, `Space` cancels a pending command, `M` emits a manual marker flash, and `Q`/`Esc` finishes the capture and downloads the ESP persistent log.
+Controls: `Space` starts the sequence or cancels a pending countdown, `M` emits a manual marker flash, and `Q`/`Esc` finishes the capture and downloads the ESP persistent log.
 
 ## Protocol Diagnostics
 

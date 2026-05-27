@@ -33,6 +33,10 @@ EVENT_HCP_CLOSED = 8
 EVENT_MANUAL_MARKER = 9
 EVENT_CANCEL = 10
 EVENT_STARTUP = 11
+EVENT_SCHEDULE_VENT = 12
+EVENT_COMMAND_VENT = 13
+EVENT_HCP_VENTING = 14
+EVENT_SEQUENCE_DONE = 15
 
 EVENT_NAMES = {
     EVENT_IDLE: "idle",
@@ -47,6 +51,34 @@ EVENT_NAMES = {
     EVENT_MANUAL_MARKER: "manual_marker",
     EVENT_CANCEL: "cancel",
     EVENT_STARTUP: "startup",
+    EVENT_SCHEDULE_VENT: "scheduled_vent",
+    EVENT_COMMAND_VENT: "command_vent",
+    EVENT_HCP_VENTING: "hcp_venting",
+    EVENT_SEQUENCE_DONE: "sequence_done",
+}
+
+COMMAND_EVENT = {
+    "open": EVENT_COMMAND_OPEN,
+    "close": EVENT_COMMAND_CLOSE,
+    "vent": EVENT_COMMAND_VENT,
+}
+
+SCHEDULE_EVENT = {
+    "open": EVENT_SCHEDULE_OPEN,
+    "close": EVENT_SCHEDULE_CLOSE,
+    "vent": EVENT_SCHEDULE_VENT,
+}
+
+COMMAND_COLOR = {
+    "open": "#00ff88",
+    "close": "#ff66aa",
+    "vent": "#b86bff",
+}
+
+SCHEDULE_COLOR = {
+    "open": "#0b4dff",
+    "close": "#ff2020",
+    "vent": "#8a2be2",
 }
 
 
@@ -137,6 +169,36 @@ def print_http(label: str, result: HttpResult) -> None:
         print(result.text[:300])
 
 
+def parse_sequence(sequence: str) -> list[dict[str, str]]:
+    presets = {
+        "full_and_vent": [
+            ("open", "Open", "full_open"),
+            ("close", "Closed", "full_close"),
+            ("vent", "Venting", "vent_from_closed"),
+            ("open", "Open", "setup_open_for_vent_from_open"),
+            ("vent", "Venting", "vent_from_open"),
+            ("close", "Closed", "final_close"),
+        ],
+    }
+    if sequence in presets:
+        source = presets[sequence]
+    else:
+        source = []
+        for item in sequence.split(","):
+            action = item.strip().lower()
+            if not action:
+                continue
+            if action == "open":
+                source.append(("open", "Open", "open"))
+            elif action == "close":
+                source.append(("close", "Closed", "close"))
+            elif action in {"vent", "venting"}:
+                source.append(("vent", "Venting", "vent"))
+            else:
+                raise SystemExit(f"Unsupported sequence action: {action}")
+    return [{"action": action, "target_state": target, "label": label} for action, target, label in source]
+
+
 class CaptureCoordinator:
     def __init__(self, args: argparse.Namespace, output_dir: Path) -> None:
         self.args = args
@@ -154,7 +216,11 @@ class CaptureCoordinator:
                 "esp_http_port": args.esp_http_port,
                 "esp_api_port": args.esp_api_port,
                 "command_delay_s": args.command_delay,
+                "initial_delay_s": args.initial_delay,
+                "settle_delay_s": args.settle_delay,
+                "motion_timeout_s": args.motion_timeout,
                 "cover_object_id": args.cover_object_id,
+                "automatic_sequence": args.sequence,
             },
             "events": [],
         }
@@ -162,6 +228,11 @@ class CaptureCoordinator:
         self.last_state_text = ""
         self.error: str | None = None
         self.scheduled: dict[str, Any] | None = None
+        self.sequence_steps = parse_sequence(args.sequence)
+        self.sequence_index = -1
+        self.sequence_waiting_for_state: str | None = None
+        self.sequence_wait_started_monotonic: float | None = None
+        self.sequence_done = False
         self.last_event_code = EVENT_STARTUP
         self.last_event_name = EVENT_NAMES[EVENT_STARTUP]
         self.flash_until = self.started_monotonic + 1.0
@@ -212,13 +283,23 @@ class CaptureCoordinator:
             self.flash_label = label
             self.flash_until = time.monotonic() + duration_s
 
-    def schedule_action(self, action: str) -> None:
-        due = time.monotonic() + self.args.command_delay
-        event_code = EVENT_SCHEDULE_OPEN if action == "open" else EVENT_SCHEDULE_CLOSE
-        color = "#0b4dff" if action == "open" else "#ff2020"
+    def schedule_action(self, action: str, *, delay_s: float | None = None, label: str | None = None) -> None:
+        if action not in COMMAND_EVENT:
+            self.set_error(f"Unsupported action: {action}")
+            return
+        delay = self.args.command_delay if delay_s is None else delay_s
+        due = time.monotonic() + delay
+        event_code = SCHEDULE_EVENT[action]
+        color = SCHEDULE_COLOR[action]
         with self.lock:
-            self.scheduled = {"action": action, "due_monotonic_s": due, "scheduled_at_monotonic_s": time.monotonic()}
-        self.add_event("schedule", f"{action}_scheduled", {"action": action, "delay_s": self.args.command_delay})
+            self.scheduled = {
+                "action": action,
+                "label": label or action,
+                "delay_s": delay,
+                "due_monotonic_s": due,
+                "scheduled_at_monotonic_s": time.monotonic(),
+            }
+        self.add_event("schedule", f"{action}_scheduled", {"action": action, "label": label or action, "delay_s": delay})
         self.set_flash(event_code, color, f"{action.upper()} SCHEDULED", duration_s=0.9)
 
     def cancel_scheduled(self) -> None:
@@ -228,6 +309,17 @@ class CaptureCoordinator:
         self.add_event("schedule", "cancelled", {"previous": old or {}})
         self.set_flash(EVENT_CANCEL, "#ffff00", "CANCELLED", duration_s=0.7)
 
+    def start_or_cancel(self) -> None:
+        with self.lock:
+            has_scheduled = self.scheduled is not None
+            not_started = self.sequence_index < 0 and not self.sequence_done
+        if has_scheduled:
+            self.cancel_scheduled()
+        elif not_started:
+            self.start_auto_sequence()
+        else:
+            self.marker()
+
     def marker(self) -> None:
         self.add_event("manual_marker", "marker_flash", {})
         self.set_flash(EVENT_MANUAL_MARKER, "#ffffff", "MARKER", duration_s=1.0)
@@ -236,18 +328,83 @@ class CaptureCoordinator:
         self.add_event("control", "exit_requested", {})
         self.stop_event.set()
 
+    def start_auto_sequence(self) -> None:
+        if not self.sequence_steps:
+            self.set_error("Automatic sequence is empty")
+            return
+        with self.lock:
+            if self.sequence_index >= 0 or self.sequence_done:
+                return
+        self.add_event("sequence", "start", {"steps": self.sequence_steps, "initial_delay_s": self.args.initial_delay})
+        self.advance_sequence_(initial=True)
+
+    def advance_sequence_(self, *, initial: bool = False) -> None:
+        next_index = 0 if initial else self.sequence_index + 1
+        if next_index >= len(self.sequence_steps):
+            with self.lock:
+                self.sequence_done = True
+                self.sequence_waiting_for_state = None
+                self.sequence_wait_started_monotonic = None
+            self.add_event("sequence", "done", {})
+            self.set_flash(EVENT_SEQUENCE_DONE, "#ffffff", "SEQUENCE DONE", duration_s=2.0)
+            self.request_exit()
+            return
+
+        step = self.sequence_steps[next_index]
+        delay = self.args.initial_delay if initial else self.args.settle_delay
+        with self.lock:
+            self.sequence_index = next_index
+            self.sequence_waiting_for_state = None
+            self.sequence_wait_started_monotonic = None
+        self.add_event("sequence", "step_scheduled", {"index": next_index, "step": step, "delay_s": delay})
+        self.schedule_action(step["action"], delay_s=delay, label=step["label"])
+
+    def on_sequence_command_sent(self, action: str) -> None:
+        with self.lock:
+            if self.sequence_index < 0 or self.sequence_index >= len(self.sequence_steps):
+                return
+            step = self.sequence_steps[self.sequence_index]
+            if step["action"] != action:
+                return
+            self.sequence_waiting_for_state = step["target_state"]
+            self.sequence_wait_started_monotonic = time.monotonic()
+        self.add_event("sequence", "waiting_for_state", {"index": self.sequence_index, "target_state": step["target_state"], "step": step})
+
+    def service_sequence_wait_(self) -> None:
+        with self.lock:
+            target_state = self.sequence_waiting_for_state
+            wait_started = self.sequence_wait_started_monotonic
+            current_state = self.last_state_text
+            index = self.sequence_index
+        if not target_state or wait_started is None:
+            return
+        if current_state.lower() == target_state.lower():
+            self.add_event("sequence", "target_state_reached", {"index": index, "target_state": target_state})
+            with self.lock:
+                self.sequence_waiting_for_state = None
+                self.sequence_wait_started_monotonic = None
+            self.advance_sequence_()
+            return
+        if time.monotonic() - wait_started > self.args.motion_timeout:
+            self.set_error(f"Timed out waiting for HCP state {target_state}")
+            self.request_exit()
+
     def tick(self, worker: "NativeApiWorker") -> None:
         due_action: str | None = None
+        due_label: str | None = None
         with self.lock:
             if self.scheduled and time.monotonic() >= self.scheduled["due_monotonic_s"]:
                 due_action = self.scheduled["action"]
+                due_label = self.scheduled.get("label")
                 self.scheduled = None
         if due_action is not None:
-            event_code = EVENT_COMMAND_OPEN if due_action == "open" else EVENT_COMMAND_CLOSE
-            color = "#00ff88" if due_action == "open" else "#ff66aa"
-            self.add_event("command", f"{due_action}_command_requested", {"action": due_action})
+            event_code = COMMAND_EVENT[due_action]
+            color = COMMAND_COLOR[due_action]
+            self.add_event("command", f"{due_action}_command_requested", {"action": due_action, "label": due_label or due_action})
             self.set_flash(event_code, color, f"SEND {due_action.upper()}", duration_s=1.2)
             worker.submit_cover_command(due_action)
+            self.on_sequence_command_sent(due_action)
+        self.service_sequence_wait_()
 
     def update_hcp_state(self, object_id: str, payload: dict[str, Any]) -> None:
         flash: tuple[int, str, str] | None = None
@@ -267,6 +424,8 @@ class CaptureCoordinator:
                         flash = (EVENT_HCP_OPEN, "#00ff00", "HCP OPEN")
                     elif lower == "closed":
                         flash = (EVENT_HCP_CLOSED, "#ff0000", "HCP CLOSED")
+                    elif lower == "venting":
+                        flash = (EVENT_HCP_VENTING, "#bf7bff", "HCP VENTING")
             elif object_id == "garage_door":
                 if "position" in payload:
                     self.hcp["cover_position"] = payload["position"]
@@ -284,6 +443,8 @@ class CaptureCoordinator:
             if self.scheduled is not None:
                 scheduled = {
                     "action": self.scheduled["action"],
+                    "label": self.scheduled.get("label", self.scheduled["action"]),
+                    "total_s": self.scheduled.get("delay_s", self.args.command_delay),
                     "remaining_s": max(0.0, self.scheduled["due_monotonic_s"] - now),
                 }
             return {
@@ -298,6 +459,15 @@ class CaptureCoordinator:
                     "label": self.flash_label,
                 },
                 "scheduled": scheduled,
+                "sequence": {
+                    "index": self.sequence_index,
+                    "count": len(self.sequence_steps),
+                    "current_step": self.sequence_steps[self.sequence_index]
+                    if 0 <= self.sequence_index < len(self.sequence_steps)
+                    else None,
+                    "waiting_for_state": self.sequence_waiting_for_state,
+                    "done": self.sequence_done,
+                },
                 "hcp": dict(self.hcp),
                 "error": self.error,
             }
@@ -330,6 +500,7 @@ class NativeApiWorker(threading.Thread):
         self.loop: asyncio.AbstractEventLoop | None = None
         self.client: Any = None
         self.cover_key: int | None = None
+        self.vent_button_key: int | None = None
         self.entity_names: dict[int, tuple[str, str]] = {}
         self.stop_requested = threading.Event()
         self.ready = threading.Event()
@@ -365,11 +536,15 @@ class NativeApiWorker(threading.Thread):
             self.entity_names[entity.key] = (type(entity).__name__, object_id)
             if type(entity).__name__ == "CoverInfo" and object_id == self.cover_object_id:
                 self.cover_key = entity.key
+            elif type(entity).__name__ == "ButtonInfo" and object_id == "garage_door_vent":
+                self.vent_button_key = entity.key
         if self.cover_key is None:
             raise RuntimeError(f"Could not find cover object_id {self.cover_object_id!r}")
+        if self.vent_button_key is None:
+            raise RuntimeError("Could not find vent button object_id 'garage_door_vent'")
         self.client.subscribe_states(self.on_state)
         self.ready.set()
-        self.coordinator.add_event("native_api", "connected", {"cover_key": self.cover_key})
+        self.coordinator.add_event("native_api", "connected", {"cover_key": self.cover_key, "vent_button_key": self.vent_button_key})
         while not self.stop_requested.is_set():
             await asyncio.sleep(0.1)
         await self.client.disconnect()
@@ -403,6 +578,8 @@ class NativeApiWorker(threading.Thread):
             self.client.cover_command(self.cover_key, position=1.0)
         elif action == "close":
             self.client.cover_command(self.cover_key, position=0.0)
+        elif action == "vent":
+            self.client.button_command(self.vent_button_key)
         elif action == "stop":
             self.client.cover_command(self.cover_key, stop=True)
         else:
@@ -426,9 +603,7 @@ class FullscreenDisplay:
         self.root.bind("<Escape>", self.on_exit)
         self.root.bind("q", self.on_exit)
         self.root.bind("Q", self.on_exit)
-        self.root.bind("<Up>", lambda _event: self.coordinator.schedule_action("open"))
-        self.root.bind("<Down>", lambda _event: self.coordinator.schedule_action("close"))
-        self.root.bind("<space>", lambda _event: self.coordinator.cancel_scheduled())
+        self.root.bind("<space>", lambda _event: self.coordinator.start_or_cancel())
         self.root.bind("m", lambda _event: self.coordinator.marker())
         self.root.bind("M", lambda _event: self.coordinator.marker())
 
@@ -483,8 +658,11 @@ class FullscreenDisplay:
             action = scheduled["action"].upper()
             remaining = scheduled["remaining_s"]
             center = f"{action} IN {remaining:0.1f}s"
-            center_color = "#64d2ff" if action == "OPEN" else "#ff6b6b"
-            self.draw_countdown(w / 2, h * 0.43, remaining, self.coordinator.args.command_delay, action)
+            center_color = "#64d2ff" if action == "OPEN" else "#bf7bff" if action == "VENT" else "#ff6b6b"
+            self.draw_countdown(w / 2, h * 0.43, remaining, scheduled.get("total_s", self.coordinator.args.command_delay), action)
+        elif state["sequence"]["index"] < 0 and not state["sequence"]["done"] and not flash["active"]:
+            center = "PRESS SPACE TO START"
+            center_color = "#ffffff"
         elif flash["active"] and flash["label"]:
             center = flash["label"]
             center_color = fg
@@ -495,6 +673,12 @@ class FullscreenDisplay:
 
         hcp = state["hcp"]
         y0 = h * 0.58
+        sequence = state["sequence"]
+        current_step = sequence["current_step"] or {}
+        step_text = "not started" if sequence["index"] < 0 else f"{sequence['index'] + 1}/{sequence['count']} {current_step.get('label', '')}"
+        if sequence["done"]:
+            step_text = "done"
+        self.text(margin, y0 - body_size * 1.35, f"Sequence: {step_text}", body_size, "#f4d35e", "nw")
         self.text(margin, y0, f"HCP state: {hcp.get('garage_door_state', '-')}", body_size, "#ffffff", "nw")
         self.text(
             margin,
@@ -521,8 +705,7 @@ class FullscreenDisplay:
             "nw",
         )
 
-        delay = self.coordinator.args.command_delay
-        instructions = f"UP=open in {delay:g}s   DOWN=close in {delay:g}s   SPACE=cancel   M=marker flash   Q/Esc=finish"
+        instructions = f"SPACE=start/cancel   automatic start delay={self.coordinator.args.initial_delay:g}s   M=marker flash   Q/Esc=finish"
         self.text(w / 2, h - margin - body_size, instructions, int(body_size * 0.85), "#d7dee8", "s")
         if state["error"]:
             self.text(margin, h - margin - body_size * 2.4, f"ERROR {state['error']}", body_size, "#ff6b6b", "sw")
@@ -532,7 +715,12 @@ class FullscreenDisplay:
     def draw_countdown(self, cx: float, cy: float, remaining: float, total: float, action: str) -> None:
         radius = 56
         frac = max(0.0, min(1.0, remaining / max(total, 0.1)))
-        color = "#64d2ff" if action == "OPEN" else "#ff6b6b"
+        if action == "OPEN":
+            color = "#64d2ff"
+        elif action == "VENT":
+            color = "#bf7bff"
+        else:
+            color = "#ff6b6b"
         self.canvas.create_oval(cx - radius, cy - radius, cx + radius, cy + radius, outline="#26313f", width=10)
         self.canvas.create_arc(
             cx - radius,
@@ -645,7 +833,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cover-object-id", default=DEFAULT_COVER_OBJECT_ID)
     parser.add_argument("--api-key", default=os.environ.get("ESPHOME_API_KEY"))
     parser.add_argument("--secrets-file", type=Path, default=Path("secrets.yaml"))
-    parser.add_argument("--command-delay", type=float, default=10.0)
+    parser.add_argument("--command-delay", type=float, default=10.0, help="Fallback delay for manual scheduled commands")
+    parser.add_argument("--initial-delay", type=float, default=15.0, help="Delay after Space before the first automatic command")
+    parser.add_argument("--settle-delay", type=float, default=10.0, help="Delay between one reached HCP state and the next command")
+    parser.add_argument("--motion-timeout", type=float, default=90.0, help="Maximum seconds to wait for each HCP target state")
+    parser.add_argument(
+        "--sequence",
+        default="full_and_vent",
+        help="Preset 'full_and_vent' or comma-separated commands such as open,close,vent,open,vent,close",
+    )
     parser.add_argument("--output-dir", type=Path, default=Path("captures"))
     parser.add_argument("--yes", action="store_true", help="Skip the physical-presence prompt")
     return parser.parse_args()
@@ -654,7 +850,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     if not args.yes:
-        print("This tool can move the garage door from fullscreen arrow-key input.")
+        print("This tool will run an automatic garage-door movement sequence from fullscreen input.")
         input("Confirm you are physically present, the door path is clear, and press Enter to continue: ")
 
     timestamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -672,7 +868,8 @@ def main() -> int:
             raise SystemExit("Timed out connecting to ESPHome native API")
         print()
         print(f"Output bundle: {output_dir}")
-        print("Controls: Up=open in 10s, Down=close in 10s, Space=cancel, M=marker flash, Q/Esc=finish.")
+        print("Controls: Space=start/cancel, M=marker flash, Q/Esc=finish.")
+        print(f"Automatic sequence: {args.sequence}; first command starts {args.initial_delay:g}s after Space.")
         FullscreenDisplay(coordinator, worker).run()
     except KeyboardInterrupt:
         coordinator.add_event("control", "keyboard_interrupt", {})
