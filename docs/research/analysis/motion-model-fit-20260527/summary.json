@@ -1,9 +1,12 @@
 {
   "sources_used": {
-    "prior_full_travel": "captures/hcp-timing-calibration-20260527-164141/hcp-video-timing-alignment.json",
-    "successful_position_run": "docs/research/analysis/phone-sync-auto04-20260527/summary.json",
+    "full_travel_calibration": "captures/hcp-timing-calibration-20260527-164141/hcp-video-timing-alignment.json",
+    "interrupted_target_run": "docs/research/analysis/phone-sync-auto04-20260527/summary.json",
     "auto04_progress": "docs/research/analysis/phone-sync-auto04-20260527/auto04_progress_5fps.csv",
-    "excluded": "standalone non-HCP opening/closing video timing is not used as an independent timing source in this report"
+    "excluded": [
+      "standalone non-HCP opening/closing video timing is not used as an independent timing source",
+      "AUTO_04 reset/end commands are not used as full-travel calibration observations"
+    ]
   },
   "timing_aligned_full_travel": [
     {
@@ -21,231 +24,101 @@
       "endpoint_status_hex": "0x0002"
     }
   ],
-  "auto04_full_travel_and_crossings": {
-    "opening": {
-      "command_run_elapsed_s": 89.84594237516819,
-      "hcp_open_run_elapsed_s": 110.43840720830485,
-      "command_to_hcp_endpoint_s": 20.59246483313666,
-      "crossings_after_command_s": [
-        {
-          "position_percent": 1,
-          "time_after_command_s": 1.4146648512975162,
-          "sample_position_percent": 1.0071718784148056
-        },
-        {
-          "position_percent": 5,
-          "time_after_command_s": 3.01462700903312,
-          "sample_position_percent": 5.338954483058657
-        },
-        {
-          "position_percent": 10,
-          "time_after_command_s": 4.014603357617872,
-          "sample_position_percent": 10.630489637581352
-        },
-        {
-          "position_percent": 20,
-          "time_after_command_s": 5.814560785070441,
-          "sample_position_percent": 21.12067581020618
-        },
-        {
-          "position_percent": 25,
-          "time_after_command_s": 6.614541863938243,
-          "sample_position_percent": 25.83789856101948
-        },
-        {
-          "position_percent": 30,
-          "time_after_command_s": 7.414522942806045,
-          "sample_position_percent": 31.04745417900364
-        },
-        {
-          "position_percent": 35,
-          "time_after_command_s": 8.014508751956896,
-          "sample_position_percent": 35.10408268258855
-        },
-        {
-          "position_percent": 40,
-          "time_after_command_s": 8.814489830824712,
-          "sample_position_percent": 40.14899037900259
-        },
-        {
-          "position_percent": 50,
-          "time_after_command_s": 10.414451988560302,
-          "sample_position_percent": 50.167752499566134
-        },
-        {
-          "position_percent": 75,
-          "time_after_command_s": 14.214362113182375,
-          "sample_position_percent": 75.58131250442715
-        },
-        {
-          "position_percent": 90,
-          "time_after_command_s": 16.41431008006883,
-          "sample_position_percent": 90.84946219153187
-        },
-        {
-          "position_percent": 95,
-          "time_after_command_s": 17.414286428653583,
-          "sample_position_percent": 95.04007618315707
-        },
-        {
-          "position_percent": 99,
-          "time_after_command_s": 19.414239125823087,
-          "sample_position_percent": 99.04183514656397
-        }
-      ]
-    },
-    "closing": {
-      "note": "AUTO_04 had close target segments and final partial close, but no full 100%->0% close from open.",
-      "close_from_open_crossing_medians_after_command_s": [
-        {
-          "position_percent": 99,
-          "median_time_after_command_s": 0.6741795424200632,
-          "sample_count": 3
-        },
-        {
-          "position_percent": 90,
-          "median_time_after_command_s": 2.283728255253749,
-          "sample_count": 3
-        },
-        {
-          "position_percent": 75,
-          "median_time_after_command_s": 5.074075476192945,
-          "sample_count": 3
-        },
-        {
-          "position_percent": 50,
-          "median_time_after_command_s": 9.278769417797974,
-          "sample_count": 2
-        },
-        {
-          "position_percent": 25,
-          "median_time_after_command_s": 13.673872074021858,
-          "sample_count": 1
-        }
-      ],
-      "close_from_open_crossings_by_segment": [
-        {
-          "position_percent": 99,
-          "time_after_command_s": 0.5521729018603736,
-          "sample_position_percent": 98.95200081952487,
-          "segment": "target_75_from_open"
-        },
-        {
-          "position_percent": 90,
-          "time_after_command_s": 2.3521303293129137,
-          "sample_position_percent": 89.19264852010194,
-          "segment": "target_75_from_open"
-        },
-        {
-          "position_percent": 75,
-          "time_after_command_s": 4.952068835633284,
-          "sample_position_percent": 74.70899937320333,
-          "segment": "target_75_from_open"
-        },
-        {
-          "position_percent": 99,
-          "time_after_command_s": 0.6837660975181734,
-          "sample_position_percent": 98.48166203266837,
-          "segment": "target_50_from_open"
-        },
-        {
-          "position_percent": 90,
-          "time_after_command_s": 2.283728255253749,
-          "sample_position_percent": 89.52687912923012,
-          "segment": "target_50_from_open"
-        },
-        {
-          "position_percent": 75,
-          "time_after_command_s": 5.083662031291084,
-          "sample_position_percent": 73.973030264001,
-          "segment": "target_50_from_open"
-        },
-        {
-          "position_percent": 50,
-          "time_after_command_s": 9.28356269534703,
-          "sample_position_percent": 49.29113122235967,
-          "segment": "target_50_from_open"
-        },
-        {
-          "position_percent": 99,
-          "time_after_command_s": 0.6741795424200632,
-          "sample_position_percent": 98.6492767228669,
-          "segment": "target_25_from_open"
-        },
-        {
-          "position_percent": 90,
-          "time_after_command_s": 2.2741417001556385,
-          "sample_position_percent": 89.62335331157715,
-          "segment": "target_25_from_open"
-        },
-        {
-          "position_percent": 75,
-          "time_after_command_s": 5.074075476192945,
-          "sample_position_percent": 74.17348526256585,
-          "segment": "target_25_from_open"
-        },
-        {
-          "position_percent": 50,
-          "time_after_command_s": 9.27397614024892,
-          "sample_position_percent": 49.465978895051215,
-          "segment": "target_25_from_open"
-        },
-        {
-          "position_percent": 25,
-          "time_after_command_s": 13.673872074021858,
-          "sample_position_percent": 24.806106804295375,
-          "segment": "target_25_from_open"
-        }
-      ]
-    }
-  },
-  "auto04_target_results": [
+  "auto04_interrupted_stop_observations": [
     {
       "label": "target_25_from_closed",
+      "class": "opening_from_closed",
       "target_percent": 25.0,
-      "measured_percent": 37.091487958454366,
-      "error_pp": 12.091487958454366,
-      "run_elapsed_s": 27.346518625039607
+      "move_action": "open",
+      "move_command_run_elapsed_s": 21.282942375168204,
+      "stop_command_run_elapsed_s": 27.0319423751682,
+      "stop_delay_after_move_command_s": 5.748999999999995,
+      "start_position_percent": 0.004880677799073491,
+      "position_at_stop_command_percent": 35.367593896316826,
+      "settled_position_percent": 37.091487958454366,
+      "settled_minus_stop_position_pp": 1.7238940621375392,
+      "target_error_pp": 12.091487958454366,
+      "settle_sample_delay_after_stop_s": 0.31457624987140775
     },
     {
       "label": "target_50_from_closed",
+      "class": "opening_from_closed",
       "target_percent": 50.0,
-      "measured_percent": 37.088163442646135,
-      "error_pp": -12.911836557353865,
-      "run_elapsed_s": 49.61175883328542
+      "move_action": "open",
+      "move_command_run_elapsed_s": 41.1269423751682,
+      "stop_command_run_elapsed_s": 49.33794237516821,
+      "stop_delay_after_move_command_s": 8.211000000000013,
+      "start_position_percent": 0.0509301333283078,
+      "position_at_stop_command_percent": 36.31219580928434,
+      "settled_position_percent": 37.088163442646135,
+      "settled_minus_stop_position_pp": 0.7759676333617946,
+      "target_error_pp": -12.911836557353865,
+      "settle_sample_delay_after_stop_s": 0.27381645811721
     },
     {
       "label": "target_75_from_closed",
+      "class": "opening_from_closed",
       "target_percent": 75.0,
-      "measured_percent": 50.991180342817465,
-      "error_pp": -24.008819657182535,
-      "run_elapsed_s": 73.85632141632959
+      "move_action": "open",
+      "move_command_run_elapsed_s": 63.20094237516821,
+      "stop_command_run_elapsed_s": 73.6029423751682,
+      "stop_delay_after_move_command_s": 10.401999999999987,
+      "start_position_percent": 0.05932882836964675,
+      "position_at_stop_command_percent": 49.9339335151744,
+      "settled_position_percent": 50.991180342817465,
+      "settled_minus_stop_position_pp": 1.0572468276430627,
+      "target_error_pp": -24.008819657182535,
+      "settle_sample_delay_after_stop_s": 0.253379041161395
     },
     {
       "label": "target_75_from_open",
+      "class": "closing_from_open",
       "target_percent": 75.0,
-      "measured_percent": 66.57587618896979,
-      "error_pp": -8.424123811030213,
-      "run_elapsed_s": 118.01943008322269
+      "move_action": "close",
+      "move_command_run_elapsed_s": 111.50794237516823,
+      "stop_command_run_elapsed_s": 117.76494237516823,
+      "stop_delay_after_move_command_s": 6.257000000000005,
+      "start_position_percent": 99.98743755592808,
+      "position_at_stop_command_percent": 67.33938232544845,
+      "settled_position_percent": 66.57587618896979,
+      "settled_minus_stop_position_pp": -0.7635061364786679,
+      "target_error_pp": -8.424123811030213,
+      "settle_sample_delay_after_stop_s": 0.2544877080544552
     },
     {
       "label": "target_50_from_open",
+      "class": "closing_from_open",
       "target_percent": 50.0,
-      "measured_percent": 42.202247503080734,
-      "error_pp": -7.797752496919266,
-      "run_elapsed_s": 139.2656102082692
+      "move_action": "close",
+      "move_command_run_elapsed_s": 128.5759423751682,
+      "stop_command_run_elapsed_s": 139.0189423751682,
+      "stop_delay_after_move_command_s": 10.442999999999984,
+      "start_position_percent": 99.962459609077,
+      "position_at_stop_command_percent": 42.80770176893023,
+      "settled_position_percent": 42.202247503080734,
+      "settled_minus_stop_position_pp": -0.6054542658494952,
+      "target_error_pp": -7.797752496919266,
+      "settle_sample_delay_after_stop_s": 0.24666783310101437
     },
     {
       "label": "target_25_from_open",
+      "class": "closing_from_open",
       "target_percent": 25.0,
-      "measured_percent": 18.37139726839126,
-      "error_pp": -6.628602731608741,
-      "run_elapsed_s": 168.37801512517035
+      "move_action": "close",
+      "move_command_run_elapsed_s": 153.38494237516824,
+      "stop_command_run_elapsed_s": 168.26494237516823,
+      "stop_delay_after_move_command_s": 14.879999999999995,
+      "start_position_percent": 99.92498420535411,
+      "position_at_stop_command_percent": 18.650560744072255,
+      "settled_position_percent": 18.37139726839126,
+      "settled_minus_stop_position_pp": -0.27916347568099553,
+      "target_error_pp": -6.628602731608741,
+      "settle_sample_delay_after_stop_s": 0.11307275000211803
     }
   ],
-  "interpretation": {
-    "close_model": "The timing-aligned close duration and AUTO_04 close-from-open crossings agree well; close timing can be fitted with the aligned full-close duration plus a shorter command-to-motion start delay than the current YAML.",
-    "open_model": "The timing-aligned full-open capture reports a much shorter opening than AUTO_04. A single fixed open_duration cannot fit both captures as equal-confidence timing observations.",
-    "firmware_implication": "Do not average the conflicting open durations. Either choose the latest timing-aligned AUTO_04 behavior for current firmware, or add an adaptive/validated open-duration calibration gate before enabling accurate intermediate opening targets."
+  "model_direction": {
+    "planned_endpoint_profile": "Use only the timing-aligned full-travel capture for full open/full close timing and endpoint state correction.",
+    "interrupted_target_profile": "Fit a separate target-stop response from AUTO_04. The predictor should estimate settled position after an abrupt stop, not the planned full-travel position at the instant stop is requested.",
+    "firmware_implication": "Intermediate targets should stop when the predicted settled position reaches the target. Full endpoint commands should keep using the planned profile plus HCP endpoint confirmation."
   }
 }
