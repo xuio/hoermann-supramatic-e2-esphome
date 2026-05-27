@@ -277,7 +277,7 @@ uv run garage-phone-sync --esp-host <local-ip>
 
 Controls: `Space` starts the sequence or cancels a pending countdown, `M` emits a manual marker flash, and `Q`/`Esc` finishes the capture and downloads the ESP persistent log.
 
-The capture screen keeps the QR code and its keepout area clear, with only rotated status text in the left and right gutters. The marker is a compact version-1 QR code with a standard quiet zone, strong error correction, a 10-character alphanumeric base36 payload, and payload CRC validation. Decode a recorded phone video with:
+The capture screen keeps the QR code and its keepout area clear, with only rotated status text in the left and right gutters. The far-left vertical bar shows current-step progress, and the far-right vertical bar shows total automation progress. The marker is a compact version-1 QR code with a standard quiet zone, strong error correction, a 10-character alphanumeric base36 payload, and payload CRC validation. Decode a recorded phone video with:
 
 ```bash
 uv run garage-decode-phone-sync-video --video /path/to/PHONE_VIDEO.MOV

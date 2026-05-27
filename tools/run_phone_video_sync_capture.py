@@ -543,13 +543,40 @@ class CaptureCoordinator:
         now = time.monotonic()
         with self.lock:
             scheduled = None
+            scheduled_progress = None
             if self.scheduled is not None:
+                total_s = max(0.1, self.scheduled.get("delay_s", self.args.command_delay))
+                remaining_s = max(0.0, self.scheduled["due_monotonic_s"] - now)
+                elapsed_s = min(total_s, max(0.0, total_s - remaining_s))
+                scheduled_progress = elapsed_s / total_s
                 scheduled = {
                     "action": self.scheduled["action"],
                     "label": self.scheduled.get("label", self.scheduled["action"]),
-                    "total_s": self.scheduled.get("delay_s", self.args.command_delay),
-                    "remaining_s": max(0.0, self.scheduled["due_monotonic_s"] - now),
+                    "total_s": total_s,
+                    "remaining_s": remaining_s,
+                    "elapsed_s": elapsed_s,
+                    "progress": scheduled_progress,
                 }
+            wait_elapsed_s = (
+                max(0.0, now - self.sequence_wait_started_monotonic)
+                if self.sequence_wait_started_monotonic is not None
+                else None
+            )
+            current_step_progress = 0.0
+            if self.sequence_done:
+                current_step_progress = 1.0
+            elif self.sequence_index >= 0:
+                if scheduled_progress is not None:
+                    current_step_progress = scheduled_progress
+                elif wait_elapsed_s is not None:
+                    current_step_progress = min(1.0, wait_elapsed_s / max(0.1, self.args.motion_timeout))
+            sequence_count = len(self.sequence_steps)
+            if self.sequence_done:
+                automation_progress = 1.0
+            elif self.sequence_index >= 0 and sequence_count > 0:
+                automation_progress = min(1.0, max(0.0, (self.sequence_index + current_step_progress) / sequence_count))
+            else:
+                automation_progress = 0.0
             return {
                 "run_id": self.run_id,
                 "run_elapsed_s": now - self.started_monotonic,
@@ -569,7 +596,12 @@ class CaptureCoordinator:
                     if 0 <= self.sequence_index < len(self.sequence_steps)
                     else None,
                     "waiting_for_state": self.sequence_waiting_for_state,
+                    "wait_elapsed_s": wait_elapsed_s,
                     "done": self.sequence_done,
+                },
+                "progress": {
+                    "current_step": current_step_progress,
+                    "automation": automation_progress,
                 },
                 "hcp": dict(self.hcp),
                 "error": self.error,
@@ -861,6 +893,7 @@ class FullscreenDisplay:
         muted = "#111111" if flash["active"] else "#b8c7d9"
         accent = "#000000" if flash["active"] else "#f4d35e"
         canvas.create_rectangle(0, 0, w, h, fill=bg, outline=bg)
+        self.draw_progress_bars(w, h, state.get("progress", {}), flash["active"])
 
         margin = max(6, int(min(w, h) * 0.006))
         small_size = max(11, min(20, int(h * 0.014)))
@@ -960,6 +993,55 @@ class FullscreenDisplay:
             if size <= max_size:
                 return size
         return max(220, (max_size // modules) * modules)
+
+    def draw_progress_bars(self, w: int, h: int, progress: dict[str, Any], flash_active: bool) -> None:
+        bar_width = max(8, min(18, int(min(w, h) * 0.012)))
+        inset = max(8, int(h * 0.012))
+        track_top = inset
+        track_bottom = h - inset
+        track_height = max(1.0, track_bottom - track_top)
+        left_progress = self.clamp01(progress.get("current_step", 0.0))
+        right_progress = self.clamp01(progress.get("automation", 0.0))
+        track_fill = "#f2f2f2" if flash_active else "#18202b"
+        track_outline = "#000000" if flash_active else "#405066"
+        self.draw_vertical_progress_bar(
+            0,
+            track_top,
+            bar_width,
+            track_height,
+            left_progress,
+            track_fill=track_fill,
+            track_outline=track_outline,
+            fill="#f4d35e" if not flash_active else "#000000",
+        )
+        self.draw_vertical_progress_bar(
+            w - bar_width,
+            track_top,
+            bar_width,
+            track_height,
+            right_progress,
+            track_fill=track_fill,
+            track_outline=track_outline,
+            fill="#64d2ff" if not flash_active else "#000000",
+        )
+
+    def draw_vertical_progress_bar(
+        self,
+        x: float,
+        y: float,
+        width: float,
+        height: float,
+        progress: float,
+        *,
+        track_fill: str,
+        track_outline: str,
+        fill: str,
+    ) -> None:
+        self.canvas.create_rectangle(x, y, x + width, y + height, fill=track_fill, outline=track_outline, width=1)
+        fill_height = height * progress
+        if fill_height <= 0:
+            return
+        self.canvas.create_rectangle(x, y + height - fill_height, x + width, y + height, fill=fill, outline=fill, width=0)
 
     def draw_side_status(
         self,
@@ -1080,6 +1162,14 @@ class FullscreenDisplay:
             return f"{float(value) * 100.0:.1f}%"
         except (TypeError, ValueError):
             return "-"
+
+    @staticmethod
+    def clamp01(value: Any) -> float:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return 0.0
+        return max(0.0, min(1.0, number))
 
 
 def start_persistent_log(coordinator: CaptureCoordinator, esp: EspHttpClient) -> None:
