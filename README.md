@@ -234,6 +234,8 @@ Without `HA_TOKEN`, it still controls ESP recording and pauses with exact manual
 
 For position calibration, measure the clear opening height in meters instead of guessing the percentage. The wizard asks for the full-open height once, then asks for the measured opening height after each stop/target. It computes actual percent open and error versus target in `measurements.csv` and `summary.md`.
 
+For video-based curve fitting, print the A4 ArUco marker PDFs in [docs/markers](docs/markers). Use four fixed reference markers around the garage opening and one moving marker on the bottom edge of the door. Print at actual size and verify the `100 mm` scale bar before recording.
+
 ## Protocol Diagnostics
 
 The primary YAML exposes these diagnostic entities for protocol work:
