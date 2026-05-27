@@ -1,0 +1,4 @@
+source,direction,command_to_hcp_endpoint_s,visible_motion_duration_s,offset_s,notes
+hcp_timing_aligned_20260527_164141,opening,12.825000000000728,10.215000000000003,2.610000000000724,prior timing-aligned full-travel capture
+hcp_timing_aligned_20260527_164141,closing,22.273999999999432,18.565,3.708999999999431,prior timing-aligned full-travel capture
+auto04_phone_sync_20260527_230736,opening,20.59246483313666,,,successful position run; full open from closed to HCP open endpoint

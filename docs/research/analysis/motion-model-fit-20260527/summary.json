@@ -1,0 +1,251 @@
+{
+  "sources_used": {
+    "prior_full_travel": "captures/hcp-timing-calibration-20260527-164141/hcp-video-timing-alignment.json",
+    "successful_position_run": "docs/research/analysis/phone-sync-auto04-20260527/summary.json",
+    "auto04_progress": "docs/research/analysis/phone-sync-auto04-20260527/auto04_progress_5fps.csv",
+    "excluded": "standalone non-HCP opening/closing video timing is not used as an independent timing source in this report"
+  },
+  "timing_aligned_full_travel": [
+    {
+      "direction": "opening",
+      "command_to_hcp_endpoint_s": 12.825000000000728,
+      "visible_motion_duration_s": 10.215000000000003,
+      "combined_start_plus_report_offset_s": 2.610000000000724,
+      "endpoint_status_hex": "0x0001"
+    },
+    {
+      "direction": "closing",
+      "command_to_hcp_endpoint_s": 22.273999999999432,
+      "visible_motion_duration_s": 18.565,
+      "combined_start_plus_report_offset_s": 3.708999999999431,
+      "endpoint_status_hex": "0x0002"
+    }
+  ],
+  "auto04_full_travel_and_crossings": {
+    "opening": {
+      "command_run_elapsed_s": 89.84594237516819,
+      "hcp_open_run_elapsed_s": 110.43840720830485,
+      "command_to_hcp_endpoint_s": 20.59246483313666,
+      "crossings_after_command_s": [
+        {
+          "position_percent": 1,
+          "time_after_command_s": 1.4146648512975162,
+          "sample_position_percent": 1.0071718784148056
+        },
+        {
+          "position_percent": 5,
+          "time_after_command_s": 3.01462700903312,
+          "sample_position_percent": 5.338954483058657
+        },
+        {
+          "position_percent": 10,
+          "time_after_command_s": 4.014603357617872,
+          "sample_position_percent": 10.630489637581352
+        },
+        {
+          "position_percent": 20,
+          "time_after_command_s": 5.814560785070441,
+          "sample_position_percent": 21.12067581020618
+        },
+        {
+          "position_percent": 25,
+          "time_after_command_s": 6.614541863938243,
+          "sample_position_percent": 25.83789856101948
+        },
+        {
+          "position_percent": 30,
+          "time_after_command_s": 7.414522942806045,
+          "sample_position_percent": 31.04745417900364
+        },
+        {
+          "position_percent": 35,
+          "time_after_command_s": 8.014508751956896,
+          "sample_position_percent": 35.10408268258855
+        },
+        {
+          "position_percent": 40,
+          "time_after_command_s": 8.814489830824712,
+          "sample_position_percent": 40.14899037900259
+        },
+        {
+          "position_percent": 50,
+          "time_after_command_s": 10.414451988560302,
+          "sample_position_percent": 50.167752499566134
+        },
+        {
+          "position_percent": 75,
+          "time_after_command_s": 14.214362113182375,
+          "sample_position_percent": 75.58131250442715
+        },
+        {
+          "position_percent": 90,
+          "time_after_command_s": 16.41431008006883,
+          "sample_position_percent": 90.84946219153187
+        },
+        {
+          "position_percent": 95,
+          "time_after_command_s": 17.414286428653583,
+          "sample_position_percent": 95.04007618315707
+        },
+        {
+          "position_percent": 99,
+          "time_after_command_s": 19.414239125823087,
+          "sample_position_percent": 99.04183514656397
+        }
+      ]
+    },
+    "closing": {
+      "note": "AUTO_04 had close target segments and final partial close, but no full 100%->0% close from open.",
+      "close_from_open_crossing_medians_after_command_s": [
+        {
+          "position_percent": 99,
+          "median_time_after_command_s": 0.6741795424200632,
+          "sample_count": 3
+        },
+        {
+          "position_percent": 90,
+          "median_time_after_command_s": 2.283728255253749,
+          "sample_count": 3
+        },
+        {
+          "position_percent": 75,
+          "median_time_after_command_s": 5.074075476192945,
+          "sample_count": 3
+        },
+        {
+          "position_percent": 50,
+          "median_time_after_command_s": 9.278769417797974,
+          "sample_count": 2
+        },
+        {
+          "position_percent": 25,
+          "median_time_after_command_s": 13.673872074021858,
+          "sample_count": 1
+        }
+      ],
+      "close_from_open_crossings_by_segment": [
+        {
+          "position_percent": 99,
+          "time_after_command_s": 0.5521729018603736,
+          "sample_position_percent": 98.95200081952487,
+          "segment": "target_75_from_open"
+        },
+        {
+          "position_percent": 90,
+          "time_after_command_s": 2.3521303293129137,
+          "sample_position_percent": 89.19264852010194,
+          "segment": "target_75_from_open"
+        },
+        {
+          "position_percent": 75,
+          "time_after_command_s": 4.952068835633284,
+          "sample_position_percent": 74.70899937320333,
+          "segment": "target_75_from_open"
+        },
+        {
+          "position_percent": 99,
+          "time_after_command_s": 0.6837660975181734,
+          "sample_position_percent": 98.48166203266837,
+          "segment": "target_50_from_open"
+        },
+        {
+          "position_percent": 90,
+          "time_after_command_s": 2.283728255253749,
+          "sample_position_percent": 89.52687912923012,
+          "segment": "target_50_from_open"
+        },
+        {
+          "position_percent": 75,
+          "time_after_command_s": 5.083662031291084,
+          "sample_position_percent": 73.973030264001,
+          "segment": "target_50_from_open"
+        },
+        {
+          "position_percent": 50,
+          "time_after_command_s": 9.28356269534703,
+          "sample_position_percent": 49.29113122235967,
+          "segment": "target_50_from_open"
+        },
+        {
+          "position_percent": 99,
+          "time_after_command_s": 0.6741795424200632,
+          "sample_position_percent": 98.6492767228669,
+          "segment": "target_25_from_open"
+        },
+        {
+          "position_percent": 90,
+          "time_after_command_s": 2.2741417001556385,
+          "sample_position_percent": 89.62335331157715,
+          "segment": "target_25_from_open"
+        },
+        {
+          "position_percent": 75,
+          "time_after_command_s": 5.074075476192945,
+          "sample_position_percent": 74.17348526256585,
+          "segment": "target_25_from_open"
+        },
+        {
+          "position_percent": 50,
+          "time_after_command_s": 9.27397614024892,
+          "sample_position_percent": 49.465978895051215,
+          "segment": "target_25_from_open"
+        },
+        {
+          "position_percent": 25,
+          "time_after_command_s": 13.673872074021858,
+          "sample_position_percent": 24.806106804295375,
+          "segment": "target_25_from_open"
+        }
+      ]
+    }
+  },
+  "auto04_target_results": [
+    {
+      "label": "target_25_from_closed",
+      "target_percent": 25.0,
+      "measured_percent": 37.091487958454366,
+      "error_pp": 12.091487958454366,
+      "run_elapsed_s": 27.346518625039607
+    },
+    {
+      "label": "target_50_from_closed",
+      "target_percent": 50.0,
+      "measured_percent": 37.088163442646135,
+      "error_pp": -12.911836557353865,
+      "run_elapsed_s": 49.61175883328542
+    },
+    {
+      "label": "target_75_from_closed",
+      "target_percent": 75.0,
+      "measured_percent": 50.991180342817465,
+      "error_pp": -24.008819657182535,
+      "run_elapsed_s": 73.85632141632959
+    },
+    {
+      "label": "target_75_from_open",
+      "target_percent": 75.0,
+      "measured_percent": 66.57587618896979,
+      "error_pp": -8.424123811030213,
+      "run_elapsed_s": 118.01943008322269
+    },
+    {
+      "label": "target_50_from_open",
+      "target_percent": 50.0,
+      "measured_percent": 42.202247503080734,
+      "error_pp": -7.797752496919266,
+      "run_elapsed_s": 139.2656102082692
+    },
+    {
+      "label": "target_25_from_open",
+      "target_percent": 25.0,
+      "measured_percent": 18.37139726839126,
+      "error_pp": -6.628602731608741,
+      "run_elapsed_s": 168.37801512517035
+    }
+  ],
+  "interpretation": {
+    "close_model": "The timing-aligned close duration and AUTO_04 close-from-open crossings agree well; close timing can be fitted with the aligned full-close duration plus a shorter command-to-motion start delay than the current YAML.",
+    "open_model": "The timing-aligned full-open capture reports a much shorter opening than AUTO_04. A single fixed open_duration cannot fit both captures as equal-confidence timing observations.",
+    "firmware_implication": "Do not average the conflicting open durations. Either choose the latest timing-aligned AUTO_04 behavior for current firmware, or add an adaptive/validated open-duration calibration gate before enabling accurate intermediate opening targets."
+  }
+}
