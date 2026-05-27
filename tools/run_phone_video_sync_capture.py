@@ -893,7 +893,6 @@ class FullscreenDisplay:
         muted = "#111111" if flash["active"] else "#b8c7d9"
         accent = "#000000" if flash["active"] else "#f4d35e"
         canvas.create_rectangle(0, 0, w, h, fill=bg, outline=bg)
-        self.draw_progress_bars(w, h, state.get("progress", {}), flash["active"])
 
         margin = max(6, int(min(w, h) * 0.006))
         small_size = max(11, min(20, int(h * 0.014)))
@@ -933,6 +932,7 @@ class FullscreenDisplay:
             center_color = fg
 
         if not getattr(self.coordinator.args, "hide_side_status", False):
+            self.draw_progress_bars(w, h, state.get("progress", {}), flash["active"])
             self.draw_side_status(
                 w=w,
                 h=h,
@@ -1228,7 +1228,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--hide-side-status",
         action="store_true",
-        help="Hide the default rotated side status text and show only the QR code",
+        help="Hide the default rotated side status text and progress bars, showing only the QR code",
     )
     parser.add_argument(
         "--sequence",
