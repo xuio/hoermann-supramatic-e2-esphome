@@ -564,6 +564,7 @@ bool UAPBridge_esp::command_allowed(const hoermann_action_t command, bool bypass
   const bool gate_error = (this->broadcast_status & hoermann_state_error) != 0;
   const bool gate_prewarn = (this->broadcast_status & hoermann_state_prewarn) != 0;
   const bool obstruction_recovery_open = this->obstruction_state && command == hoermann_action_open;
+  const bool raw_stop_allowed_without_moving_status = command == hoermann_action_stop && this->use_unverified_stop_command;
 
   if (command == hoermann_action_venting && !this->allow_remote_close && gate_state == hoermann_state_open) {
     ESP_LOGW(TAG, "Blocked venting command from open state because allow_remote_close is false");
@@ -579,7 +580,7 @@ bool UAPBridge_esp::command_allowed(const hoermann_action_t command, bool bypass
     return false;
   }
 
-  if (this->is_movement_command(command) && !obstruction_recovery_open &&
+  if (this->is_movement_command(command) && !raw_stop_allowed_without_moving_status && !obstruction_recovery_open &&
       (gate_state == hoermann_state_unknown || gate_state == hoermann_state_stopped)) {
     ESP_LOGW(TAG, "Blocked movement HCP command %s because decoded door state is %s",
              this->action_name(command), this->state_string.c_str());

@@ -67,7 +67,7 @@ These values show the active calibration from the cover component. You can still
 - The obstruction latch is inferred from a failed timed close, not from a confirmed E2 error-code field. Keep protocol logging available during further obstruction tests so a future explicit E2 error bit can replace or refine the inference if one is found.
 - `position_deadband` is limited to `20%` or less at ESPHome config validation time so a broad deadband cannot hide large position errors.
 - Downward position moves require `allow_remote_close: true`; the default YAML keeps it `false` until you have verified state decoding and obstruction protection.
-- Intermediate target stopping relies on the existing safe stop path. With the default `use_unverified_stop_command: false`, the firmware sends the impulse stop fallback only after a recent decoded moving broadcast. If E2 moving-state decoding is wrong or stale, an intermediate stop may be rejected and the door may continue to an end stop.
+- Intermediate target stopping relies on the stop command path. On this E2, movement broadcasts can decode as `0x0000` / stopped while the door is physically moving, so percentage control requires `use_unverified_stop_command: true`; that allows the raw HCP stop command even when the moving bit is not present, while still requiring a fresh valid bus broadcast.
 - Do not expose position control to HomeKit until open, close, stop, and state correction have been tested while physically present.
 
 ## Calibration
