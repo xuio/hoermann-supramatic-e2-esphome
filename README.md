@@ -269,7 +269,7 @@ uv run garage-analyze-hcp-timing \
   --curve-lookup docs/research/analysis/garage-door-motion-20260527/curve_lookup.json
 ```
 
-For a new phone video capture with synchronized protocol logging, use the fullscreen sync display. Start with the door fully closed, start your phone recording with the MacBook screen visible, then press `Space`. The automatic sequence starts after a visible `15s` countdown and records full-open, full-close, vent-from-closed, open setup, vent-from-open, and final close movements while the screen shows a visual code and live HCP feedback:
+For a new phone video capture with synchronized protocol logging, use the fullscreen sync display. Start with the door fully closed, start your phone recording with the MacBook screen visible, then press `Space`. The automatic sequence starts after a visible `15s` countdown and records full-open, full-close, vent-from-closed, open setup, vent-from-open, and final close movements while the screen prioritizes a large visual timecode marker and keeps live HCP feedback in compact text:
 
 ```bash
 uv run garage-phone-sync --esp-host <local-ip>

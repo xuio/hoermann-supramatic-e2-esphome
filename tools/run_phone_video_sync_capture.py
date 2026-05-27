@@ -758,86 +758,110 @@ class FullscreenDisplay:
         accent = "#000000" if flash["active"] else "#f4d35e"
         canvas.create_rectangle(0, 0, w, h, fill=bg, outline=bg)
 
-        margin = max(28, int(min(w, h) * 0.035))
-        title_size = max(34, int(h * 0.065))
-        body_size = max(20, int(h * 0.034))
-        big_size = max(54, int(h * 0.12))
-        code_cell = max(24, int(min(w, h) * 0.035))
+        margin = max(16, int(min(w, h) * 0.018))
+        header_size = max(16, min(30, int(h * 0.022)))
+        small_size = max(13, min(24, int(h * 0.018)))
+        status_size = max(28, min(58, int(h * 0.045)))
+        line_gap = int(small_size * 1.35)
 
-        title = "GARAGE SYNC  DRY RUN" if self.coordinator.args.dry_run else "GARAGE SYNC"
-        self.text(margin, margin, title, title_size, fg, "nw")
-        self.text(margin, margin + title_size + 8, f"RUN {state['run_id']}", body_size, muted, "nw")
+        title = "GARAGE SYNC / DRY RUN" if self.coordinator.args.dry_run else "GARAGE SYNC"
+        elapsed = state["run_elapsed_s"]
+        self.text(margin, margin, title, header_size, fg, "nw")
+        self.text(w - margin, margin, f"T {elapsed:07.1f}s", header_size, accent, "ne")
         self.text(
             margin,
-            margin + title_size + body_size + 18,
-            f"SEQ {self.coordinator.visual_seq:06d}  EVT {state['event_code']:02d} {state['event_name']}",
-            body_size,
+            margin + line_gap,
+            f"run {state['run_id']}   seq {self.coordinator.visual_seq:06d}   event {state['event_code']:02d} {state['event_name']}",
+            small_size,
             accent,
             "nw",
         )
-
-        scheduled = state["scheduled"]
-        if scheduled:
-            action = scheduled["action"].upper()
-            remaining = scheduled["remaining_s"]
-            center = f"{action} IN {remaining:0.1f}s"
-            center_color = "#64d2ff" if action == "OPEN" else "#bf7bff" if action == "VENT" else "#ff6b6b"
-            self.draw_countdown(w / 2, h * 0.43, remaining, scheduled.get("total_s", self.coordinator.args.command_delay), action)
-        elif state["sequence"]["index"] < 0 and not state["sequence"]["done"] and not flash["active"]:
-            center = "PRESS SPACE TO START"
-            center_color = "#ffffff"
-        elif flash["active"] and flash["label"]:
-            center = flash["label"]
-            center_color = fg
-        else:
-            center = "READY"
-            center_color = fg
-        self.text(w / 2, h * 0.29, center, big_size, center_color, "n")
+        self.text(w - margin, margin + line_gap, "large marker encodes seq/event/time", small_size, muted, "ne")
 
         hcp = state["hcp"]
-        y0 = h * 0.58
         sequence = state["sequence"]
         current_step = sequence["current_step"] or {}
         step_text = "not started" if sequence["index"] < 0 else f"{sequence['index'] + 1}/{sequence['count']} {current_step.get('label', '')}"
         if sequence["done"]:
             step_text = "done"
-        self.text(margin, y0 - body_size * 1.35, f"Sequence: {step_text}", body_size, "#f4d35e", "nw")
-        self.text(margin, y0, f"HCP state: {hcp.get('garage_door_state', '-')}", body_size, "#ffffff", "nw")
+
+        bottom_lines = 4
+        footer_height = margin + small_size * (bottom_lines + 0.9) + status_size * 1.4
+        marker_top = margin + line_gap * 2 + max(10, margin // 2)
+        marker_cell = self.visual_code_cell_size(w, h, margin, marker_top, footer_height)
+        pad = self.visual_code_pad(marker_cell)
+        marker_height = 4 * marker_cell + 2 * pad
+        code_x = (w - 16 * marker_cell) / 2
+        code_y = marker_top + pad
+        self.draw_visual_code(code_x, code_y, marker_cell, state)
+
+        scheduled = state["scheduled"]
+        if scheduled:
+            action = scheduled["action"].upper()
+            remaining = scheduled["remaining_s"]
+            status = f"{action} IN {remaining:0.1f}s"
+            center_color = "#64d2ff" if action == "OPEN" else "#bf7bff" if action == "VENT" else "#ff6b6b"
+        elif state["sequence"]["index"] < 0 and not state["sequence"]["done"] and not flash["active"]:
+            status = "SPACE TO START"
+            center_color = "#ffffff"
+        elif flash["active"] and flash["label"]:
+            status = flash["label"]
+            center_color = fg
+        else:
+            status = "READY"
+            center_color = fg
+
+        status_y = marker_top + marker_height + max(10, margin // 2)
+        self.text(w / 2, status_y, status, status_size, center_color, "n")
+        if scheduled:
+            self.draw_countdown_bar(
+                margin,
+                status_y + status_size + max(8, margin // 3),
+                w - 2 * margin,
+                max(12, small_size),
+                scheduled["remaining_s"],
+                scheduled.get("total_s", self.coordinator.args.command_delay),
+                scheduled["action"].upper(),
+            )
+
+        footer_y = h - margin - small_size * 3.3
+        self.text(margin, footer_y, f"Sequence: {step_text}", small_size, "#f4d35e", "sw")
+        self.text(w - margin, footer_y, f"HCP: {hcp.get('garage_door_state', '-')}   position: {self.format_percent(hcp.get('cover_position'))}", small_size, fg, "se")
         self.text(
             margin,
-            y0 + body_size * 1.35,
+            footer_y + small_size * 1.25,
             f"Raw: {hcp.get('garage_door_raw_hcp_status_hex', '-')}   valid: {hcp.get('garage_door_valid_hcp_broadcast', '-')}",
-            body_size,
-            "#ffffff",
-            "nw",
+            small_size,
+            fg,
+            "sw",
         )
         self.text(
-            margin,
-            y0 + body_size * 2.70,
-            f"Position: {self.format_percent(hcp.get('cover_position'))}   operation: {hcp.get('cover_operation', '-')}",
-            body_size,
-            "#ffffff",
-            "nw",
-        )
-        self.text(
-            margin,
-            y0 + body_size * 4.05,
-            f"Obstruction: {hcp.get('garage_door_obstruction_state', '-')}   light: {hcp.get('garage_door_light', '-')}",
-            body_size,
-            "#ffffff",
-            "nw",
+            w - margin,
+            footer_y + small_size * 1.25,
+            f"operation: {hcp.get('cover_operation', '-')}   obstruction: {hcp.get('garage_door_obstruction_state', '-')}   light: {hcp.get('garage_door_light', '-')}",
+            small_size,
+            fg,
+            "se",
         )
 
         mode = "DRY RUN   " if self.coordinator.args.dry_run else ""
-        instructions = f"{mode}SPACE=start/cancel   automatic start delay={self.coordinator.args.initial_delay:g}s   M=marker flash   Q/Esc=finish"
-        self.text(w / 2, h - margin - body_size, instructions, int(body_size * 0.85), "#d7dee8", "s")
+        instructions = f"{mode}SPACE=start/cancel   start delay={self.coordinator.args.initial_delay:g}s   M=marker   Q/Esc=finish"
+        self.text(w / 2, h - margin, instructions, small_size, "#d7dee8", "s")
         if state["error"]:
-            self.text(margin, h - margin - body_size * 2.4, f"ERROR {state['error']}", body_size, "#ff6b6b", "sw")
+            self.text(margin, status_y + status_size * 1.15, f"ERROR {state['error']}", small_size, "#ff6b6b", "nw")
 
-        self.draw_visual_code(w - margin - 16 * code_cell, margin + 16, code_cell, state)
+    def visual_code_cell_size(self, width: int, height: int, margin: int, top: int, footer_height: float) -> int:
+        available_width = max(320, width - 2 * margin)
+        available_height = max(220.0, height - top - footer_height)
+        by_width = available_width / 16.9
+        by_height = available_height / 4.9
+        return max(28, int(min(by_width, by_height)))
 
-    def draw_countdown(self, cx: float, cy: float, remaining: float, total: float, action: str) -> None:
-        radius = 56
+    @staticmethod
+    def visual_code_pad(cell: int) -> int:
+        return max(14, int(cell * 0.45))
+
+    def draw_countdown_bar(self, x: float, y: float, width: float, height: float, remaining: float, total: float, action: str) -> None:
         frac = max(0.0, min(1.0, remaining / max(total, 0.1)))
         if action == "OPEN":
             color = "#64d2ff"
@@ -845,25 +869,13 @@ class FullscreenDisplay:
             color = "#bf7bff"
         else:
             color = "#ff6b6b"
-        self.canvas.create_oval(cx - radius, cy - radius, cx + radius, cy + radius, outline="#26313f", width=10)
-        self.canvas.create_arc(
-            cx - radius,
-            cy - radius,
-            cx + radius,
-            cy + radius,
-            start=90,
-            extent=-360 * frac,
-            style=tk.ARC,
-            outline=color,
-            width=10,
-        )
-        self.text(cx, cy - 20, f"{remaining:0.1f}", 34, "#ffffff", "n")
-        self.text(cx, cy + 20, "seconds", 16, "#d7dee8", "n")
+        self.canvas.create_rectangle(x, y, x + width, y + height, fill="#18202b", outline="#4d5a6d", width=2)
+        self.canvas.create_rectangle(x, y, x + width * frac, y + height, fill=color, outline=color)
 
-    def draw_visual_code(self, x: int, y: int, cell: int, state: dict[str, Any]) -> None:
+    def draw_visual_code(self, x: float, y: float, cell: int, state: dict[str, Any]) -> None:
         cols = 16
         rows = 4
-        pad = max(10, int(cell * 0.45))
+        pad = self.visual_code_pad(cell)
         canvas = self.canvas
         canvas.create_rectangle(x - pad, y - pad, x + cols * cell + pad, y + rows * cell + pad, fill="#ffffff", outline="#ffffff")
         for fx, fy in [
@@ -895,7 +907,7 @@ class FullscreenDisplay:
                     fill=color,
                     outline=color,
                 )
-        canvas.create_rectangle(x, y, x + cols * cell, y + rows * cell, outline="#000000", width=4)
+        canvas.create_rectangle(x, y, x + cols * cell, y + rows * cell, outline="#000000", width=max(4, int(cell * 0.055)))
 
     def text(self, x: float, y: float, text: str, size: int, color: str, anchor: str) -> None:
         self.canvas.create_text(
