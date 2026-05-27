@@ -1176,8 +1176,8 @@ class FullscreenDisplay:
 
 def start_persistent_log(coordinator: CaptureCoordinator, esp: EspHttpClient) -> None:
     for label, path, timeout in [
-        ("persistent_log_clear", "/persistent_log/clear", 30),
-        ("persistent_log_start", "/persistent_log/start", 30),
+        ("persistent_log_clear", "/persistent_log/clear", 12),
+        ("persistent_log_start", "/persistent_log/start", 12),
     ]:
         print(f"{label}: requesting {path} ...", flush=True)
         result = esp.get(path, timeout=timeout, retries=2)
@@ -1187,11 +1187,16 @@ def start_persistent_log(coordinator: CaptureCoordinator, esp: EspHttpClient) ->
             raise SystemExit(f"ESP HTTP {label} failed")
 
 
-def stop_and_download(coordinator: CaptureCoordinator, esp: EspHttpClient) -> None:
+def stop_persistent_log(coordinator: CaptureCoordinator, esp: EspHttpClient) -> HttpResult:
     print("persistent_log_stop: requesting /persistent_log/stop ...", flush=True)
-    stop = esp.get("/persistent_log/stop", timeout=30, retries=2)
+    stop = esp.get("/persistent_log/stop", timeout=12, retries=2)
     print_http("persistent_log_stop", stop)
     coordinator.add_event("esp_http", "persistent_log_stop", {"status": stop.status, "error": stop.error, "json": stop.json_data})
+    return stop
+
+
+def stop_and_download(coordinator: CaptureCoordinator, esp: EspHttpClient) -> None:
+    stop_persistent_log(coordinator, esp)
     downloads = {
         "esp-stats-final.json": ("/stats", 15, False),
         "esp-broadcast-status-final.json": ("/broadcast_status", 15, False),
@@ -1244,6 +1249,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--motion-timeout", type=float, default=90.0, help="Maximum seconds to wait for each HCP target state")
     parser.add_argument("--dry-run", action="store_true", help="Show the fullscreen visuals and simulated HCP feedback without contacting the ESP or moving the opener")
     parser.add_argument("--dry-run-motion-duration", type=float, default=3.0, help="Seconds before each simulated dry-run command reaches its target state")
+    parser.add_argument("--startup-check", action="store_true", help="Start persistent logging and connect to ESPHome, then stop and exit without opening the UI or sending commands")
     parser.add_argument("--startup-reachability-timeout", type=float, default=45.0, help="Seconds to wait for the ESP HTTP port before starting the real capture")
     parser.add_argument(
         "--show-overlay-text",
@@ -1294,10 +1300,16 @@ def main() -> int:
                 raise SystemExit("ESP HTTP port is not reachable; capture was not started")
             start_persistent_log(coordinator, esp)
             persistent_log_started = True
+            print("persistent_log: started", flush=True)
+        print("native_api_worker: starting ...", flush=True)
         worker.start()
         worker_started = True
         if not worker.ready.wait(timeout=20):
             raise SystemExit("Timed out connecting to ESPHome native API")
+        print("native_api_worker: ready", flush=True)
+        if args.startup_check:
+            print("Startup check passed: persistent log started and ESPHome native API is ready.")
+            return 0
         print()
         print(f"Output bundle: {output_dir}")
         print("Controls: Space=start/cancel, M=marker flash, Q/Esc=finish.")
@@ -1312,7 +1324,10 @@ def main() -> int:
             if worker.is_alive():
                 worker.join(timeout=5)
         if esp is not None and persistent_log_started:
-            stop_and_download(coordinator, esp)
+            if args.startup_check:
+                stop_persistent_log(coordinator, esp)
+            else:
+                stop_and_download(coordinator, esp)
         elif esp is not None:
             print("Skipping persistent log stop/download because logging did not start.", flush=True)
         coordinator.manifest["finished_at"] = utc_now_iso()
