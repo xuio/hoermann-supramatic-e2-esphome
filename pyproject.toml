@@ -17,6 +17,7 @@ dependencies = [
 [project.scripts]
 garage-analyze-aruco-video = "tools.analyze_garage_aruco_video:main"
 garage-analyze-hcp-timing = "tools.analyze_hcp_timing:main"
+garage-decode-phone-sync-video = "tools.decode_phone_sync_video:main"
 garage-generate-aruco-markers = "tools.generate_aruco_marker_pdfs:main"
 garage-hcp-proxy-client = "tools.hcp_proxy_client:main"
 garage-hcp-timing-calibration = "tools.run_hcp_timing_calibration:main"

@@ -18,6 +18,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import cv2
+import numpy as np
+
 
 DEFAULT_COVER_OBJECT_ID = "garage_door"
 
@@ -38,6 +41,12 @@ EVENT_COMMAND_VENT = 13
 EVENT_HCP_VENTING = 14
 EVENT_SEQUENCE_DONE = 15
 
+QR_PAYLOAD_PREFIX = "GDS1"
+QR_QUIET_ZONE_MODULES = 4
+# OpenCV's QR detector is scale-sensitive for exact synthetic module sizes; stick to sizes
+# covered by the decoder self-test instead of arbitrary fractional scaling.
+QR_SAFE_MODULE_PIXEL_SIZES = (60, 48, 40, 24, 20, 16, 12, 10, 8)
+
 EVENT_NAMES = {
     EVENT_IDLE: "idle",
     EVENT_SCHEDULE_OPEN: "scheduled_open",
@@ -56,6 +65,44 @@ EVENT_NAMES = {
     EVENT_HCP_VENTING: "hcp_venting",
     EVENT_SEQUENCE_DONE: "sequence_done",
 }
+
+
+def qr_payload_crc8(payload: bytes) -> int:
+    crc = 0xA5
+    for byte in payload:
+        crc ^= byte
+        for _ in range(8):
+            if crc & 0x80:
+                crc = ((crc << 1) ^ 0x07) & 0xFF
+            else:
+                crc = (crc << 1) & 0xFF
+    return crc
+
+
+def phone_sync_qr_payload(seq: int, event_code: int, elapsed_tenths: int) -> str:
+    seq &= 0xFFFFFF
+    event_code &= 0xFF
+    elapsed_tenths &= 0xFFFF
+    body = f"{QR_PAYLOAD_PREFIX}:{seq:06X}:{event_code:02X}:{elapsed_tenths:04X}"
+    crc = qr_payload_crc8(body.encode("ascii"))
+    return f"{body}:{crc:02X}"
+
+
+def parse_phone_sync_qr_payload(payload: str) -> dict[str, int]:
+    parts = payload.strip().split(":")
+    if len(parts) != 5 or parts[0] != QR_PAYLOAD_PREFIX:
+        raise ValueError("not a garage phone-sync QR payload")
+    body = ":".join(parts[:4])
+    expected_crc = qr_payload_crc8(body.encode("ascii"))
+    actual_crc = int(parts[4], 16)
+    if actual_crc != expected_crc:
+        raise ValueError("QR payload CRC mismatch")
+    return {
+        "seq": int(parts[1], 16),
+        "event_code": int(parts[2], 16),
+        "elapsed_tenths": int(parts[3], 16),
+    }
+
 
 COMMAND_EVENT = {
     "open": EVENT_COMMAND_OPEN,
@@ -722,6 +769,9 @@ class FullscreenDisplay:
         self.root.configure(background="black")
         self.canvas = tk.Canvas(self.root, background="black", highlightthickness=0)
         self.canvas.pack(fill=tk.BOTH, expand=True)
+        self.qr_encoder = cv2.QRCodeEncoder_create()
+        self.qr_cache_payload: str | None = None
+        self.qr_cache_matrix: np.ndarray | None = None
         self.root.bind("<Escape>", self.on_exit)
         self.root.bind("q", self.on_exit)
         self.root.bind("Q", self.on_exit)
@@ -776,7 +826,7 @@ class FullscreenDisplay:
             accent,
             "nw",
         )
-        self.text(w - margin, margin + line_gap, "large marker encodes seq/event/time", small_size, muted, "ne")
+        self.text(w - margin, margin + line_gap, "QR encodes seq/event/time + CRC", small_size, muted, "ne")
 
         hcp = state["hcp"]
         sequence = state["sequence"]
@@ -785,15 +835,14 @@ class FullscreenDisplay:
         if sequence["done"]:
             step_text = "done"
 
-        bottom_lines = 4
-        footer_height = margin + small_size * (bottom_lines + 0.9) + status_size * 1.4
-        marker_top = margin + line_gap * 2 + max(10, margin // 2)
-        marker_cell = self.visual_code_cell_size(w, h, margin, marker_top, footer_height)
-        pad = self.visual_code_pad(marker_cell)
-        marker_height = 4 * marker_cell + 2 * pad
-        code_x = (w - 16 * marker_cell) / 2
-        code_y = marker_top + pad
-        self.draw_visual_code(code_x, code_y, marker_cell, state)
+        footer_height = margin + small_size * 4.4
+        status_block_height = status_size + small_size + max(18, margin)
+        qr_top = margin + line_gap * 2 + max(14, margin)
+        qr_payload = phone_sync_qr_payload(self.coordinator.visual_seq, state["event_code"], state["run_elapsed_tenths"])
+        qr_matrix = self.qr_matrix(qr_payload)
+        qr_size = self.qr_size(w, h, margin, qr_top, footer_height + status_block_height, qr_matrix.shape[0])
+        qr_x = (w - qr_size) / 2
+        self.draw_qr_code(qr_x, qr_top, qr_size, qr_matrix)
 
         scheduled = state["scheduled"]
         if scheduled:
@@ -811,7 +860,7 @@ class FullscreenDisplay:
             status = "READY"
             center_color = fg
 
-        status_y = marker_top + marker_height + max(10, margin // 2)
+        status_y = qr_top + qr_size + max(10, margin // 2)
         self.text(w / 2, status_y, status, status_size, center_color, "n")
         if scheduled:
             self.draw_countdown_bar(
@@ -850,16 +899,15 @@ class FullscreenDisplay:
         if state["error"]:
             self.text(margin, status_y + status_size * 1.15, f"ERROR {state['error']}", small_size, "#ff6b6b", "nw")
 
-    def visual_code_cell_size(self, width: int, height: int, margin: int, top: int, footer_height: float) -> int:
+    def qr_size(self, width: int, height: int, margin: int, top: int, reserved_bottom: float, modules: int) -> int:
         available_width = max(320, width - 2 * margin)
-        available_height = max(220.0, height - top - footer_height)
-        by_width = available_width / 16.9
-        by_height = available_height / 4.9
-        return max(28, int(min(by_width, by_height)))
-
-    @staticmethod
-    def visual_code_pad(cell: int) -> int:
-        return max(14, int(cell * 0.45))
+        available_height = max(220.0, height - top - reserved_bottom)
+        max_size = int(min(available_width, available_height))
+        for module_px in QR_SAFE_MODULE_PIXEL_SIZES:
+            size = modules * module_px
+            if size <= max_size:
+                return size
+        return max(220, (max_size // modules) * modules)
 
     def draw_countdown_bar(self, x: float, y: float, width: float, height: float, remaining: float, total: float, action: str) -> None:
         frac = max(0.0, min(1.0, remaining / max(total, 0.1)))
@@ -872,42 +920,32 @@ class FullscreenDisplay:
         self.canvas.create_rectangle(x, y, x + width, y + height, fill="#18202b", outline="#4d5a6d", width=2)
         self.canvas.create_rectangle(x, y, x + width * frac, y + height, fill=color, outline=color)
 
-    def draw_visual_code(self, x: float, y: float, cell: int, state: dict[str, Any]) -> None:
-        cols = 16
-        rows = 4
-        pad = self.visual_code_pad(cell)
-        canvas = self.canvas
-        canvas.create_rectangle(x - pad, y - pad, x + cols * cell + pad, y + rows * cell + pad, fill="#ffffff", outline="#ffffff")
-        for fx, fy in [
-            (x - pad, y - pad),
-            (x + cols * cell, y - pad),
-            (x - pad, y + rows * cell),
-            (x + cols * cell, y + rows * cell),
-        ]:
-            canvas.create_rectangle(fx, fy, fx + pad, fy + pad, fill="#000000", outline="#000000")
-        seq = self.coordinator.visual_seq
-        event_code = state["event_code"]
-        tenth = state["run_elapsed_tenths"]
-        for row in range(rows):
-            for col in range(cols):
-                if row == 0:
-                    bit = col % 2
-                elif row == 1:
-                    bit = (seq >> col) & 1
-                elif row == 2:
-                    bit = ((seq >> (16 + col)) & 1) if col < 8 else ((event_code >> (col - 8)) & 1)
-                else:
-                    bit = (tenth >> col) & 1
-                color = "#000000" if bit else "#ffffff"
-                canvas.create_rectangle(
-                    x + col * cell + 1,
-                    y + row * cell + 1,
-                    x + (col + 1) * cell - 1,
-                    y + (row + 1) * cell - 1,
-                    fill=color,
-                    outline=color,
-                )
-        canvas.create_rectangle(x, y, x + cols * cell, y + rows * cell, outline="#000000", width=max(4, int(cell * 0.055)))
+    def draw_qr_code(self, x: float, y: float, size: int, matrix: np.ndarray) -> None:
+        modules = int(matrix.shape[0])
+        module_size = size / modules
+        self.canvas.create_rectangle(x, y, x + size, y + size, fill="#ffffff", outline="#ffffff")
+        for row in range(modules):
+            for col in range(modules):
+                if matrix[row, col] < 128:
+                    self.canvas.create_rectangle(
+                        x + col * module_size,
+                        y + row * module_size,
+                        x + (col + 1) * module_size,
+                        y + (row + 1) * module_size,
+                        fill="#000000",
+                        outline="#000000",
+                    )
+
+    def qr_matrix(self, payload: str) -> np.ndarray:
+        if getattr(self, "qr_cache_payload", None) == payload and getattr(self, "qr_cache_matrix", None) is not None:
+            return self.qr_cache_matrix
+        if not hasattr(self, "qr_encoder"):
+            self.qr_encoder = cv2.QRCodeEncoder_create()
+        matrix = self.qr_encoder.encode(payload)
+        matrix = np.pad(matrix, QR_QUIET_ZONE_MODULES, mode="constant", constant_values=255)
+        self.qr_cache_payload = payload
+        self.qr_cache_matrix = matrix
+        return matrix
 
     def text(self, x: float, y: float, text: str, size: int, color: str, anchor: str) -> None:
         self.canvas.create_text(

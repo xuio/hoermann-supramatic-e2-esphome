@@ -269,13 +269,21 @@ uv run garage-analyze-hcp-timing \
   --curve-lookup docs/research/analysis/garage-door-motion-20260527/curve_lookup.json
 ```
 
-For a new phone video capture with synchronized protocol logging, use the fullscreen sync display. Start with the door fully closed, start your phone recording with the MacBook screen visible, then press `Space`. The automatic sequence starts after a visible `15s` countdown and records full-open, full-close, vent-from-closed, open setup, vent-from-open, and final close movements while the screen prioritizes a large visual timecode marker and keeps live HCP feedback in compact text:
+For a new phone video capture with synchronized protocol logging, use the fullscreen sync display. Start with the door fully closed, start your phone recording with the MacBook screen visible, then press `Space`. The automatic sequence starts after a visible `15s` countdown and records full-open, full-close, vent-from-closed, open setup, vent-from-open, and final close movements while the screen prioritizes a large QR timecode marker and keeps live HCP feedback in compact text:
 
 ```bash
 uv run garage-phone-sync --esp-host <local-ip>
 ```
 
 Controls: `Space` starts the sequence or cancels a pending countdown, `M` emits a manual marker flash, and `Q`/`Esc` finishes the capture and downloads the ESP persistent log.
+
+The marker is a high-contrast QR code with payload CRC validation. Decode a recorded phone video with:
+
+```bash
+uv run garage-decode-phone-sync-video --video /path/to/PHONE_VIDEO.MOV
+```
+
+For timing alignment, prefer ESP-side persistent-log command/HCP timestamps over the Mac's command-request time. The QR maps video frames to the Mac display timeline; the persistent log maps command and HCP events on the ESP. Any network/API latency is handled by aligning matching command events from both logs rather than by applying a guessed fixed delay.
 
 To verify the fullscreen visuals before moving the opener, run the same tool in dry-run mode. It does not connect to the ESP, does not start persistent logging, and simulates HCP state feedback locally so the automatic sequence can complete:
 
