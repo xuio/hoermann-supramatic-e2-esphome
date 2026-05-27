@@ -136,6 +136,7 @@ class NativeApiSession:
         self.client = self.api_client_cls(
             self.host,
             self.port,
+            None,
             noise_psk=self.api_key,
             expected_name=self.expected_name,
             client_info="garage-hcp-timing-calibration",

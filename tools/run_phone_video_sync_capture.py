@@ -660,6 +660,7 @@ class NativeApiWorker(threading.Thread):
         self.client = APIClient(
             self.host,
             self.port,
+            None,
             noise_psk=self.api_key,
             expected_name=self.expected_name,
             client_info="garage-phone-video-sync-capture",
@@ -1177,6 +1178,7 @@ def start_persistent_log(coordinator: CaptureCoordinator, esp: EspHttpClient) ->
         ("persistent_log_clear", "/persistent_log/clear", 30),
         ("persistent_log_start", "/persistent_log/start", 30),
     ]:
+        print(f"{label}: requesting {path} ...", flush=True)
         result = esp.get(path, timeout=timeout, retries=2)
         print_http(label, result)
         coordinator.add_event("esp_http", label, {"status": result.status, "error": result.error, "json": result.json_data})
@@ -1185,6 +1187,7 @@ def start_persistent_log(coordinator: CaptureCoordinator, esp: EspHttpClient) ->
 
 
 def stop_and_download(coordinator: CaptureCoordinator, esp: EspHttpClient) -> None:
+    print("persistent_log_stop: requesting /persistent_log/stop ...", flush=True)
     stop = esp.get("/persistent_log/stop", timeout=30, retries=2)
     print_http("persistent_log_stop", stop)
     coordinator.add_event("esp_http", "persistent_log_stop", {"status": stop.status, "error": stop.error, "json": stop.json_data})
@@ -1196,6 +1199,7 @@ def stop_and_download(coordinator: CaptureCoordinator, esp: EspHttpClient) -> No
         "persistent-log.bin": ("/persistent_log.bin", 240, False),
     }
     for filename, (path, timeout, nonempty) in downloads.items():
+        print(f"Downloading {filename} from {path} ...", flush=True)
         result = esp.save(path, coordinator.output_dir / filename, timeout=timeout, nonempty=nonempty)
         coordinator.add_event(
             "download",
