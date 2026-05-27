@@ -15,6 +15,8 @@ import numpy as np
 from tools.run_phone_video_sync_capture import (
     EVENT_NAMES,
     QR_QUIET_ZONE_MODULES,
+    QR_SAFE_MODULE_PIXEL_SIZES,
+    QR_SEQ_MODULUS,
     create_phone_sync_qr_encoder,
     parse_phone_sync_qr_payload,
     phone_sync_qr_payload,
@@ -47,6 +49,11 @@ def parse_decoded_payload(payload: str) -> tuple[dict[str, int] | None, str]:
 
 def decode_frame(detector: cv2.QRCodeDetector, frame_image: np.ndarray, frame: int = 0, time_s: float = 0.0) -> DecodeResult:
     payload, points, _straight_qrcode = detector.detectAndDecode(frame_image)
+    if not payload:
+        retry_payload, retry_points, _retry_straight_qrcode = cv2.QRCodeDetector().detectAndDecode(frame_image)
+        if retry_payload:
+            payload = retry_payload
+            points = retry_points
     parsed, reason = parse_decoded_payload(payload)
     points_list: list[list[float]] = []
     if points is not None:
@@ -90,9 +97,11 @@ def render_synthetic_qr(seq: int, event_code: int, elapsed_tenths: int, modules_
 
 def run_self_test() -> None:
     detector = cv2.QRCodeDetector()
-    image = render_synthetic_qr(seq=0x12AB34, event_code=7, elapsed_tenths=4321)
+    seq = 0x12AB34
+    expected_seq = seq % QR_SEQ_MODULUS
+    image = render_synthetic_qr(seq=seq, event_code=7, elapsed_tenths=4321)
     result = decode_frame(detector, image)
-    if not result.valid or result.seq != 0x12AB34 or result.event_code != 7 or result.elapsed_tenths != 4321:
+    if not result.valid or result.seq != expected_seq or result.event_code != 7 or result.elapsed_tenths != 4321:
         raise SystemExit(f"Straight QR self-test failed: {json.dumps(asdict(result), sort_keys=True)}")
 
     h, w = image.shape[:2]
@@ -104,8 +113,13 @@ def run_self_test() -> None:
     mask = cv2.warpPerspective(np.full(image.shape[:2], 255, dtype=np.uint8), matrix, (canvas.shape[1], canvas.shape[0]))
     canvas[mask > 0] = warped[mask > 0]
     result = decode_frame(detector, canvas)
-    if not result.valid or result.seq != 0x12AB34 or result.event_code != 7 or result.elapsed_tenths != 4321:
+    if not result.valid or result.seq != expected_seq or result.event_code != 7 or result.elapsed_tenths != 4321:
         raise SystemExit(f"Perspective QR self-test failed: {json.dumps(asdict(result), sort_keys=True)}")
+    for module_px in QR_SAFE_MODULE_PIXEL_SIZES:
+        image = render_synthetic_qr(seq=module_px, event_code=7, elapsed_tenths=module_px, modules_px=module_px)
+        result = decode_frame(detector, image)
+        if not result.valid or result.seq != module_px or result.event_code != 7 or result.elapsed_tenths != module_px:
+            raise SystemExit(f"QR module size {module_px}px self-test failed: {json.dumps(asdict(result), sort_keys=True)}")
     print("QR timecode decoder self-test ok")
 
 

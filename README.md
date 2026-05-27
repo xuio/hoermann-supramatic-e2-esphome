@@ -277,11 +277,13 @@ uv run garage-phone-sync --esp-host <local-ip>
 
 Controls: `Space` starts the sequence or cancels a pending countdown, `M` emits a manual marker flash, and `Q`/`Esc` finishes the capture and downloads the ESP persistent log.
 
-The marker is a compact version-1 QR code with a 16-character alphanumeric payload and payload CRC validation. Decode a recorded phone video with:
+The capture screen keeps the QR code and its keepout area clear, with only rotated status text in the left and right gutters. The marker is a compact version-1 QR code with a standard quiet zone, strong error correction, a 10-character alphanumeric base36 payload, and payload CRC validation. Decode a recorded phone video with:
 
 ```bash
 uv run garage-decode-phone-sync-video --video /path/to/PHONE_VIDEO.MOV
 ```
+
+Use `--hide-side-status` for a QR-only screen, or `--show-overlay-text` only for local debugging when you are not recording calibration video.
 
 For timing alignment, prefer ESP-side persistent-log command/HCP timestamps over the Mac's command-request time. The QR maps video frames to the Mac display timeline; the persistent log maps command and HCP events on the ESP. Any network/API latency is handled by aligning matching command events from both logs rather than by applying a guessed fixed delay.
 
