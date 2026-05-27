@@ -262,6 +262,12 @@ For a new phone video capture with synchronized protocol logging, use the fullsc
 
 Controls: `Space` starts the sequence or cancels a pending countdown, `M` emits a manual marker flash, and `Q`/`Esc` finishes the capture and downloads the ESP persistent log.
 
+To verify the fullscreen visuals before moving the opener, run the same tool in dry-run mode. It does not connect to the ESP, does not start persistent logging, and simulates HCP state feedback locally so the automatic sequence can complete:
+
+```bash
+/tmp/garage-venv/bin/python tools/run_phone_video_sync_capture.py --dry-run
+```
+
 ## Protocol Diagnostics
 
 The primary YAML exposes these diagnostic entities for protocol work:

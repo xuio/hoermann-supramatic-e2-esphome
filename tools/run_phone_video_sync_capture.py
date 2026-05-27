@@ -221,6 +221,8 @@ class CaptureCoordinator:
                 "motion_timeout_s": args.motion_timeout,
                 "cover_object_id": args.cover_object_id,
                 "automatic_sequence": args.sequence,
+                "dry_run": args.dry_run,
+                "dry_run_motion_duration_s": args.dry_run_motion_duration,
             },
             "events": [],
         }
@@ -389,7 +391,7 @@ class CaptureCoordinator:
             self.set_error(f"Timed out waiting for HCP state {target_state}")
             self.request_exit()
 
-    def tick(self, worker: "NativeApiWorker") -> None:
+    def tick(self, worker: Any) -> None:
         due_action: str | None = None
         due_label: str | None = None
         with self.lock:
@@ -590,8 +592,128 @@ class NativeApiWorker(threading.Thread):
         self.stop_requested.set()
 
 
+class DryRunWorker:
+    """No-op command worker that simulates enough HCP feedback for visual checks."""
+
+    def __init__(self, coordinator: CaptureCoordinator, motion_duration_s: float) -> None:
+        self.coordinator = coordinator
+        self.motion_duration_s = motion_duration_s
+        self.ready = threading.Event()
+        self.ready.set()
+        self.stopped = threading.Event()
+        self.lock = threading.Lock()
+        self.timers: list[threading.Timer] = []
+
+    def start(self) -> None:
+        self.coordinator.add_event(
+            "dry_run",
+            "started",
+            {"motion_duration_s": self.motion_duration_s, "note": "No ESP connection and no opener commands"},
+        )
+        self._publish_state("Closed", position=0.0, operation="IDLE", raw="0xD00002")
+
+    def is_alive(self) -> bool:
+        return False
+
+    def join(self, timeout: float | None = None) -> None:  # noqa: ARG002
+        return
+
+    def stop(self) -> None:
+        self.stopped.set()
+        with self.lock:
+            timers = list(self.timers)
+            self.timers.clear()
+        for timer in timers:
+            timer.cancel()
+
+    def submit_cover_command(self, action: str) -> None:
+        if self.stopped.is_set():
+            return
+        plan = self._simulation_plan(action)
+        self.coordinator.add_event(
+            "dry_run_command",
+            f"{action}_simulated",
+            {"action": action, "duration_s": self.motion_duration_s, "plan": plan},
+        )
+        self._publish_state(
+            plan["moving_state"],
+            position=plan["moving_position"],
+            operation=plan["moving_operation"],
+            raw=plan["moving_raw"],
+        )
+        timer = threading.Timer(self.motion_duration_s, self._finish_command, args=(plan,))
+        with self.lock:
+            self.timers.append(timer)
+        timer.start()
+
+    def _finish_command(self, plan: dict[str, Any]) -> None:
+        if self.stopped.is_set():
+            return
+        self._publish_state(
+            plan["target_state"],
+            position=plan["target_position"],
+            operation="IDLE",
+            raw=plan["target_raw"],
+        )
+        self.coordinator.add_event("dry_run_command", "target_state_simulated", plan)
+        with self.lock:
+            self.timers = [timer for timer in self.timers if timer.is_alive()]
+
+    def _simulation_plan(self, action: str) -> dict[str, Any]:
+        if action == "open":
+            return {
+                "moving_state": "Opening",
+                "target_state": "Open",
+                "moving_position": 0.5,
+                "target_position": 1.0,
+                "moving_operation": "OPENING",
+                "moving_raw": "0xD00040",
+                "target_raw": "0xD00001",
+            }
+        if action == "close":
+            return {
+                "moving_state": "Closing",
+                "target_state": "Closed",
+                "moving_position": 0.5,
+                "target_position": 0.0,
+                "moving_operation": "CLOSING",
+                "moving_raw": "0xD00060",
+                "target_raw": "0xD00002",
+            }
+        if action == "vent":
+            moving_state = "Opening"
+            moving_operation = "OPENING"
+            with self.coordinator.lock:
+                current_step = (
+                    self.coordinator.sequence_steps[self.coordinator.sequence_index]
+                    if 0 <= self.coordinator.sequence_index < len(self.coordinator.sequence_steps)
+                    else {}
+                )
+            if current_step.get("label") == "vent_from_open":
+                moving_state = "Closing"
+                moving_operation = "CLOSING"
+            return {
+                "moving_state": moving_state,
+                "target_state": "Venting",
+                "moving_position": 0.6,
+                "target_position": 0.2,
+                "moving_operation": moving_operation,
+                "moving_raw": "0xD00080",
+                "target_raw": "0xD00081",
+            }
+        raise ValueError(f"Unsupported cover action: {action}")
+
+    def _publish_state(self, state: str, *, position: float, operation: str, raw: str) -> None:
+        self.coordinator.update_hcp_state("garage_door_valid_hcp_broadcast", {"state": True})
+        self.coordinator.update_hcp_state("garage_door_raw_hcp_status_hex", {"state": raw})
+        self.coordinator.update_hcp_state("garage_door_obstruction_state", {"state": False})
+        self.coordinator.update_hcp_state("garage_door_light", {"state": False})
+        self.coordinator.update_hcp_state("garage_door", {"position": position, "current_operation": operation})
+        self.coordinator.update_hcp_state("garage_door_state", {"state": state})
+
+
 class FullscreenDisplay:
-    def __init__(self, coordinator: CaptureCoordinator, worker: NativeApiWorker) -> None:
+    def __init__(self, coordinator: CaptureCoordinator, worker: Any) -> None:
         self.coordinator = coordinator
         self.worker = worker
         self.root = tk.Tk()
@@ -642,7 +764,8 @@ class FullscreenDisplay:
         big_size = max(54, int(h * 0.12))
         code_cell = max(24, int(min(w, h) * 0.035))
 
-        self.text(margin, margin, "GARAGE SYNC", title_size, fg, "nw")
+        title = "GARAGE SYNC  DRY RUN" if self.coordinator.args.dry_run else "GARAGE SYNC"
+        self.text(margin, margin, title, title_size, fg, "nw")
         self.text(margin, margin + title_size + 8, f"RUN {state['run_id']}", body_size, muted, "nw")
         self.text(
             margin,
@@ -705,7 +828,8 @@ class FullscreenDisplay:
             "nw",
         )
 
-        instructions = f"SPACE=start/cancel   automatic start delay={self.coordinator.args.initial_delay:g}s   M=marker flash   Q/Esc=finish"
+        mode = "DRY RUN   " if self.coordinator.args.dry_run else ""
+        instructions = f"{mode}SPACE=start/cancel   automatic start delay={self.coordinator.args.initial_delay:g}s   M=marker flash   Q/Esc=finish"
         self.text(w / 2, h - margin - body_size, instructions, int(body_size * 0.85), "#d7dee8", "s")
         if state["error"]:
             self.text(margin, h - margin - body_size * 2.4, f"ERROR {state['error']}", body_size, "#ff6b6b", "sw")
@@ -837,6 +961,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--initial-delay", type=float, default=15.0, help="Delay after Space before the first automatic command")
     parser.add_argument("--settle-delay", type=float, default=10.0, help="Delay between one reached HCP state and the next command")
     parser.add_argument("--motion-timeout", type=float, default=90.0, help="Maximum seconds to wait for each HCP target state")
+    parser.add_argument("--dry-run", action="store_true", help="Show the fullscreen visuals and simulated HCP feedback without contacting the ESP or moving the opener")
+    parser.add_argument("--dry-run-motion-duration", type=float, default=3.0, help="Seconds before each simulated dry-run command reaches its target state")
     parser.add_argument(
         "--sequence",
         default="full_and_vent",
@@ -849,20 +975,28 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    if not args.yes:
+    if not args.yes and not args.dry_run:
         print("This tool will run an automatic garage-door movement sequence from fullscreen input.")
         input("Confirm you are physically present, the door path is clear, and press Enter to continue: ")
+    elif args.dry_run:
+        print("Dry run mode: no ESP connection, no persistent logging, and no opener commands will be sent.")
 
     timestamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
-    output_dir = args.output_dir / f"phone-sync-capture-{timestamp}"
+    prefix = "phone-sync-dry-run" if args.dry_run else "phone-sync-capture"
+    output_dir = args.output_dir / f"{prefix}-{timestamp}"
     output_dir.mkdir(parents=True, exist_ok=True)
     coordinator = CaptureCoordinator(args, output_dir)
-    esp = EspHttpClient(args.esp_host, args.esp_http_port)
-    api_key = load_api_key(args)
-    worker = NativeApiWorker(coordinator, args.esp_host, args.esp_api_port, api_key, args.expected_name, args.cover_object_id)
+    esp = None if args.dry_run else EspHttpClient(args.esp_host, args.esp_http_port)
+    worker: Any
+    if args.dry_run:
+        worker = DryRunWorker(coordinator, args.dry_run_motion_duration)
+    else:
+        api_key = load_api_key(args)
+        worker = NativeApiWorker(coordinator, args.esp_host, args.esp_api_port, api_key, args.expected_name, args.cover_object_id)
 
     try:
-        start_persistent_log(coordinator, esp)
+        if esp is not None:
+            start_persistent_log(coordinator, esp)
         worker.start()
         if not worker.ready.wait(timeout=20):
             raise SystemExit("Timed out connecting to ESPHome native API")
@@ -878,7 +1012,8 @@ def main() -> int:
         worker.stop()
         if worker.is_alive():
             worker.join(timeout=5)
-        stop_and_download(coordinator, esp)
+        if esp is not None:
+            stop_and_download(coordinator, esp)
         coordinator.manifest["finished_at"] = utc_now_iso()
         coordinator.save_manifest()
         coordinator.close()
