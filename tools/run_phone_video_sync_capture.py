@@ -321,6 +321,8 @@ class CaptureCoordinator:
                 "initial_delay_s": args.initial_delay,
                 "settle_delay_s": args.settle_delay,
                 "motion_timeout_s": args.motion_timeout,
+                "vent_observe_duration_s": args.vent_observe_duration,
+                "vent_motion_timeout_s": args.vent_motion_timeout,
                 "cover_object_id": args.cover_object_id,
                 "automatic_sequence": args.sequence,
                 "dry_run": args.dry_run,
@@ -475,23 +477,56 @@ class CaptureCoordinator:
         self.add_event("sequence", "waiting_for_state", {"index": self.sequence_index, "target_state": step["target_state"], "step": step})
 
     def service_sequence_wait_(self) -> None:
+        advance = False
+        event_label = ""
+        event_data: dict[str, Any] = {}
         with self.lock:
             target_state = self.sequence_waiting_for_state
             wait_started = self.sequence_wait_started_monotonic
             current_state = self.last_state_text
             index = self.sequence_index
+            step = self.sequence_steps[index] if 0 <= index < len(self.sequence_steps) else {}
+            cover_operation = self.hcp.get("cover_operation")
         if not target_state or wait_started is None:
             return
+        wait_elapsed = time.monotonic() - wait_started
         if current_state.lower() == target_state.lower():
-            self.add_event("sequence", "target_state_reached", {"index": index, "target_state": target_state})
+            advance = True
+            event_label = "target_state_reached"
+            event_data = {"index": index, "target_state": target_state}
+        elif target_state.lower() == "venting" and wait_elapsed >= self.args.vent_observe_duration and self.is_idle_cover_operation(cover_operation):
+            advance = True
+            event_label = "vent_observe_duration_elapsed"
+            event_data = {
+                "index": index,
+                "target_state": target_state,
+                "current_state": current_state,
+                "cover_operation": cover_operation,
+                "elapsed_s": wait_elapsed,
+                "step": step,
+            }
+        if advance:
+            self.add_event("sequence", event_label, event_data)
             with self.lock:
                 self.sequence_waiting_for_state = None
                 self.sequence_wait_started_monotonic = None
             self.advance_sequence_()
             return
-        if time.monotonic() - wait_started > self.args.motion_timeout:
+        timeout_s = self.args.vent_motion_timeout if target_state.lower() == "venting" else self.args.motion_timeout
+        if wait_elapsed > timeout_s:
             self.set_error(f"Timed out waiting for HCP state {target_state}")
             self.request_exit()
+
+    @staticmethod
+    def is_idle_cover_operation(value: Any) -> bool:
+        if value is None:
+            return True
+        if isinstance(value, str):
+            return value.strip().lower() in {"", "0", "idle", "cover_operation_idle"}
+        try:
+            return int(value) == 0
+        except (TypeError, ValueError):
+            return False
 
     def tick(self, worker: Any) -> None:
         due_action: str | None = None
@@ -570,7 +605,10 @@ class CaptureCoordinator:
                 if scheduled_progress is not None:
                     current_step_progress = scheduled_progress
                 elif wait_elapsed_s is not None:
-                    current_step_progress = min(1.0, wait_elapsed_s / max(0.1, self.args.motion_timeout))
+                    wait_progress_total_s = self.args.motion_timeout
+                    if self.sequence_waiting_for_state and self.sequence_waiting_for_state.lower() == "venting":
+                        wait_progress_total_s = self.args.vent_observe_duration
+                    current_step_progress = min(1.0, wait_elapsed_s / max(0.1, wait_progress_total_s))
             sequence_count = len(self.sequence_steps)
             if self.sequence_done:
                 automation_progress = 1.0
@@ -1247,6 +1285,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--initial-delay", type=float, default=15.0, help="Delay after Space before the first automatic command")
     parser.add_argument("--settle-delay", type=float, default=10.0, help="Delay between one reached HCP state and the next command")
     parser.add_argument("--motion-timeout", type=float, default=90.0, help="Maximum seconds to wait for each HCP target state")
+    parser.add_argument("--vent-observe-duration", type=float, default=20.0, help="Seconds to keep recording after a vent command when HCP reports only Stopped/idle instead of Venting")
+    parser.add_argument("--vent-motion-timeout", type=float, default=35.0, help="Maximum seconds to wait for a vent command before aborting if the opener still appears to be moving")
     parser.add_argument("--dry-run", action="store_true", help="Show the fullscreen visuals and simulated HCP feedback without contacting the ESP or moving the opener")
     parser.add_argument("--dry-run-motion-duration", type=float, default=3.0, help="Seconds before each simulated dry-run command reaches its target state")
     parser.add_argument("--startup-check", action="store_true", help="Start persistent logging and connect to ESPHome, then stop and exit without opening the UI or sending commands")
