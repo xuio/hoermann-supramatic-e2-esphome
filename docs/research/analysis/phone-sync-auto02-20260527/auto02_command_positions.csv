@@ -1,0 +1,14 @@
+run_elapsed_s,video_time_s,label,data,measured_position_percent
+39.42156658321619,4.6221321789323895,cover_target_sent,"{""action"": ""target"", ""target_position"": 25.0}",0.0
+46.28814833331853,11.48871392903473,cover_close_sent,"{""action"": ""close"", ""target_position"": null}",33.300477217682065
+58.35880637541413,23.559371971130332,cover_target_sent,"{""action"": ""target"", ""target_position"": 50.0}",0.23479563968039935
+67.57719125039876,32.777756846114954,cover_close_sent,"{""action"": ""close"", ""target_position"": null}",60.87800127415952
+84.6697733332403,49.8703389289565,cover_target_sent,"{""action"": ""target"", ""target_position"": 75.0}",0.16089091931797975
+96.42894945805892,61.62951505377512,cover_close_sent,"{""action"": ""close"", ""target_position"": null}",49.82700491144548
+111.68157666735351,76.88214226306971,cover_open_sent,"{""action"": ""open"", ""target_position"": null}",0.4239569977256675
+133.35077408328652,98.55133967900272,cover_target_sent,"{""action"": ""target"", ""target_position"": 75.0}",99.99269581984838
+140.69263445818797,105.89320005390417,cover_open_sent,"{""action"": ""open"", ""target_position"": null}",67.53886983507869
+149.98932179203257,115.18988738774877,cover_target_sent,"{""action"": ""target"", ""target_position"": 50.0}",99.84898817530802
+161.699627708178,126.90019330389421,cover_open_sent,"{""action"": ""open"", ""target_position"": null}",41.77755080971984
+175.2645531250164,140.4651187207326,cover_target_sent,"{""action"": ""target"", ""target_position"": 25.0}",100.0
+191.40072900010273,156.60129459581893,cover_close_sent,"{""action"": ""close"", ""target_position"": null}",

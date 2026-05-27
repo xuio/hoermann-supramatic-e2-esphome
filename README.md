@@ -301,6 +301,8 @@ Use `--hide-side-status` for a QR-only screen, or `--show-overlay-text` only for
 
 For timing alignment, prefer ESP-side persistent-log command/HCP timestamps over the Mac's command-request time. The QR maps video frames to the Mac display timeline; the persistent log maps command and HCP events on the ESP. Any network/API latency is handled by aligning matching command events from both logs rather than by applying a guessed fixed delay.
 
+Position estimates now wait for HCP endpoint departure when moving away from a known open or closed end state. If the opener stays at the old endpoint after a command, the firmware cancels the estimate instead of sending a timed stop against a door that never moved.
+
 To verify the fullscreen visuals before moving the opener, run the same tool in dry-run mode. It does not connect to the ESP, does not start persistent logging, and simulates HCP state feedback locally so the automatic sequence can complete:
 
 ```bash

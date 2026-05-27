@@ -1,0 +1,375 @@
+{
+  "capture_bundle": "captures/phone-sync-capture-20260527-204730",
+  "command_positions": [
+    {
+      "data": {
+        "action": "target",
+        "target_position": 25.0
+      },
+      "label": "cover_target_sent",
+      "measured_position_percent": 0.0,
+      "run_elapsed_s": 39.42156658321619,
+      "video_time_s": 4.6221321789323895
+    },
+    {
+      "data": {
+        "action": "close",
+        "target_position": null
+      },
+      "label": "cover_close_sent",
+      "measured_position_percent": 33.300477217682065,
+      "run_elapsed_s": 46.28814833331853,
+      "video_time_s": 11.48871392903473
+    },
+    {
+      "data": {
+        "action": "target",
+        "target_position": 50.0
+      },
+      "label": "cover_target_sent",
+      "measured_position_percent": 0.23479563968039935,
+      "run_elapsed_s": 58.35880637541413,
+      "video_time_s": 23.559371971130332
+    },
+    {
+      "data": {
+        "action": "close",
+        "target_position": null
+      },
+      "label": "cover_close_sent",
+      "measured_position_percent": 60.87800127415952,
+      "run_elapsed_s": 67.57719125039876,
+      "video_time_s": 32.777756846114954
+    },
+    {
+      "data": {
+        "action": "target",
+        "target_position": 75.0
+      },
+      "label": "cover_target_sent",
+      "measured_position_percent": 0.16089091931797975,
+      "run_elapsed_s": 84.6697733332403,
+      "video_time_s": 49.8703389289565
+    },
+    {
+      "data": {
+        "action": "close",
+        "target_position": null
+      },
+      "label": "cover_close_sent",
+      "measured_position_percent": 49.82700491144548,
+      "run_elapsed_s": 96.42894945805892,
+      "video_time_s": 61.62951505377512
+    },
+    {
+      "data": {
+        "action": "open",
+        "target_position": null
+      },
+      "label": "cover_open_sent",
+      "measured_position_percent": 0.4239569977256675,
+      "run_elapsed_s": 111.68157666735351,
+      "video_time_s": 76.88214226306971
+    },
+    {
+      "data": {
+        "action": "target",
+        "target_position": 75.0
+      },
+      "label": "cover_target_sent",
+      "measured_position_percent": 99.99269581984838,
+      "run_elapsed_s": 133.35077408328652,
+      "video_time_s": 98.55133967900272
+    },
+    {
+      "data": {
+        "action": "open",
+        "target_position": null
+      },
+      "label": "cover_open_sent",
+      "measured_position_percent": 67.53886983507869,
+      "run_elapsed_s": 140.69263445818797,
+      "video_time_s": 105.89320005390417
+    },
+    {
+      "data": {
+        "action": "target",
+        "target_position": 50.0
+      },
+      "label": "cover_target_sent",
+      "measured_position_percent": 99.84898817530802,
+      "run_elapsed_s": 149.98932179203257,
+      "video_time_s": 115.18988738774877
+    },
+    {
+      "data": {
+        "action": "open",
+        "target_position": null
+      },
+      "label": "cover_open_sent",
+      "measured_position_percent": 41.77755080971984,
+      "run_elapsed_s": 161.699627708178,
+      "video_time_s": 126.90019330389421
+    },
+    {
+      "data": {
+        "action": "target",
+        "target_position": 25.0
+      },
+      "label": "cover_target_sent",
+      "measured_position_percent": 100.0,
+      "run_elapsed_s": 175.2645531250164,
+      "video_time_s": 140.4651187207326
+    },
+    {
+      "data": {
+        "action": "close",
+        "target_position": null
+      },
+      "label": "cover_close_sent",
+      "measured_position_percent": null,
+      "run_elapsed_s": 191.40072900010273,
+      "video_time_s": 156.60129459581893
+    }
+  ],
+  "endpoint_windows_run_elapsed_s": {
+    "closed": [
+      [
+        34.8,
+        39.35
+      ],
+      [
+        56.9,
+        58.25
+      ],
+      [
+        83.35,
+        84.55
+      ],
+      [
+        110.45,
+        111.55
+      ]
+    ],
+    "open": [
+      [
+        132.05,
+        133.25
+      ],
+      [
+        148.65,
+        149.85
+      ],
+      [
+        174.0,
+        175.15
+      ]
+    ]
+  },
+  "event_comparison": [
+    {
+      "event_data": {
+        "cover_position": 25.0,
+        "elapsed_s": 5.794145749881864,
+        "index": 0,
+        "step": {
+          "action": "target",
+          "label": "target_25_from_closed",
+          "target_position": 25.0,
+          "target_state": "Position"
+        },
+        "target_position": 25.0,
+        "tolerance_percent": 3.0
+      },
+      "label": "target_position_reached",
+      "measured_position_percent": 33.25542015670941,
+      "run_elapsed_s": 45.21276700031012,
+      "video_time_s": 10.413332596026322
+    },
+    {
+      "event_data": {
+        "index": 1,
+        "target_state": "Closed"
+      },
+      "label": "target_state_reached",
+      "measured_position_percent": 0.23319414618290868,
+      "run_elapsed_s": 57.247736083343625,
+      "video_time_s": 22.448301679059824
+    },
+    {
+      "event_data": {
+        "cover_position": 50.0,
+        "elapsed_s": 8.141387125011533,
+        "index": 2,
+        "step": {
+          "action": "target",
+          "label": "target_50_from_closed",
+          "target_position": 50.0,
+          "target_state": "Position"
+        },
+        "target_position": 50.0,
+        "tolerance_percent": 3.0
+      },
+      "label": "target_position_reached",
+      "measured_position_percent": 60.350590764014115,
+      "run_elapsed_s": 66.49605466704816,
+      "video_time_s": 31.696620262764355
+    },
+    {
+      "event_data": {
+        "index": 3,
+        "target_state": "Closed"
+      },
+      "label": "target_state_reached",
+      "measured_position_percent": 0.19657111130062227,
+      "run_elapsed_s": 83.58986483328044,
+      "video_time_s": 48.79043042899664
+    },
+    {
+      "event_data": {
+        "cover_position": 75.0,
+        "elapsed_s": 10.65254204114899,
+        "index": 4,
+        "step": {
+          "action": "target",
+          "label": "target_75_from_closed",
+          "target_position": 75.0,
+          "target_state": "Position"
+        },
+        "target_position": 75.0,
+        "tolerance_percent": 3.0
+      },
+      "label": "target_position_reached",
+      "measured_position_percent": 49.81555462783125,
+      "run_elapsed_s": 95.31733095832169,
+      "video_time_s": 60.51789655403789
+    },
+    {
+      "event_data": {
+        "index": 5,
+        "target_state": "Closed"
+      },
+      "label": "target_state_reached",
+      "measured_position_percent": 0.426141687776752,
+      "run_elapsed_s": 110.60213604243472,
+      "video_time_s": 75.80270163815092
+    },
+    {
+      "event_data": {
+        "index": 6,
+        "target_state": "Open"
+      },
+      "label": "target_state_reached",
+      "measured_position_percent": 99.99371865222618,
+      "run_elapsed_s": 132.2341451253742,
+      "video_time_s": 97.4347107210904
+    },
+    {
+      "event_data": {
+        "cover_position": 75.0,
+        "elapsed_s": 6.286555165890604,
+        "index": 7,
+        "step": {
+          "action": "target",
+          "label": "target_75_from_open",
+          "target_position": 75.0,
+          "target_state": "Position"
+        },
+        "target_position": 75.0,
+        "tolerance_percent": 3.0
+      },
+      "label": "target_position_reached",
+      "measured_position_percent": 67.67232199791455,
+      "run_elapsed_s": 139.62999100005254,
+      "video_time_s": 104.83055659576874
+    },
+    {
+      "event_data": {
+        "index": 8,
+        "target_state": "Open"
+      },
+      "label": "target_state_reached",
+      "measured_position_percent": 99.87576852133576,
+      "run_elapsed_s": 148.85176712507382,
+      "video_time_s": 114.05233272079002
+    },
+    {
+      "event_data": {
+        "cover_position": 50.0,
+        "elapsed_s": 10.606731458101422,
+        "index": 9,
+        "step": {
+          "action": "target",
+          "label": "target_50_from_open",
+          "target_position": 50.0,
+          "target_state": "Position"
+        },
+        "target_position": 50.0,
+        "tolerance_percent": 3.0
+      },
+      "label": "target_position_reached",
+      "measured_position_percent": 41.84214381215447,
+      "run_elapsed_s": 160.5874303751625,
+      "video_time_s": 125.78799597087871
+    },
+    {
+      "event_data": {
+        "index": 10,
+        "target_state": "Open"
+      },
+      "label": "target_state_reached",
+      "measured_position_percent": 100.0,
+      "run_elapsed_s": 174.159995125141,
+      "video_time_s": 139.3605607208572
+    },
+    {
+      "event_data": {
+        "cover_position": 25.0,
+        "elapsed_s": 15.02012479212135,
+        "index": 11,
+        "step": {
+          "action": "target",
+          "label": "target_25_from_open",
+          "target_position": 25.0,
+          "target_state": "Position"
+        },
+        "target_position": 25.0,
+        "tolerance_percent": 3.0
+      },
+      "label": "target_position_reached",
+      "measured_position_percent": null,
+      "run_elapsed_s": 190.27500766701996,
+      "video_time_s": 155.47557326273616
+    }
+  ],
+  "marker_endpoints": {
+    "10": {
+      "closed": [
+        359.7585318047351,
+        1364.4801424480966
+      ],
+      "open": [
+        486.1558852947473,
+        242.49852562951295
+      ]
+    },
+    "11": {
+      "closed": [
+        158.16522692843589,
+        1438.2974185272492
+      ],
+      "open": [
+        241.59509448065066,
+        195.74848939564762
+      ]
+    }
+  },
+  "qr_offset_run_elapsed_minus_video_s": 34.7994344042838,
+  "qr_offset_samples": 156,
+  "video": "uncommitted-videos/phone-sync-auto02.mov",
+  "video_duration_s": 149.403333,
+  "video_run_elapsed_range_s": [
+    34.7994344042838,
+    184.2027674042838
+  ]
+}

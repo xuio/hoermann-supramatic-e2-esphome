@@ -49,9 +49,10 @@ These values show the active calibration from the cover component. You can still
 
 - Fully open and fully close still use the native HCP open/close commands.
 - Intermediate targets move in the needed direction, estimate travel progress, then send stop at the estimated target.
-- The movement timer is armed by the Home Assistant command, but it does not start counting from the request timestamp. It starts after the one-shot HCP command is actually sent in a status response.
+- The movement timer is armed by the Home Assistant command, but it does not start counting from the request timestamp. It starts after the one-shot HCP command is actually sent in a status response. When moving away from a known `Open` or `Closed` end state, the estimator also waits until the HCP status leaves that old endpoint; this prevents timed stop/follow-up commands if the opener ignores a close/open command.
 - The visible position remains at the start value during the configured start delay, then advances through the configured empirical motion curve over the visible motion duration.
 - During the short start/prewarn window after a command is sent, old opposite end-state broadcasts are ignored so an intermediate target is not discarded before movement is reported.
+- If HCP stays at the old endpoint for several seconds after an endpoint-departure command, the firmware cancels the estimate and leaves the position at the known endpoint instead of pretending movement happened.
 - Ambiguous E2 `stopped` / `0x0000` status is ignored while an estimated movement is active. Captures showed the E2 can emit that value during a close attempt, so treating it as a real stop breaks calibration and percentage control.
 - New targets in the current travel direction retarget the active estimate. A target in the opposite direction first sends stop and requires a second explicit command after the door stops.
 - After an estimated intermediate stop, follow-up open/close commands are allowed from the cover's own estimated intermediate position even if the HCP broadcast still decodes as `0x0000`; this is required for reset moves between percentage tests.

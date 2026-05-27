@@ -168,6 +168,17 @@ void UAPBridgeCover::loop() {
     this->service_pending_movement_();
   }
 
+  if (this->waiting_for_departure_) {
+    this->service_departure_wait_();
+    if (this->waiting_for_departure_) {
+      if (millis() - this->last_publish_time_ >= this->position_publish_interval_ms_) {
+        this->last_publish_time_ = millis();
+        this->publish_if_changed_(true, false);
+      }
+      return;
+    }
+  }
+
   if (this->current_operation == cover::COVER_OPERATION_IDLE) {
     return;
   }
@@ -214,6 +225,12 @@ void UAPBridgeCover::control(const cover::CoverCall& call) {
     if (parent_->action_stop()) {
       if (this->time_based_position_ && this->pending_movement_) {
         this->clear_pending_movement_("explicit stop command");
+        this->publish_if_changed_(true, false);
+      } else if (this->time_based_position_ && this->waiting_for_departure_) {
+        this->clear_departure_wait_("explicit stop command");
+        this->current_operation = cover::COVER_OPERATION_IDLE;
+        this->target_position_ = this->position;
+        this->movement_started_ms_ = 0;
         this->publish_if_changed_(true, false);
       } else if (this->time_based_position_) {
         this->stop_estimated_movement_("explicit stop command");
@@ -301,8 +318,8 @@ void UAPBridgeCover::control_time_based_position_(float target) {
   if (this->pending_movement_) {
     this->service_pending_movement_();
   }
-  if (this->current_operation != cover::COVER_OPERATION_IDLE) {
-    this->recompute_position_();
+  if (this->waiting_for_departure_) {
+    this->service_departure_wait_();
   }
 
   if (this->is_closed_target_(target)) {
@@ -342,6 +359,49 @@ void UAPBridgeCover::control_time_based_position_(float target) {
       this->publish_if_changed_(true, false);
       return;
     }
+  }
+
+  if (this->waiting_for_departure_) {
+    if (std::fabs(target - this->position) <= this->position_deadband_) {
+      if (this->parent_->action_stop()) {
+        this->clear_departure_wait_("Home Assistant target reached before HCP departure");
+        this->current_operation = cover::COVER_OPERATION_IDLE;
+        this->target_position_ = this->position;
+        this->movement_started_ms_ = 0;
+        this->publish_if_changed_(true, false);
+      } else {
+        ESP_LOGW(TAG, "Could not cancel departure wait for requested %.0f%%", target * 100.0f);
+        this->publish_if_changed_(true, false);
+      }
+      return;
+    }
+
+    if (operation == this->departure_operation_) {
+      this->departure_target_position_ = target;
+      this->target_position_ = target;
+      ESP_LOGI(TAG, "Retargeted departure wait to %.0f%%", target * 100.0f);
+      this->publish_if_changed_(true, false);
+      return;
+    }
+
+    if (this->parent_->action_stop()) {
+      this->clear_departure_wait_("opposite direction request before HCP departure");
+      this->current_operation = cover::COVER_OPERATION_IDLE;
+      this->target_position_ = this->position;
+      this->movement_started_ms_ = 0;
+      ESP_LOGW(TAG, "Stopped pending departure before reversing direction; send the position request again");
+      this->publish_if_changed_(true, false);
+      return;
+    } else {
+      ESP_LOGW(TAG, "Rejected reverse position request %.0f%% because departure wait could not be cancelled",
+               target * 100.0f);
+      this->publish_if_changed_(true, false);
+      return;
+    }
+  }
+
+  if (this->current_operation != cover::COVER_OPERATION_IDLE) {
+    this->recompute_position_();
   }
 
   if (this->current_operation == cover::COVER_OPERATION_IDLE && std::fabs(target - this->position) <= this->position_deadband_) {
@@ -402,6 +462,14 @@ void UAPBridgeCover::control_time_based_position_(float target) {
 
 void UAPBridgeCover::handle_time_based_event_() {
   const auto state = this->parent_->get_state();
+
+  if (this->waiting_for_departure_) {
+    this->service_departure_wait_();
+    if (this->waiting_for_departure_) {
+      this->previousState_ = state;
+      return;
+    }
+  }
 
   switch (state) {
     case UAPBridge::hoermann_state_t::hoermann_state_open:
@@ -490,7 +558,12 @@ void UAPBridgeCover::service_pending_movement_() {
   if (this->parent_->get_command_sequence() != this->pending_command_sequence_) {
     const auto operation = this->pending_operation_;
     const float target = this->pending_target_position_;
+    const auto state = this->parent_->get_state();
     this->clear_pending_movement_("HCP command was transmitted");
+    if (this->should_wait_for_departure_(operation, state)) {
+      this->start_departure_wait_(operation, target, state, "HCP command was transmitted");
+      return;
+    }
     this->start_estimated_movement_(operation, target, "HCP command was transmitted");
     return;
   }
@@ -513,8 +586,86 @@ void UAPBridgeCover::clear_pending_movement_(const char *reason) {
   this->pending_operation_ = cover::COVER_OPERATION_IDLE;
 }
 
+void UAPBridgeCover::start_departure_wait_(cover::CoverOperation operation, float target,
+                                           UAPBridge::hoermann_state_t old_state, const char *reason) {
+  this->waiting_for_departure_ = true;
+  this->departure_operation_ = operation;
+  this->departure_target_position_ = clamp(target, 0.0f, 1.0f);
+  this->departure_old_state_ = old_state;
+  this->departure_wait_started_ms_ = millis();
+  this->target_position_ = this->departure_target_position_;
+  this->current_operation = operation;
+  this->waiting_for_end_state_ = false;
+  this->end_state_wait_started_ms_ = 0;
+  this->movement_start_grace_until_ms_ = 0;
+  this->movement_started_ms_ = 0;
+  this->travel_measurement_active_ = false;
+  ESP_LOGI(TAG, "Waiting for HCP state to leave %s before estimating %s toward %.0f%%: %s",
+           old_state == UAPBridge::hoermann_state_t::hoermann_state_open ? "open" : "closed",
+           operation == cover::COVER_OPERATION_OPENING ? "opening" : "closing",
+           this->departure_target_position_ * 100.0f, reason);
+  this->publish_if_changed_(true, false);
+}
+
+void UAPBridgeCover::service_departure_wait_() {
+  if (!this->waiting_for_departure_) {
+    return;
+  }
+
+  const auto state = this->parent_->get_state();
+  if (state != this->departure_old_state_) {
+    const auto operation = this->departure_operation_;
+    const float target = this->departure_target_position_;
+    const bool movement_confirmed = state == UAPBridge::hoermann_state_t::hoermann_state_opening ||
+                                    state == UAPBridge::hoermann_state_t::hoermann_state_closing;
+    this->clear_departure_wait_("HCP left previous end state");
+    if (operation == cover::COVER_OPERATION_OPENING && state == UAPBridge::hoermann_state_t::hoermann_state_open) {
+      this->sync_known_position_(cover::COVER_OPEN, "HCP open end state while waiting for departure");
+      return;
+    }
+    if (operation == cover::COVER_OPERATION_CLOSING && state == UAPBridge::hoermann_state_t::hoermann_state_closed) {
+      this->sync_known_position_(cover::COVER_CLOSED, "HCP closed end state while waiting for departure");
+      return;
+    }
+    this->start_estimated_movement_(operation, target, "HCP left previous end state", movement_confirmed);
+    return;
+  }
+
+  const uint32_t start_delay = this->start_delay_for_operation_(this->departure_operation_);
+  const uint32_t timeout_ms = std::max<uint32_t>(start_delay + 5000, 8000);
+  if (millis() - this->departure_wait_started_ms_ <= timeout_ms) {
+    return;
+  }
+
+  ESP_LOGW(TAG, "HCP stayed at previous end state for %.1fs after command; cancelling estimated movement",
+           timeout_ms / 1000.0f);
+  this->clear_departure_wait_("HCP did not leave previous end state after command");
+  this->target_position_ = this->position;
+  this->current_operation = cover::COVER_OPERATION_IDLE;
+  this->publish_if_changed_(true, false);
+}
+
+void UAPBridgeCover::clear_departure_wait_(const char *reason) {
+  if (!this->waiting_for_departure_) {
+    return;
+  }
+  ESP_LOGD(TAG, "Cleared HCP departure wait: %s", reason);
+  this->waiting_for_departure_ = false;
+  this->departure_operation_ = cover::COVER_OPERATION_IDLE;
+  this->departure_wait_started_ms_ = 0;
+}
+
+bool UAPBridgeCover::should_wait_for_departure_(cover::CoverOperation operation,
+                                                UAPBridge::hoermann_state_t state) const {
+  return (operation == cover::COVER_OPERATION_OPENING &&
+          state == UAPBridge::hoermann_state_t::hoermann_state_closed) ||
+         (operation == cover::COVER_OPERATION_CLOSING &&
+          state == UAPBridge::hoermann_state_t::hoermann_state_open);
+}
+
 void UAPBridgeCover::start_estimated_movement_(cover::CoverOperation operation, float target, const char *reason,
                                                bool movement_confirmed) {
+  this->clear_departure_wait_(reason);
   if (this->current_operation != cover::COVER_OPERATION_IDLE) {
     this->recompute_position_();
   }
@@ -674,6 +825,7 @@ void UAPBridgeCover::complete_estimated_target_() {
 
 void UAPBridgeCover::sync_known_position_(float position, const char *reason) {
   this->clear_pending_movement_(reason);
+  this->clear_departure_wait_(reason);
   this->position = clamp(position, 0.0f, 1.0f);
   this->target_position_ = this->position;
   this->current_operation = cover::COVER_OPERATION_IDLE;
@@ -688,6 +840,7 @@ void UAPBridgeCover::sync_known_position_(float position, const char *reason) {
 
 void UAPBridgeCover::stop_estimated_movement_(const char *reason) {
   this->clear_pending_movement_(reason);
+  this->clear_departure_wait_(reason);
   this->recompute_position_();
   this->current_operation = cover::COVER_OPERATION_IDLE;
   this->target_position_ = this->position;
@@ -702,6 +855,7 @@ void UAPBridgeCover::stop_estimated_movement_(const char *reason) {
 
 void UAPBridgeCover::force_non_closed_estimate_(const char *reason) {
   this->clear_pending_movement_(reason);
+  this->clear_departure_wait_(reason);
   this->recompute_position_();
   this->current_operation = cover::COVER_OPERATION_IDLE;
   this->waiting_for_end_state_ = false;
