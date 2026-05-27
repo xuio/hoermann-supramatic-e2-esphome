@@ -9,7 +9,7 @@ namespace esphome {
 namespace uapbridge {
 
 static const char* const TAG = "uapbridge.cover";
-static constexpr uint32_t UAPBRIDGE_TRAVEL_DURATION_PREF_VERSION = 0xA3D21002;
+static constexpr uint32_t UAPBRIDGE_TRAVEL_DURATION_PREF_VERSION = 0xA3D21003;
 static constexpr uint32_t UAPBRIDGE_TRAVEL_DURATION_MAGIC = 0x55415031;  // "UAP1"
 static constexpr uint32_t UAPBRIDGE_MIN_TRAVEL_DURATION_MS = 3000;
 static constexpr uint32_t UAPBRIDGE_MAX_TRAVEL_DURATION_MS = 120000;

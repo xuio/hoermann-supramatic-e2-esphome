@@ -20,7 +20,7 @@ cover:
     position_publish_interval: 1s
     position_deadband: 2%
     venting_position: 3.6%
-    learn_travel_durations: true
+    learn_travel_durations: false
     use_motion_curve: true
 ```
 
@@ -36,7 +36,7 @@ The SupraMatic E2 defaults above are calibrated from the 2026-05-27 ArUco marker
 - `use_motion_curve`: interpolate through the measured soft-start/soft-stop curve instead of assuming a linear position over time.
 - `venting_position`: used only if a future HCP status frame decodes as native venting; current position calibration does not depend on the vent command.
 
-The cover component automatically learns and persists visible travel durations when it sees a complete full travel from one end state to the other. The main YAML also exposes configuration numbers:
+The main E2 YAML keeps automatic travel-duration learning disabled so the video-derived timing values remain authoritative. The component still exposes configuration numbers:
 
 - `Garage Door Open Duration`, in seconds.
 - `Garage Door Close Duration`, in seconds.
@@ -74,12 +74,12 @@ These values show the active calibration from the cover component. You can still
 ## Calibration
 
 1. Start fully closed.
-2. Open fully and wait for the HCP open end state. The firmware stores the measured open duration automatically.
-3. Close fully and wait for the HCP closed end state. The firmware stores the measured close duration automatically.
+2. Open fully and wait for the HCP open end state.
+3. Close fully and wait for the HCP closed end state.
 4. Check `Garage Door Open Duration` and `Garage Door Close Duration` in Home Assistant; they should reflect visible motion time, not command-to-end-state time.
 5. Leave the start/report delays at the measured E2 defaults unless a synchronized video shows a consistent offset.
 6. Test `75%`, `50%`, and `25%` with the `Garage Door Target Position` number while standing at the door.
-7. If a value is obviously wrong because the run was interrupted, enter a corrected duration manually or repeat a clean full run.
+7. If a value is obviously wrong, enter a corrected duration manually after analyzing synchronized video/HCP data.
 
 For repeatable position tests, use [tools/garage_test_wizard.py](tools/garage_test_wizard.py). It records full-open clear height in meters and asks for measured clear opening height after each target. The saved CSV gives actual position and target error without guessing percentages by eye.
 

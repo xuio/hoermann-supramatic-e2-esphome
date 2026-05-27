@@ -108,7 +108,7 @@ cover:
     position_publish_interval: 1s
     position_deadband: 2%
     venting_position: 3.6%
-    learn_travel_durations: true
+    learn_travel_durations: false
     use_motion_curve: true
 
 switch:
