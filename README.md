@@ -254,6 +254,14 @@ python3 tools/analyze_hcp_timing.py \
   --curve-lookup docs/research/analysis/garage-door-motion-20260527/curve_lookup.json
 ```
 
+For a new phone video capture with synchronized protocol logging, use the fullscreen sync display. Start your phone recording with the MacBook screen visible, then press the arrow key for the desired movement. The command is sent after the on-screen countdown, while the screen shows a visual code and live HCP feedback:
+
+```bash
+/tmp/garage-venv/bin/python tools/run_phone_video_sync_capture.py --esp-host <local-ip>
+```
+
+Controls: `Up` schedules open after `10s`, `Down` schedules close after `10s`, `Space` cancels a pending command, `M` emits a manual marker flash, and `Q`/`Esc` finishes the capture and downloads the ESP persistent log.
+
 ## Protocol Diagnostics
 
 The primary YAML exposes these diagnostic entities for protocol work:

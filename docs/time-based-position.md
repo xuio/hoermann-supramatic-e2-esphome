@@ -72,3 +72,5 @@ The Loxone Hörmann Air adapter is a useful reference point: it integrates throu
 Use [tools/run_hcp_timing_calibration.py](tools/run_hcp_timing_calibration.py) when the video curve has already been extracted and you only need a normal HCP run. It commands a full open/close sequence through the ESPHome native API, captures the ESP persistent protocol log, and then calls [tools/analyze_hcp_timing.py](tools/analyze_hcp_timing.py).
 
 The analyzer treats the first HCP open or closed endpoint bit after a command as the fully stopped endpoint, then shifts the ArUco curve so its end aligns to that HCP endpoint. The reported offset is therefore a combined command-to-motion-start and endpoint-report offset; splitting those requires simultaneous video and HCP capture.
+
+For a simultaneous phone video run, use [tools/run_phone_video_sync_capture.py](tools/run_phone_video_sync_capture.py). It opens a fullscreen Tk display on the MacBook, starts the ESP persistent HCP logger, records a visual timecode timeline, shows live HCP feedback, and sends open/close only after a visible `10s` countdown from the `Up` or `Down` key.
