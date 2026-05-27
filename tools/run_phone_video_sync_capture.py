@@ -379,6 +379,8 @@ class CaptureCoordinator:
                 "vent_observe_duration_s": args.vent_observe_duration,
                 "vent_motion_timeout_s": args.vent_motion_timeout,
                 "target_tolerance_percent": args.target_tolerance,
+                "exit_stop_grace_s": args.exit_stop_grace,
+                "download_json_log": args.download_json_log,
                 "cover_object_id": args.cover_object_id,
                 "automatic_sequence": args.sequence,
                 "dry_run": args.dry_run,
@@ -1023,6 +1025,8 @@ class FullscreenDisplay:
     def __init__(self, coordinator: CaptureCoordinator, worker: Any) -> None:
         self.coordinator = coordinator
         self.worker = worker
+        self.exit_pending = False
+        self.exit_due_monotonic = 0.0
         self.root = tk.Tk()
         self.root.title("Garage Sync Capture")
         self.root.attributes("-fullscreen", True)
@@ -1040,7 +1044,40 @@ class FullscreenDisplay:
         self.root.bind("M", lambda _event: self.coordinator.marker())
 
     def on_exit(self, _event: object | None = None) -> None:
-        self.coordinator.request_exit()
+        if self.exit_pending:
+            self.coordinator.request_exit()
+            return
+
+        state = self.coordinator.display_state()
+        hcp = state.get("hcp", {})
+        sequence = state.get("sequence", {})
+        moving = not self.coordinator.is_idle_cover_operation(hcp.get("cover_operation"))
+        active_sequence = sequence.get("index", -1) >= 0 and not sequence.get("done", False)
+
+        if self.coordinator.args.dry_run or not moving:
+            if active_sequence and state.get("scheduled") is not None:
+                self.coordinator.cancel_scheduled()
+            self.coordinator.request_exit()
+            return
+
+        self.exit_pending = True
+        self.exit_due_monotonic = time.monotonic() + self.coordinator.args.exit_stop_grace
+        self.coordinator.add_event(
+            "control",
+            "graceful_exit_stop_requested",
+            {"cover_operation": hcp.get("cover_operation"), "grace_s": self.coordinator.args.exit_stop_grace},
+        )
+        self.coordinator.set_flash(
+            EVENT_CANCEL,
+            "#ffcc00",
+            "STOP THEN EXIT",
+            duration_s=self.coordinator.args.exit_stop_grace,
+        )
+        self.worker.submit_cover_command("stop")
+
+    def service_pending_exit(self) -> None:
+        if self.exit_pending and time.monotonic() >= self.exit_due_monotonic:
+            self.coordinator.request_exit()
 
     def run(self) -> None:
         self.root.after(100, self.draw)
@@ -1051,6 +1088,7 @@ class FullscreenDisplay:
         state = self.coordinator.display_state()
         self.coordinator.log_visual_frame(state)
         self.render(state)
+        self.service_pending_exit()
         if self.coordinator.stop_event.is_set():
             self.root.destroy()
             return
@@ -1367,15 +1405,56 @@ def stop_persistent_log(coordinator: CaptureCoordinator, esp: EspHttpClient) -> 
     return stop
 
 
-def stop_and_download(coordinator: CaptureCoordinator, esp: EspHttpClient) -> None:
+def decode_downloaded_binary_log(output_dir: Path) -> None:
+    binary_path = output_dir / "persistent-log.bin"
+    if not binary_path.exists() or binary_path.stat().st_size == 0:
+        return
+    try:
+        from tools.analyze_hcp_timing import load_binary_persistent_log
+    except ImportError as err:
+        print(f"Skipping local persistent-log decode because parser import failed: {err}", flush=True)
+        return
+    decoded = load_binary_persistent_log(binary_path)
+    decoded_path = output_dir / "persistent-log-decoded.json"
+    decoded_path.write_text(json.dumps(decoded, indent=2, sort_keys=True) + "\n")
+
+    records = decoded.get("records") or []
+    by_type: dict[str, int] = {}
+    by_status: dict[str, int] = {}
+    commands: list[dict[str, Any]] = []
+    for record in records:
+        record_type = str(record.get("type", "unknown"))
+        by_type[record_type] = by_type.get(record_type, 0) + 1
+        if record_type in {"status", "frame"}:
+            status_hex = str(record.get("status_hex", "unknown"))
+            by_status[status_hex] = by_status.get(status_hex, 0) + 1
+        if record_type == "command":
+            commands.append(record)
+    summary = {
+        "source": str(binary_path),
+        "decoded_json": str(decoded_path),
+        "record_count": len(records),
+        "dropped_records": decoded.get("dropped_records"),
+        "dropped_bytes": decoded.get("dropped_bytes"),
+        "records_by_type": dict(sorted(by_type.items())),
+        "status_records_by_hex": dict(sorted(by_status.items())),
+        "commands": commands,
+    }
+    summary_path = output_dir / "persistent-log-summary.json"
+    summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
+    print(f"Decoded persistent-log.bin locally: {len(records)} records", flush=True)
+
+
+def stop_and_download(coordinator: CaptureCoordinator, esp: EspHttpClient, *, include_json_log: bool = False) -> None:
     stop_persistent_log(coordinator, esp)
     downloads = {
         "esp-stats-final.json": ("/stats", 15, False),
         "esp-broadcast-status-final.json": ("/broadcast_status", 15, False),
         "esp-recent-final.txt": ("/recent", 30, False),
-        "persistent-log.json": ("/persistent_log", 240, True),
         "persistent-log.bin": ("/persistent_log.bin", 240, False),
     }
+    if include_json_log:
+        downloads["persistent-log.json"] = ("/persistent_log", 240, True)
     for filename, (path, timeout, nonempty) in downloads.items():
         print(f"Downloading {filename} from {path} ...", flush=True)
         result = esp.save(path, coordinator.output_dir / filename, timeout=timeout, nonempty=nonempty)
@@ -1385,6 +1464,7 @@ def stop_and_download(coordinator: CaptureCoordinator, esp: EspHttpClient) -> No
             {"endpoint": path, "status": result.status, "error": result.error, "bytes": len(result.body)},
         )
         print(f"Saved {filename}: {len(result.body)} bytes")
+    decode_downloaded_binary_log(coordinator.output_dir)
 
 
 def wait_for_tcp(host: str, port: int, timeout_s: float) -> bool:
@@ -1422,6 +1502,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--vent-observe-duration", type=float, default=20.0, help="Seconds to keep recording after a vent command when HCP reports only Stopped/idle instead of Venting")
     parser.add_argument("--vent-motion-timeout", type=float, default=35.0, help="Maximum seconds to wait for a vent command before aborting if the opener still appears to be moving")
     parser.add_argument("--target-tolerance", type=float, default=3.0, help="Allowed percentage-point error when waiting for an automatic target-position step")
+    parser.add_argument("--exit-stop-grace", type=float, default=3.0, help="Seconds to wait after sending stop when Q/Esc is pressed while the cover is moving")
+    parser.add_argument("--download-json-log", action="store_true", help="Also download the expanded JSON persistent log; normally the compact binary log is enough and is safer for the live bus")
     parser.add_argument("--dry-run", action="store_true", help="Show the fullscreen visuals and simulated HCP feedback without contacting the ESP or moving the opener")
     parser.add_argument("--dry-run-motion-duration", type=float, default=3.0, help="Seconds before each simulated dry-run command reaches its target state")
     parser.add_argument("--startup-check", action="store_true", help="Start persistent logging and connect to ESPHome, then stop and exit without opening the UI or sending commands")
@@ -1502,7 +1584,7 @@ def main() -> int:
             if args.startup_check:
                 stop_persistent_log(coordinator, esp)
             else:
-                stop_and_download(coordinator, esp)
+                stop_and_download(coordinator, esp, include_json_log=args.download_json_log)
         elif esp is not None:
             print("Skipping persistent log stop/download because logging did not start.", flush=True)
         coordinator.manifest["finished_at"] = utc_now_iso()

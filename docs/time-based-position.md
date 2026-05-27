@@ -98,6 +98,8 @@ For a second position-only run, use `--sequence position_targets_no_calibration`
 
 Use `--dry-run` first if you only want to check the fullscreen layout and QR code. Dry run skips all ESPHome API and HTTP calls, sends no opener commands, and simulates HCP state changes locally so the sequence advances without hardware.
 
+If you press `Q`/`Esc` while the cover is still moving, the runner sends a stop command and waits briefly before it stops the persistent log and downloads files. This avoids immediately loading the ESP with HTTP transfers while the SupraMatic still expects live UAP1 responses. The normal capture downloads the compact binary persistent log only; use `--download-json-log` only for offline debugging when the bus is idle.
+
 The old native-venting capture preset is still available with `--sequence full_and_vent`, but it is not used for the current percentage-control calibration. If position control is good enough, partial-open behavior should be tested as a normal cover target.
 
 The capture display keeps the QR code and keepout area clear, with rotated status text only in the left and right gutters. The far-left vertical bar shows current-step progress, and the far-right vertical bar shows total automation progress. The QR payload is a 10-character alphanumeric base36 code in a version-1 symbol with a standard quiet zone, strong error correction, and CRC validation. Use `--hide-side-status` for a QR-only screen, or `--show-overlay-text` only for local debugging when you are not recording calibration video.

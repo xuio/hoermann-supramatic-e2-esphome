@@ -1202,6 +1202,7 @@ bool UAPBridge_esp::http_debug_write_all_(socket::Socket *client, const std::str
   size_t offset = 0;
   const uint32_t started = millis();
   while (offset < payload.size()) {
+    this->service_bus_during_http_transfer_();
     ssize_t written = client->write(payload.data() + offset, payload.size() - offset);
     if (written > 0) {
       offset += written;
@@ -1214,6 +1215,7 @@ bool UAPBridge_esp::http_debug_write_all_(socket::Socket *client, const std::str
       return false;
     }
     delay(1);
+    this->service_bus_during_http_transfer_();
   }
   return true;
 }
@@ -1742,6 +1744,7 @@ void UAPBridge_esp::http_debug_send_persistent_log_response_(std::unique_ptr<soc
       }
       chunk += item;
       first = false;
+      this->service_bus_during_http_transfer_();
     }
     fclose(file);
   }
@@ -1779,8 +1782,13 @@ void UAPBridge_esp::http_debug_send_persistent_log_binary_response_(std::unique_
       fclose(file);
       return;
     }
+    this->service_bus_during_http_transfer_();
   }
   fclose(file);
+}
+
+void UAPBridge_esp::service_bus_during_http_transfer_() {
+  this->loop_fast();
 }
 
 std::string UAPBridge_esp::http_debug_status_bits_json_(uint16_t status) {

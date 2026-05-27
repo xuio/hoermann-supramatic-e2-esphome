@@ -16,6 +16,13 @@ therefore incorrectly estimated movement that had not actually started. That is
 the bug fixed by requiring HCP endpoint departure before starting the estimator
 when moving away from a known `Open` or `Closed` endpoint.
 
+After `Q` was pressed, the runner spent roughly 70 seconds requesting the expanded
+JSON persistent-log endpoint and then the binary log. That JSON response is large
+and expensive for the ESP to serve while the UAP1 emulation is live, which matches
+the observed temporary SupraMatic `6.` display. The runner now skips the expanded
+JSON download by default and gives active movements a short stop grace period
+before starting HTTP log downloads.
+
 ## Captured Position Results
 
 The percentages below are video-derived marker progress from the lower door
