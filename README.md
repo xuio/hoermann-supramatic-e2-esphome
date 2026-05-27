@@ -236,6 +236,8 @@ For position calibration, measure the clear opening height in meters instead of 
 
 For video-based curve fitting, print the A4 ArUco marker PDFs in [docs/markers](docs/markers). Use four fixed reference markers around the garage opening and one moving marker on the bottom edge of the door. Print at actual size and verify the `100 mm` scale bar before recording.
 
+The first ArUco video analysis is stored in [docs/research/analysis/garage-door-motion-20260527](docs/research/analysis/garage-door-motion-20260527). It fits separate opening and closing curves from the bottom-segment marker path: opening about `10.215 s`, closing about `18.565 s`.
+
 ## Protocol Diagnostics
 
 The primary YAML exposes these diagnostic entities for protocol work:
