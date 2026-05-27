@@ -92,6 +92,8 @@ The analyzer treats the first HCP open or closed endpoint bit after a command as
 
 For a simultaneous phone video run, start with the door fully closed and use [tools/run_phone_video_sync_capture.py](tools/run_phone_video_sync_capture.py). It opens a fullscreen Tk display on the MacBook, starts the ESP persistent HCP logger, records a near full-height compact QR timecode timeline, and runs the default `position_targets` sequence after `Space`: full open, full close, `25%` from closed, full close, `50%` from closed, full close, full open, `75%` from open, full open, `50%` from open, and final close. Each command is separated by a timed delay and settle period.
 
+For a second position-only run, use `--sequence position_targets_no_calibration`. It assumes the door starts fully closed and skips the initial full-open/full-close calibration pair, then tests `25%`, `50%`, and `75%` from closed plus `75%`, `50%`, and `25%` from open with endpoint resets between targets.
+
 Use `--dry-run` first if you only want to check the fullscreen layout and QR code. Dry run skips all ESPHome API and HTTP calls, sends no opener commands, and simulates HCP state changes locally so the sequence advances without hardware.
 
 The old native-venting capture preset is still available with `--sequence full_and_vent`, but it is not used for the current percentage-control calibration. If position control is good enough, partial-open behavior should be tested as a normal cover target.

@@ -281,6 +281,12 @@ For a new phone video capture with synchronized protocol logging, use the fullsc
 uv run garage-phone-sync --esp-host <local-ip> --sequence position_targets
 ```
 
+For a second validation run after the firmware has already learned or loaded the calibrated timings, skip the initial full-open/full-close calibration pair and test only target accuracy. Start fully closed:
+
+```bash
+uv run garage-phone-sync --esp-host <local-ip> --sequence position_targets_no_calibration
+```
+
 Controls: `Space` starts the sequence or cancels a pending countdown, `M` emits a manual marker flash, and `Q`/`Esc` finishes the capture and downloads the ESP persistent log.
 
 The old venting capture preset is still available as `--sequence full_and_vent`, but the current calibration path ignores the native vent command. If percentage control is accurate enough, partial-open behavior should be handled by sending a normal cover target instead.

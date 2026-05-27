@@ -296,6 +296,21 @@ def parse_sequence(sequence: str) -> list[dict[str, Any]]:
             ("target:50", "Position", "target_50_from_open"),
             ("close", "Closed", "final_close"),
         ],
+        "position_targets_no_calibration": [
+            ("target:25", "Position", "target_25_from_closed"),
+            ("close", "Closed", "reset_closed_after_25"),
+            ("target:50", "Position", "target_50_from_closed"),
+            ("close", "Closed", "reset_closed_after_50"),
+            ("target:75", "Position", "target_75_from_closed"),
+            ("close", "Closed", "reset_closed_after_75"),
+            ("open", "Open", "setup_open_for_descending_targets"),
+            ("target:75", "Position", "target_75_from_open"),
+            ("open", "Open", "reset_open_after_75"),
+            ("target:50", "Position", "target_50_from_open"),
+            ("open", "Open", "reset_open_after_50"),
+            ("target:25", "Position", "target_25_from_open"),
+            ("close", "Closed", "final_close"),
+        ],
         "full_and_vent": [
             ("open", "Open", "full_open"),
             ("close", "Closed", "full_close"),
@@ -1424,7 +1439,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--sequence",
         default="position_targets",
-        help="Preset 'position_targets', preset 'full_and_vent', or comma-separated commands such as open,close,target:25,close",
+        help="Preset 'position_targets', preset 'position_targets_no_calibration', preset 'full_and_vent', or comma-separated commands such as open,close,target:25,close",
     )
     parser.add_argument("--output-dir", type=Path, default=Path("captures"))
     parser.add_argument("--yes", action="store_true", help="Skip the physical-presence prompt")
