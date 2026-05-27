@@ -1,0 +1,442 @@
+{
+  "capture_bundle": "captures/phone-sync-capture-20260527-230736",
+  "command_positions": [
+    {
+      "data": {
+        "action": "target",
+        "target_position": 25.0
+      },
+      "label": "cover_target_sent",
+      "measured_position_percent": 0.004880677799073491,
+      "run_elapsed_s": 21.282942375168204,
+      "video_time_s": 3.42068003874745
+    },
+    {
+      "data": {
+        "action": "close",
+        "target_position": null
+      },
+      "label": "cover_close_sent",
+      "measured_position_percent": 37.09837175293483,
+      "run_elapsed_s": 28.412789666093886,
+      "video_time_s": 10.550695964640505
+    },
+    {
+      "data": {
+        "action": "target",
+        "target_position": 50.0
+      },
+      "label": "cover_target_sent",
+      "measured_position_percent": 0.04625932812047102,
+      "run_elapsed_s": 41.14068558299914,
+      "video_time_s": 23.27889292141732
+    },
+    {
+      "data": {
+        "action": "close",
+        "target_position": null
+      },
+      "label": "cover_close_sent",
+      "measured_position_percent": 37.20204673896218,
+      "run_elapsed_s": 50.69304258329794,
+      "video_time_s": 32.83147585382173
+    },
+    {
+      "data": {
+        "action": "target",
+        "target_position": 75.0
+      },
+      "label": "cover_target_sent",
+      "measured_position_percent": 0.06781679472347739,
+      "run_elapsed_s": 63.265116000082344,
+      "video_time_s": 45.40384662496787
+    },
+    {
+      "data": {
+        "action": "close",
+        "target_position": null
+      },
+      "label": "cover_close_sent",
+      "measured_position_percent": 50.98425686760734,
+      "run_elapsed_s": 74.97368162497878,
+      "video_time_s": 57.11268918056164
+    },
+    {
+      "data": {
+        "action": "open",
+        "target_position": null
+      },
+      "label": "cover_open_sent",
+      "measured_position_percent": 0.1144829502433895,
+      "run_elapsed_s": 89.87403062498197,
+      "video_time_s": 72.01339060324163
+    },
+    {
+      "data": {
+        "action": "target",
+        "target_position": 75.0
+      },
+      "label": "cover_target_sent",
+      "measured_position_percent": 99.97401421430507,
+      "run_elapsed_s": 111.5590318753384,
+      "video_time_s": 93.6989047466979
+    },
+    {
+      "data": {
+        "action": "open",
+        "target_position": null
+      },
+      "label": "cover_open_sent",
+      "measured_position_percent": 66.41947017011043,
+      "run_elapsed_s": 119.11571679124609,
+      "video_time_s": 101.25576839312563
+    },
+    {
+      "data": {
+        "action": "target",
+        "target_position": 50.0
+      },
+      "label": "cover_target_sent",
+      "measured_position_percent": 99.95536780605234,
+      "run_elapsed_s": 128.56235091621056,
+      "video_time_s": 110.70262594964096
+    },
+    {
+      "data": {
+        "action": "open",
+        "target_position": null
+      },
+      "label": "cover_open_sent",
+      "measured_position_percent": 42.20443986130181,
+      "run_elapsed_s": 140.3640693333,
+      "video_time_s": 122.50462350067521
+    },
+    {
+      "data": {
+        "action": "target",
+        "target_position": 25.0
+      },
+      "label": "cover_target_sent",
+      "measured_position_percent": 99.8621652482472,
+      "run_elapsed_s": 153.476573666092,
+      "video_time_s": 135.61743797008725
+    },
+    {
+      "data": {
+        "action": "close",
+        "target_position": null
+      },
+      "label": "cover_close_sent",
+      "measured_position_percent": 18.164517584547053,
+      "run_elapsed_s": 169.46115795802325,
+      "video_time_s": 151.60240032900094
+    }
+  ],
+  "detection": {
+    "detection_scale": 1.0,
+    "marker_counts": {
+      "0": 823,
+      "1": 823,
+      "10": 823,
+      "11": 823,
+      "17": 2,
+      "2": 823,
+      "3": 823,
+      "37": 3
+    },
+    "processed_frames": 823,
+    "sample_stride": 1
+  },
+  "endpoint_windows_run_elapsed_s": {
+    "closed": [
+      [
+        18.2,
+        20.8
+      ],
+      [
+        40.0874691253528,
+        40.9874691253528
+      ],
+      [
+        62.24354725023731,
+        63.14354725023732
+      ],
+      [
+        88.80663454132154,
+        89.70663454132155
+      ],
+      [
+        177.78174391593785,
+        178.68174391593783
+      ]
+    ],
+    "open": [
+      [
+        110.48840720830485,
+        111.38840720830486
+      ],
+      [
+        127.49271262502297,
+        128.39271262502297
+      ],
+      [
+        152.4323014162481,
+        153.33230141624807
+      ]
+    ]
+  },
+  "endpoints": {
+    "10": {
+      "closed": [
+        442.80849982140944,
+        1434.466516304196
+      ],
+      "open": [
+        593.8120613615869,
+        324.5186407303696
+      ]
+    },
+    "11": {
+      "closed": [
+        241.18308169507577,
+        1500.2371301222774
+      ],
+      "open": [
+        357.58997702401246,
+        278.51672658474274
+      ]
+    }
+  },
+  "event_comparison": [
+    {
+      "event_data": {
+        "cover_position": 25.0,
+        "elapsed_s": 6.065297374967486,
+        "index": 0,
+        "step": {
+          "action": "target",
+          "label": "target_25_from_closed",
+          "target_position": 25.0,
+          "target_state": "Position"
+        },
+        "target_position": 25.0,
+        "tolerance_percent": 3.0
+      },
+      "label": "target_position_reached",
+      "measured_position_percent": 37.091487958454366,
+      "run_elapsed_s": 27.346518625039607,
+      "video_time_s": 9.484399704170595
+    },
+    {
+      "event_data": {
+        "index": 1,
+        "target_state": "Closed"
+      },
+      "label": "target_state_reached",
+      "measured_position_percent": 0.11568107102442536,
+      "run_elapsed_s": 40.0374691253528,
+      "video_time_s": 22.17565037052329
+    },
+    {
+      "event_data": {
+        "cover_position": 50.0,
+        "elapsed_s": 8.473833875264972,
+        "index": 2,
+        "step": {
+          "action": "target",
+          "label": "target_50_from_closed",
+          "target_position": 50.0,
+          "target_state": "Position"
+        },
+        "target_position": 50.0,
+        "tolerance_percent": 3.0
+      },
+      "label": "target_position_reached",
+      "measured_position_percent": 37.088163442646135,
+      "run_elapsed_s": 49.61175883328542,
+      "video_time_s": 31.750166529313365
+    },
+    {
+      "event_data": {
+        "index": 3,
+        "target_state": "Closed"
+      },
+      "label": "target_state_reached",
+      "measured_position_percent": 0.07116471019391953,
+      "run_elapsed_s": 62.193547250237316,
+      "video_time_s": 44.33225253040594
+    },
+    {
+      "event_data": {
+        "cover_position": 75.0,
+        "elapsed_s": 10.595638082828373,
+        "index": 4,
+        "step": {
+          "action": "target",
+          "label": "target_75_from_closed",
+          "target_position": 75.0,
+          "target_state": "Position"
+        },
+        "target_position": 75.0,
+        "tolerance_percent": 3.0
+      },
+      "label": "target_position_reached",
+      "measured_position_percent": 50.991180342817465,
+      "run_elapsed_s": 73.85632141632959,
+      "video_time_s": 55.995302544137125
+    },
+    {
+      "event_data": {
+        "index": 5,
+        "target_state": "Closed"
+      },
+      "label": "target_state_reached",
+      "measured_position_percent": 0.0995211631418342,
+      "run_elapsed_s": 88.75663454132155,
+      "video_time_s": 70.89596809095737
+    },
+    {
+      "event_data": {
+        "index": 6,
+        "target_state": "Open"
+      },
+      "label": "target_state_reached",
+      "measured_position_percent": 99.99994424129409,
+      "run_elapsed_s": 110.43840720830485,
+      "video_time_s": 92.57825357467813
+    },
+    {
+      "event_data": {
+        "cover_position": 75.0,
+        "elapsed_s": 6.467712374869734,
+        "index": 7,
+        "step": {
+          "action": "target",
+          "label": "target_75_from_open",
+          "target_position": 75.0,
+          "target_state": "Position"
+        },
+        "target_position": 75.0,
+        "tolerance_percent": 3.0
+      },
+      "label": "target_position_reached",
+      "measured_position_percent": 66.57587618896979,
+      "run_elapsed_s": 118.01943008322269,
+      "video_time_s": 100.15945575575681
+    },
+    {
+      "event_data": {
+        "index": 8,
+        "target_state": "Open"
+      },
+      "label": "target_state_reached",
+      "measured_position_percent": 100.0,
+      "run_elapsed_s": 127.44271262502298,
+      "video_time_s": 109.5829611767969
+    },
+    {
+      "event_data": {
+        "cover_position": 50.0,
+        "elapsed_s": 10.711376290768385,
+        "index": 9,
+        "step": {
+          "action": "target",
+          "label": "target_50_from_open",
+          "target_position": 50.0,
+          "target_state": "Position"
+        },
+        "target_position": 50.0,
+        "tolerance_percent": 3.0
+      },
+      "label": "target_position_reached",
+      "measured_position_percent": 42.202247503080734,
+      "run_elapsed_s": 139.2656102082692,
+      "video_time_s": 121.40613839491704
+    },
+    {
+      "event_data": {
+        "index": 10,
+        "target_state": "Open"
+      },
+      "label": "target_state_reached",
+      "measured_position_percent": 99.96261131859009,
+      "run_elapsed_s": 152.38230141624808,
+      "video_time_s": 134.5231398385438
+    },
+    {
+      "event_data": {
+        "cover_position": 25.0,
+        "elapsed_s": 14.910250290762633,
+        "index": 11,
+        "step": {
+          "action": "target",
+          "label": "target_25_from_open",
+          "target_position": 25.0,
+          "target_state": "Position"
+        },
+        "target_position": 25.0,
+        "tolerance_percent": 3.0
+      },
+      "label": "target_position_reached",
+      "measured_position_percent": 18.37139726839126,
+      "run_elapsed_s": 168.37801512517035,
+      "video_time_s": 150.51923187768122
+    },
+    {
+      "event_data": {
+        "index": 12,
+        "target_state": "Closed"
+      },
+      "label": "target_state_reached",
+      "measured_position_percent": 0.06313474139325606,
+      "run_elapsed_s": 177.73174391593784,
+      "video_time_s": 159.87318190260495
+    },
+    {
+      "event_data": {},
+      "label": "done",
+      "measured_position_percent": 0.06159648593231175,
+      "run_elapsed_s": 177.7400902081281,
+      "video_time_s": 159.8815283922015
+    }
+  ],
+  "metadata": {
+    "duration_s": 164.6,
+    "fps": 5.0,
+    "frame_count": 823,
+    "height": 1920,
+    "name": "auto04",
+    "path": "uncommitted-working-video/auto04-5fps-1080w.mp4",
+    "width": 1080
+  },
+  "persistent_log": {
+    "command_count": 38,
+    "decoded_dropped_bytes": 0,
+    "decoded_dropped_records": 0,
+    "record_count": 11748,
+    "records_by_type": {
+      "command": 38,
+      "control": 2,
+      "frame": 3903,
+      "rx": 5183,
+      "status": 14,
+      "tx": 2608
+    },
+    "status_records_by_hex": {
+      "0x0000": 3232,
+      "0x0001": 108,
+      "0x0002": 577
+    },
+    "unknown_valid_frame_count": 0
+  },
+  "progress_sample_count": 823,
+  "qr_alignment": {
+    "intercept_run_elapsed_s": 17.862343240344774,
+    "max_abs_residual_s": 0.10492460630800338,
+    "residual_stdev_s": 0.04000571474311252,
+    "slope": 0.9999763485847539,
+    "valid_samples": 1200
+  },
+  "source_video": "uncommitted-videos/phone-sync-auto04.mov",
+  "working_video": "uncommitted-working-video/auto04-5fps-1080w.mp4"
+}

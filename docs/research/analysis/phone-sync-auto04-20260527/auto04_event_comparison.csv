@@ -1,0 +1,15 @@
+run_elapsed_s,video_time_s,label,event_data,measured_position_percent
+27.346518625039607,9.484399704170595,target_position_reached,"{'cover_position': 25.0, 'elapsed_s': 6.065297374967486, 'index': 0, 'step': {'action': 'target', 'label': 'target_25_from_closed', 'target_position': 25.0, 'target_state': 'Position'}, 'target_position': 25.0, 'tolerance_percent': 3.0}",37.091487958454366
+40.0374691253528,22.17565037052329,target_state_reached,"{'index': 1, 'target_state': 'Closed'}",0.11568107102442536
+49.61175883328542,31.750166529313365,target_position_reached,"{'cover_position': 50.0, 'elapsed_s': 8.473833875264972, 'index': 2, 'step': {'action': 'target', 'label': 'target_50_from_closed', 'target_position': 50.0, 'target_state': 'Position'}, 'target_position': 50.0, 'tolerance_percent': 3.0}",37.088163442646135
+62.193547250237316,44.33225253040594,target_state_reached,"{'index': 3, 'target_state': 'Closed'}",0.07116471019391953
+73.85632141632959,55.995302544137125,target_position_reached,"{'cover_position': 75.0, 'elapsed_s': 10.595638082828373, 'index': 4, 'step': {'action': 'target', 'label': 'target_75_from_closed', 'target_position': 75.0, 'target_state': 'Position'}, 'target_position': 75.0, 'tolerance_percent': 3.0}",50.991180342817465
+88.75663454132155,70.89596809095737,target_state_reached,"{'index': 5, 'target_state': 'Closed'}",0.0995211631418342
+110.43840720830485,92.57825357467813,target_state_reached,"{'index': 6, 'target_state': 'Open'}",99.99994424129409
+118.01943008322269,100.15945575575681,target_position_reached,"{'cover_position': 75.0, 'elapsed_s': 6.467712374869734, 'index': 7, 'step': {'action': 'target', 'label': 'target_75_from_open', 'target_position': 75.0, 'target_state': 'Position'}, 'target_position': 75.0, 'tolerance_percent': 3.0}",66.57587618896979
+127.44271262502298,109.5829611767969,target_state_reached,"{'index': 8, 'target_state': 'Open'}",100.0
+139.2656102082692,121.40613839491704,target_position_reached,"{'cover_position': 50.0, 'elapsed_s': 10.711376290768385, 'index': 9, 'step': {'action': 'target', 'label': 'target_50_from_open', 'target_position': 50.0, 'target_state': 'Position'}, 'target_position': 50.0, 'tolerance_percent': 3.0}",42.202247503080734
+152.38230141624808,134.5231398385438,target_state_reached,"{'index': 10, 'target_state': 'Open'}",99.96261131859009
+168.37801512517035,150.51923187768122,target_position_reached,"{'cover_position': 25.0, 'elapsed_s': 14.910250290762633, 'index': 11, 'step': {'action': 'target', 'label': 'target_25_from_open', 'target_position': 25.0, 'target_state': 'Position'}, 'target_position': 25.0, 'tolerance_percent': 3.0}",18.37139726839126
+177.73174391593784,159.87318190260495,target_state_reached,"{'index': 12, 'target_state': 'Closed'}",0.06313474139325606
+177.7400902081281,159.8815283922015,done,{},0.06159648593231175
