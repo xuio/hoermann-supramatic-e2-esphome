@@ -63,4 +63,6 @@ These values show the active learned durations from the cover component. You can
 5. Test `75%`, `50%`, and `25%` with the `Garage Door Target Position` number while standing at the door.
 6. If a value is obviously wrong because the run was interrupted, enter a corrected duration manually or repeat a clean full run.
 
+For repeatable position tests, use [tools/garage_test_wizard.py](tools/garage_test_wizard.py). It records full-open clear height in meters and asks for measured clear opening height after each target. The saved CSV gives actual position and target error without guessing percentages by eye.
+
 The Loxone Hörmann Air adapter is a useful reference point: it integrates through the Hörmann BUS, supports the Garage/Gate block including partially-open input, and documents automatic learning of travel durations. This firmware follows the same practical model, but keeps the timing estimate local and inspectable in ESPHome logs.

@@ -220,6 +220,20 @@ Because Home Assistant may hide the position slider for a `device_class: garage`
 
 The E2 light feedback bit is not available in the observed one-byte broadcasts. The light entity is optimistic for manual toggles, and the primary YAML enables courtesy-light estimation: when HCP state reports opening or closing, Home Assistant is told the light is on and the estimate expires after `courtesy_light_duration`.
 
+## Interactive Test Wizard
+
+Use [tools/garage_test_wizard.py](tools/garage_test_wizard.py) for a guided end-to-end garage test. It starts and stops the ESP persistent protocol logger, takes `/stats` and `/broadcast_status` snapshots, guides full-travel calibration, stop tests, percentage target tests, light checks, and an optional obstruction test, then saves a timestamped bundle under [captures](captures).
+
+The wizard can drive Home Assistant automatically when a long-lived access token is provided:
+
+```bash
+HA_TOKEN="..." python3 tools/garage_test_wizard.py
+```
+
+Without `HA_TOKEN`, it still controls ESP recording and pauses with exact manual Home Assistant instructions for each command. Every movement requires a manual confirmation before the next step.
+
+For position calibration, measure the clear opening height in meters instead of guessing the percentage. The wizard asks for the full-open height once, then asks for the measured opening height after each stop/target. It computes actual percent open and error versus target in `measurements.csv` and `summary.md`.
+
 ## Protocol Diagnostics
 
 The primary YAML exposes these diagnostic entities for protocol work:
