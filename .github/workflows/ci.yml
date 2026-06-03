@@ -28,8 +28,8 @@ jobs:
       - name: Install dependencies
         run: uv sync --locked
 
-      - name: Prepare example secrets
-        run: cp configs/secrets.example.yaml configs/secrets.yaml
+      - name: Generate example secrets
+        run: uv run garage-init-secrets
 
       - name: Validate ESPHome configurations
         run: |

@@ -22,7 +22,7 @@ Use this before making the repository public or publishing a tagged release.
 ## Build and Test
 
 - [ ] `uv sync`
-- [ ] `cp configs/secrets.example.yaml configs/secrets.yaml`
+- [ ] `uv run garage-init-secrets`
 - [ ] `uv run esphome config configs/supramatic-e2.yaml`
 - [ ] `uv run esphome config configs/supramatic-e2-minimal.yaml`
 - [ ] `uv run esphome config configs/supramatic-e2-monitor.yaml`

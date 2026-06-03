@@ -11,6 +11,7 @@ This directory contains the Python helpers used to build, test, capture, and cal
 | `uv run garage-analyze-aruco-video` | [analyze_garage_aruco_video.py](analyze_garage_aruco_video.py) | Extract door motion curves from ArUco marker videos |
 | `uv run garage-hcp-timing-calibration` | [run_hcp_timing_calibration.py](run_hcp_timing_calibration.py) | Run a normal HCP open/close timing capture through ESPHome |
 | `uv run garage-analyze-hcp-timing` | [analyze_hcp_timing.py](analyze_hcp_timing.py) | Align persistent HCP logs with previously extracted motion curves |
+| `uv run garage-init-secrets` | [init_secrets.py](init_secrets.py) | Generate local ESPHome API, OTA, and proxy secrets |
 | `uv run garage-test-wizard` | [garage_test_wizard.py](garage_test_wizard.py) | Guided manual Home Assistant position tests using measured clear-opening height |
 | `uv run garage-generate-aruco-markers` | [generate_aruco_marker_pdfs.py](generate_aruco_marker_pdfs.py) | Generate printable ArUco marker PDFs |
 | `uv run garage-hcp-proxy-client` | [hcp_proxy_client.py](hcp_proxy_client.py) | Laptop-side RS-485 proxy experiments |
@@ -101,4 +102,3 @@ The calibrated values live in [configs/supramatic-e2.yaml](../configs/supramatic
 | [phone-sync-auto04-20260527](../docs/research/analysis/phone-sync-auto04-20260527/README.md) | Latest successful synchronized phone-video run |
 | [motion-model-fit-20260527](../docs/research/analysis/motion-model-fit-20260527/README.md) | Stop-response model and fit metrics |
 | [garage-door-motion-20260527](../docs/research/analysis/garage-door-motion-20260527/README.md) | Full-travel opening/closing curves and HCP timing alignment |
-

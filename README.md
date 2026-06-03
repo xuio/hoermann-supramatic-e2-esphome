@@ -90,16 +90,10 @@ Install `uv`, then build with the pinned Python and ESPHome versions:
 git clone https://github.com/xuio/hoermann-supramatic-e2-esphome.git
 cd hoermann-supramatic-e2-esphome
 uv sync
-cp configs/secrets.example.yaml configs/secrets.yaml
+uv run garage-init-secrets
 ```
 
-Edit `configs/secrets.yaml` and set a real ESPHome API encryption key and OTA password:
-
-```yaml
-api_key_supramatic_e2: "replace-with-a-real-esphome-api-key"
-ota_password_supramatic_e2: "replace-with-a-long-random-ota-password"
-proxy_auth_token: "replace-with-a-long-random-token"
-```
+This creates `configs/secrets.yaml` with a valid ESPHome API encryption key, OTA password, and proxy token. The file is private and intentionally ignored by git. To intentionally regenerate existing secrets, run `uv run garage-init-secrets --force`.
 
 Validate and compile:
 

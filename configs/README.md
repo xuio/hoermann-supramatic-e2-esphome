@@ -1,6 +1,6 @@
 # ESPHome Configurations
 
-Use `configs/supramatic-e2.yaml` for the normal Waveshare ESP32-S3-ETH PoE UAP1 emulator.
+Use `configs/supramatic-e2.yaml` for the normal Waveshare ESP32-S3-ETH PoE garage-door firmware.
 
 ## Files
 
@@ -10,12 +10,12 @@ Use `configs/supramatic-e2.yaml` for the normal Waveshare ESP32-S3-ETH PoE UAP1 
 - `supramatic-e2-monitor-rx17.yaml`: monitor with RX on GPIO17 for TTL pin-direction diagnosis
 - `supramatic-e2-monitor-idle-tx.yaml`: monitor that holds adapter TTL RX idle-high
 - `supramatic-e2-proxy.yaml`: TCP RS-485 proxy
-- `secrets.example.yaml`: copy to `secrets.yaml` before building
+- `secrets.example.yaml`: template used by `uv run garage-init-secrets`
 
 ## Build
 
 ```bash
-cp configs/secrets.example.yaml configs/secrets.yaml
+uv run garage-init-secrets
 uv run esphome config configs/supramatic-e2.yaml
 uv run esphome compile configs/supramatic-e2.yaml
 ```

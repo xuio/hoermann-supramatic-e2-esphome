@@ -13,10 +13,12 @@ This guide assumes the known working hardware path:
 git clone https://github.com/xuio/hoermann-supramatic-e2-esphome.git
 cd hoermann-supramatic-e2-esphome
 uv sync
-cp configs/secrets.example.yaml configs/secrets.yaml
+uv run garage-init-secrets
 ```
 
-Edit `configs/secrets.yaml`, then validate:
+This creates `configs/secrets.yaml` with a valid ESPHome API encryption key, OTA password, and proxy token. The file is ignored by git.
+
+Validate:
 
 ```bash
 uv run esphome config configs/supramatic-e2.yaml
