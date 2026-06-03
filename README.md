@@ -1,5 +1,8 @@
 # Hörmann SupraMatic E2 ESPHome UAP1 Emulator
 
+[![CI](https://github.com/xuio/hoermann-supravmatic-e2-esphome/actions/workflows/ci.yml/badge.svg)](https://github.com/xuio/hoermann-supravmatic-e2-esphome/actions/workflows/ci.yml)
+[![License: Unlicense](https://img.shields.io/badge/license-Unlicense-blue.svg)](LICENSE)
+
 ESPHome firmware for a single ESP32 that connects directly to a Hörmann SupraMatic E2 HCP1/BUS connector through an RS-485 adapter, emulates a UAP1 accessory, and exposes the garage door to Home Assistant.
 
 The intended path is:
@@ -52,8 +55,8 @@ See [docs/hardware-wiring.md](docs/hardware-wiring.md) for the full pinout, cabl
 Install `uv`, then build with the pinned Python and ESPHome versions:
 
 ```bash
-git clone https://github.com/xuio/garage-door-controller.git
-cd garage-door-controller
+git clone https://github.com/xuio/hoermann-supravmatic-e2-esphome.git
+cd hoermann-supravmatic-e2-esphome
 uv sync
 cp configs/secrets.example.yaml configs/secrets.yaml
 ```

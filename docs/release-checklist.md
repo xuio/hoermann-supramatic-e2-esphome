@@ -32,8 +32,9 @@ Use this before making the repository public or publishing a tagged release.
 
 ## GitHub
 
-- [ ] Repository description includes Hörmann, SupraMatic E2, HCP1, UAP1, ESPHome, and Home Assistant.
-- [ ] Topics include `home-assistant`, `esphome`, `esp32`, `garage-door`, `hormann`, `hoermann`, `supramatic`, `hcp1`, `uap1`, `rs485`, `homekit`, `ethernet`, and `poe`.
+- [ ] Repository name includes `hoermann`, `supramatic`, `e2`, and `esphome`.
+- [ ] Repository description includes Hörmann/Hoermann/Hormann, SupraMatic E2, HCP1, UAP1, ESPHome, RS-485, and Home Assistant.
+- [ ] Topics include `home-assistant`, `esphome`, `esp32`, `esp32-s3`, `garage-door`, `hormann`, `hoermann`, `supramatic`, `supramatic-e2`, `hcp1`, `uap1`, `rs485`, `homekit`, `ethernet`, `poe`, and `waveshare`.
 - [ ] GitHub Actions are green.
 - [ ] License is shown as The Unlicense.
 - [ ] Upstream attribution is visible in `NOTICE.md`.
