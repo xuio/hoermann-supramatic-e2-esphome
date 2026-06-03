@@ -98,6 +98,7 @@ cover:
     id: garage_door_cover
     name: "${friendly_name}"
     device_class: garage
+    assumed_state: false
     time_based_position: true
     # Calibrated from 2026-05-27 ArUco/video + HCP sync captures.
     # Durations are visible door motion; delays model command-to-motion and

@@ -14,6 +14,7 @@ CONF_CLOSE_REPORT_DELAY = "close_report_delay"
 CONF_CLOSE_START_DELAY = "close_start_delay"
 CONF_CLOSE_STOP_INTERCEPT = "close_stop_intercept"
 CONF_CLOSE_STOP_SLOPE = "close_stop_slope"
+CONF_ASSUMED_STATE = "assumed_state"
 CONF_LEARN_TRAVEL_DURATIONS = "learn_travel_durations"
 CONF_OPEN_DURATION = "open_duration"
 CONF_OPEN_REPORT_DELAY = "open_report_delay"
@@ -51,6 +52,7 @@ CONFIG_SCHEMA = cv.All(
   cover.cover_schema(UAPBridgeCover).extend({
     cv.GenerateID(): cv.declare_id(UAPBridgeCover),
     cv.GenerateID(CONF_UAPBRIDGE_ID): cv.use_id(UAPBridge),
+    cv.Optional(CONF_ASSUMED_STATE, default=False): cv.boolean,
     cv.Optional(CONF_TIME_BASED_POSITION, default=False): cv.boolean,
     cv.Optional(CONF_OPEN_DURATION, default="18s"): cv.positive_time_period_milliseconds,
     cv.Optional(CONF_CLOSE_DURATION, default="18s"): cv.positive_time_period_milliseconds,
@@ -78,6 +80,7 @@ async def to_code(config):
     await cover.register_cover(var, config)
     parent = await cg.get_variable(config[CONF_UAPBRIDGE_ID])
     cg.add(var.set_uapbridge_parent(parent))
+    cg.add(var.set_assumed_state(config[CONF_ASSUMED_STATE]))
     cg.add(var.set_time_based_position(config[CONF_TIME_BASED_POSITION]))
     cg.add(var.set_open_duration(config[CONF_OPEN_DURATION].total_milliseconds))
     cg.add(var.set_close_duration(config[CONF_CLOSE_DURATION].total_milliseconds))

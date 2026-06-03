@@ -15,6 +15,7 @@ class UAPBridgeCover : public cover::Cover, public Component {
   void on_event_triggered();
   void control(const cover::CoverCall &call) override;
   cover::CoverTraits get_traits() override;
+  void set_assumed_state(bool value) { this->assumed_state_ = value; }
   void set_time_based_position(bool value) { this->time_based_position_ = value; }
   void set_open_duration(uint32_t value);
   uint32_t get_open_duration() const { return this->open_duration_ms_; }
@@ -44,6 +45,7 @@ class UAPBridgeCover : public cover::Cover, public Component {
     cover::CoverOperation previousOperation_ = cover::COVER_OPERATION_IDLE;
     UAPBridge::hoermann_state_t previousState_ = UAPBridge::hoermann_state_t::hoermann_state_stopped;
     float previousPosition_ = -1.0f;
+    bool assumed_state_ = false;
     bool time_based_position_ = false;
     uint32_t open_duration_ms_ = 18000;
     uint32_t close_duration_ms_ = 18000;

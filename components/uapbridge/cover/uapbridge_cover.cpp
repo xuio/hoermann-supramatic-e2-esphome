@@ -143,6 +143,7 @@ void UAPBridgeCover::set_close_report_delay(uint32_t value) {
 void UAPBridgeCover::dump_config() {
   LOG_COVER("", "UAPBridge Cover", this);
   ESP_LOGCONFIG(TAG, "  Time Based Position: %s", this->time_based_position_ ? "true" : "false");
+  ESP_LOGCONFIG(TAG, "  Assumed State: %s", this->assumed_state_ ? "true" : "false");
   if (this->time_based_position_) {
     ESP_LOGCONFIG(TAG, "  Open Motion Duration: %.3fs", this->open_duration_ms_ / 1000.0f);
     ESP_LOGCONFIG(TAG, "  Close Motion Duration: %.3fs", this->close_duration_ms_ / 1000.0f);
@@ -217,7 +218,7 @@ void UAPBridgeCover::loop() {
 
 cover::CoverTraits UAPBridgeCover::get_traits() {
   auto traits = cover::CoverTraits();
-  traits.set_is_assumed_state(true);
+  traits.set_is_assumed_state(this->assumed_state_);
   traits.set_supports_position(this->time_based_position_);
   traits.set_supports_stop(true);
   traits.set_supports_tilt(false);

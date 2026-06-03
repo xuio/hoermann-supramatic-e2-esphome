@@ -9,6 +9,7 @@ cover:
   - platform: uapbridge
     name: "${friendly_name}"
     device_class: garage
+    assumed_state: false
     time_based_position: true
     open_duration: 10215ms
     close_duration: 18565ms
@@ -32,6 +33,8 @@ cover:
 Home Assistant sees a normal cover position where `0%` is closed and `100%` is open. This matches the convention used by Home Assistant cover entities and Shelly cover mode.
 
 The garage door cover advertises `supports_position: true`, but some Home Assistant garage-door cards do not expose a percentage slider for `device_class: garage`. The main YAML therefore also exposes a separate `Garage Door Target Position` number entity. Use that number slider to send percentage targets directly while keeping the main entity as a garage-door cover for HomeKit Bridge.
+
+For the calibrated SupraMatic E2 setup, keep `assumed_state: false`. The opener reports real open/closed and movement states over HCP, and HomeKit Bridge maps those Home Assistant cover states to the HomeKit garage-door current/target state characteristics.
 
 The main YAML also exposes read-only live position sensors:
 
