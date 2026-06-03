@@ -1,56 +1,88 @@
-# Hörmann SupraMatic E2 ESPHome UAP1 Emulator
+# Hörmann SupraMatic E2 ESPHome Garage Door Controller
 
 [![CI](https://github.com/xuio/hoermann-supramatic-e2-esphome/actions/workflows/ci.yml/badge.svg)](https://github.com/xuio/hoermann-supramatic-e2-esphome/actions/workflows/ci.yml)
 [![License: Unlicense](https://img.shields.io/badge/license-Unlicense-blue.svg)](LICENSE)
 
-ESPHome firmware for a single ESP32 that connects directly to a Hörmann SupraMatic E2 HCP1/BUS connector through an RS-485 adapter, emulates a UAP1 accessory, and exposes the garage door to Home Assistant.
+This project turns one **Waveshare ESP32-S3-ETH board with PoE** and one **isolated RS-485 adapter** into a wired Home Assistant controller for a **Hörmann SupraMatic E2** garage-door opener.
 
-The intended path is:
+In practical terms:
+
+- The ESP32 plugs into the opener's small BUS/accessory connector.
+- Home Assistant gets a normal garage-door `cover` entity, plus light and diagnostics.
+- Apple Home can control the door through Home Assistant's HomeKit Bridge.
+- No physical Hörmann UAP1 module, cloud service, relay hack, BlueSecur bridge, or second microcontroller is required.
+
+The firmware works by speaking the older Hörmann accessory-bus protocol directly. Technically, it behaves like a UAP1 accessory on the HCP1 bus, but the goal is simple: a local Ethernet garage-door integration for Home Assistant.
 
 ```text
-Hörmann SupraMatic E2 HCP1/BUS
-  -> RS-485 adapter
+Hörmann SupraMatic E2 BUS port
+  -> isolated RS-485 adapter
   -> Waveshare ESP32-S3-ETH with PoE
-  -> ESPHome native API
+  -> ESPHome
   -> Home Assistant
   -> HomeKit Bridge
   -> Apple Home
 ```
 
-This project does not use a physical Hörmann UAP1 module, does not require a second MCU, does not implement HomeKit on the ESP32, and does not use cloud services.
+## What The Terms Mean
 
-## Status
+| Term | Plain meaning |
+| --- | --- |
+| BUS / HCP1 | The older wired Hörmann accessory connector used by the tested SupraMatic E2. |
+| UAP1 | A Hörmann accessory module that lets external systems control and read the opener. This firmware imitates the bus conversation, so you do not need the physical UAP1 box. |
+| RS-485 | The electrical signalling used on the BUS. The ESP32 must use an RS-485 adapter; do not wire ESP32 GPIO directly to the opener. |
+| ESPHome | Firmware framework that makes the ESP32 appear directly in Home Assistant. |
+| HomeKit Bridge | A Home Assistant feature that exposes the Home Assistant garage-door entity to Apple Home. HomeKit code does not run on the ESP32. |
+| Position estimate | A calibrated timer-based door position, because this opener does not provide continuous position over the bus. |
 
-This firmware is tested on one SupraMatic E2 installation with a Waveshare ESP32-S3-ETH board, Waveshare IEEE 802.3af PoE power, and a Waveshare TTL TO RS485 (C) isolated adapter. It should be treated as a reverse-engineered integration for careful builders, not as an official Hörmann product.
+## Current Status
+
+Tested on one SupraMatic E2 installation with:
+
+- Hörmann SupraMatic E2, Series 2 / HCP1-era opener
+- Waveshare ESP32-S3-ETH board powered by IEEE 802.3af PoE
+- Waveshare TTL TO RS485 (C) isolated adapter
+- RJ12 / 6P6C cable or breakout for the opener BUS socket
 
 Supported and tested in Home Assistant:
 
 - Garage-door cover with `device_class: garage`
 - Open, close, stop, light toggle, and optional vent/impulse controls
-- Open/closed/moving state from HCP status
+- Open/closed/moving state from BUS status frames
 - Time-based position estimation with calibrated motion curves
-- Obstruction/close-failure latch when a close does not reach the HCP closed bit
+- Obstruction/close-failure latch when a close does not reach the confirmed closed state
 - HTTP debug stream and PSRAM protocol capture for troubleshooting
 - OTA updates over Ethernet
 
-## Safety
+This is an unofficial reverse-engineered integration. Treat it as a careful builder project, not as an official Hörmann product.
 
-Garage doors can injure people and damage property. Build and test this only while physically present at the door. Do not enable remote closing until state feedback, obstruction protection, and your installation's safety hardware have been verified. Read [docs/safety.md](docs/safety.md) before wiring or flashing.
+## Safety First
+
+Garage doors can injure people and damage property. Build and test this only while physically present at the door.
+
+Before enabling remote close:
+
+- Verify that open/closed/moving state is reported correctly.
+- Verify your obstruction protection and photocell/safety hardware.
+- Test all commands while standing at the door.
+- Read [docs/safety.md](docs/safety.md).
+
+The firmware avoids reporting exact `0%` closed from timing alone. It only reports fully closed after the opener's BUS status confirms it.
 
 ## Hardware
 
 Known working hardware:
 
-- Hörmann SupraMatic E2, Series 2 / HCP1-era opener
-- Waveshare ESP32-S3-ETH board with IEEE 802.3af PoE power
+- Hörmann SupraMatic E2 opener
+- Waveshare ESP32-S3-ETH board with IEEE 802.3af PoE
 - Waveshare TTL TO RS485 (C) isolated half-duplex adapter
 - RJ12 / 6P6C cable or breakout for the opener BUS socket
 
 Do not use a normal RJ11 telephone cable unless you have verified it has all six contacts and the needed conductors.
 
-See [docs/hardware-wiring.md](docs/hardware-wiring.md) for the full pinout, wiring diagram, cable color example, termination notes, and adapter wiring.
+See [docs/hardware-wiring.md](docs/hardware-wiring.md) for the wiring diagram, pinout, cable color example, termination notes, and adapter wiring.
 
-## Quick Start
+## Build And Flash
 
 Install `uv`, then build with the pinned Python and ESPHome versions:
 
@@ -76,7 +108,7 @@ uv run esphome config configs/supramatic-e2.yaml
 uv run esphome compile configs/supramatic-e2.yaml
 ```
 
-First flash is normally over USB-C. For conservative first bus bring-up, flash `configs/supramatic-e2-minimal.yaml`; it exposes state diagnostics while keeping remote close, impulse, and unverified stop disabled. The full `configs/supramatic-e2.yaml` is the tested working setup after state and safety behavior have been verified.
+The first flash is normally over USB-C:
 
 ```bash
 uv run esphome run configs/supramatic-e2.yaml
@@ -88,7 +120,32 @@ After the first flash, update over Ethernet:
 uv run esphome upload configs/supramatic-e2.yaml --device supramatic-e2.local
 ```
 
+For conservative first bus bring-up, use [configs/supramatic-e2-minimal.yaml](configs/supramatic-e2-minimal.yaml). It exposes diagnostics while keeping remote close, impulse, and unverified stop disabled. Use the full [configs/supramatic-e2.yaml](configs/supramatic-e2.yaml) only after state and safety behavior have been verified.
+
 See [docs/getting-started.md](docs/getting-started.md) and [docs/flashing-ota.md](docs/flashing-ota.md) for the complete setup flow.
+
+## Home Assistant And Apple Home
+
+The ESP exposes entities to Home Assistant through the ESPHome native API:
+
+- Main garage-door cover
+- Separate garage light
+- Position estimate and clear-opening height sensors
+- Diagnostic binary sensors and debug endpoints
+
+Apple Home support comes from Home Assistant's HomeKit Bridge. Include the Home Assistant cover and light in HomeKit Bridge; no direct HomeKit firmware is needed on the ESP32.
+
+See [docs/home-assistant-homekit.md](docs/home-assistant-homekit.md).
+
+## Position Calibration
+
+The SupraMatic E2 does not appear to expose reliable continuous position over the BUS. This firmware therefore uses a calibrated time-based model:
+
+- Full open and full close use measured motion curves and confirmed endpoint status.
+- Intermediate percentage targets use a measured interrupted-stop model.
+- Calibration was derived from ArUco marker video, QR timecode alignment, and HCP/BUS protocol logs.
+
+See [docs/time-based-position.md](docs/time-based-position.md) for the firmware settings and [tools/README.md](tools/README.md) for the visual calibration workflow with screenshots and plots.
 
 ## Repository Layout
 
@@ -104,7 +161,7 @@ tools/                  Python helper tools for captures and calibration
 
 Primary files:
 
-- [configs/supramatic-e2.yaml](configs/supramatic-e2.yaml): main Ethernet/PoE UAP1 emulator firmware
+- [configs/supramatic-e2.yaml](configs/supramatic-e2.yaml): main Ethernet/PoE firmware
 - [configs/supramatic-e2-minimal.yaml](configs/supramatic-e2-minimal.yaml): safer minimal bring-up config
 - [configs/supramatic-e2-proxy.yaml](configs/supramatic-e2-proxy.yaml): RS-485 network proxy/debug mode
 - [configs/supramatic-e2-monitor.yaml](configs/supramatic-e2-monitor.yaml): read-only HTTP monitor firmware
@@ -139,19 +196,19 @@ uv run garage-decode-phone-sync-video --self-test
 uv run garage-phone-sync --dry-run
 ```
 
-The tools are mainly for protocol debugging and motion calibration. Normal users only need ESPHome unless they want to reproduce the calibration process. See [tools/README.md](tools/README.md) for the visual ArUco/QR calibration workflow and latest example plots.
-
-## Home Assistant and HomeKit
-
-The ESP exposes a Home Assistant `cover` entity through the ESPHome native API. HomeKit is handled by Home Assistant's HomeKit Bridge. No direct HomeKit code runs on the ESP32.
-
-The garage light is exposed as a separate Home Assistant light and can also be included in HomeKit Bridge. See [docs/home-assistant-homekit.md](docs/home-assistant-homekit.md).
+Normal users only need ESPHome. The Python tools are mainly for protocol debugging and motion calibration.
 
 ## Compatibility
 
-This project targets Hörmann HCP1/UAP1-era openers, specifically the SupraMatic E2 setup described above. It is not intended for Series 4/HCP2, BlueSecur, UAP1-HCP, relay-only installations, or setups that require a physical UAP1.
+This project targets the older wired accessory BUS used by the tested Hörmann SupraMatic E2 setup. It is not intended for:
 
-If you test another opener/index, please share sanitized logs and the exact opener model/index. See [CONTRIBUTING.md](CONTRIBUTING.md).
+- Hörmann Series 4 / HCP2 systems
+- BlueSecur cloud/app integrations
+- UAP1-HCP for newer openers
+- Relay-only installations
+- Setups that require a physical UAP1 module
+
+If you test another opener or index letter, please share sanitized logs and the exact opener model/index. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
