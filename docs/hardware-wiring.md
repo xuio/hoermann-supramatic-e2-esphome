@@ -1,5 +1,11 @@
 # Hardware Wiring
 
+## Wiring Diagram
+
+![Wiring diagram for the PoE ESP32-S3-ETH board, isolated RS-485 adapter, and Hörmann BUS](images/wiring-diagram.svg)
+
+Use this diagram as a visual wiring reference. Still verify RJ12 pin numbering and cable continuity on your exact cable before connecting the opener.
+
 ## BUS Pinout
 
 Use an RJ12 / 6P6C plug or breakout. Verify pin numbering on your exact cable before connecting anything.

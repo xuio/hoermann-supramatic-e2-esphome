@@ -48,7 +48,7 @@ Known working hardware:
 
 Do not use a normal RJ11 telephone cable unless you have verified it has all six contacts and the needed conductors.
 
-See [docs/hardware-wiring.md](docs/hardware-wiring.md) for the full pinout, cable color example, termination notes, and adapter wiring.
+See [docs/hardware-wiring.md](docs/hardware-wiring.md) for the full pinout, wiring diagram, cable color example, termination notes, and adapter wiring.
 
 ## Quick Start
 
