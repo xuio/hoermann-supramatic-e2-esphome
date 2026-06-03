@@ -125,6 +125,7 @@ Primary files:
 - [HTTP monitor mode](docs/http-monitor-mode.md)
 - [RS-485 proxy mode](docs/proxy-mode.md)
 - [Persistent protocol log](docs/persistent-protocol-log.md)
+- [Python tools and visual calibration workflow](tools/README.md)
 - [FAQ](docs/FAQ.md)
 - [Release checklist](docs/release-checklist.md)
 
@@ -138,7 +139,7 @@ uv run garage-decode-phone-sync-video --self-test
 uv run garage-phone-sync --dry-run
 ```
 
-The tools are mainly for protocol debugging and motion calibration. Normal users only need ESPHome unless they want to reproduce the calibration process.
+The tools are mainly for protocol debugging and motion calibration. Normal users only need ESPHome unless they want to reproduce the calibration process. See [tools/README.md](tools/README.md) for the visual ArUco/QR calibration workflow and latest example plots.
 
 ## Home Assistant and HomeKit
 

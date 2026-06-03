@@ -61,6 +61,8 @@ The main E2 YAML keeps automatic travel-duration learning disabled so the video-
 
 These values show the active calibration from the cover component. You can still override them manually from Home Assistant; manual changes are persisted by the cover component as well.
 
+The visual calibration process is documented with screenshots and plots in [tools/README.md](../tools/README.md#visual-calibration-workflow). The underlying research artifacts are collected in [docs/research/README.md](research/README.md#visual-calibration-gallery), including the latest `AUTO_04` contact sheet, position timeline, HCP timing alignment, and interrupted-stop model fit.
+
 ## Behavior
 
 - Fully open and fully close still use the native HCP open/close commands.
