@@ -10,8 +10,8 @@ This guide assumes the known working hardware path:
 ## 1. Build the Firmware
 
 ```bash
-git clone https://github.com/xuio/hoermann-supravmatic-e2-esphome.git
-cd hoermann-supravmatic-e2-esphome
+git clone https://github.com/xuio/hoermann-supramatic-e2-esphome.git
+cd hoermann-supramatic-e2-esphome
 uv sync
 cp configs/secrets.example.yaml configs/secrets.yaml
 ```
