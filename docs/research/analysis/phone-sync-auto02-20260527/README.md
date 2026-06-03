@@ -2,7 +2,7 @@
 
 Source video: `uncommitted-videos/phone-sync-auto02.mov`
 
-Source capture bundle: `captures/phone-sync-capture-20260527-204730`
+Source capture bundle: `uncommitted-capture-bundles/phone-sync-auto02`
 
 This was the second automatic position-target run using `position_targets_no_calibration`.
 The video starts at run elapsed `34.9s` and ends at about `184.2s`. The ESP log

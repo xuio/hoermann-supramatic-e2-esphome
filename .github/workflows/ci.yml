@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  validate:
+    name: Validate ESPHome and tools
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        run: python -m pip install uv
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Prepare example secrets
+        run: cp configs/secrets.example.yaml configs/secrets.yaml
+
+      - name: Validate ESPHome configurations
+        run: |
+          uv run esphome config configs/supramatic-e2.yaml
+          uv run esphome config configs/supramatic-e2-minimal.yaml
+          uv run esphome config configs/supramatic-e2-monitor.yaml
+          uv run esphome config configs/supramatic-e2-monitor-rx17.yaml
+          uv run esphome config configs/supramatic-e2-monitor-idle-tx.yaml
+          uv run esphome config configs/supramatic-e2-proxy.yaml
+
+      - name: Compile main firmware
+        run: uv run esphome compile configs/supramatic-e2.yaml
+
+      - name: Run Python tool self-test
+        run: uv run garage-decode-phone-sync-video --self-test

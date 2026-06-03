@@ -2,7 +2,7 @@
 
 Source video: `uncommitted-videos/phone-sync-auto01.mov`
 
-Source capture bundle: `captures/phone-sync-capture-20260527-193332`
+Source capture bundle: `uncommitted-capture-bundles/phone-sync-auto01`
 
 This was the first automatic phone-sync run. The hardware behaved normally, but the old runner waited for decoded HCP state `Venting` after the vent command. The SupraMatic E2 instead reported the partly-open state on the operator display as `H` and the firmware/HCP state stayed `Stopped`, so the runner eventually timed out.
 

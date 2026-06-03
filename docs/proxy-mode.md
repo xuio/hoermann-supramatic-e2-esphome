@@ -2,7 +2,7 @@
 
 Proxy mode flashes the same Waveshare ESP32-S3-ETH PoE hardware as a raw Ethernet-to-UART bridge for HCP1 debugging. It does not load the UAP1 emulator and it does not expose Home Assistant cover, light, switch, or button entities.
 
-Use [supramatic-e2-proxy.yaml](supramatic-e2-proxy.yaml) for this mode.
+Use [configs/supramatic-e2-proxy.yaml](../configs/supramatic-e2-proxy.yaml) for this mode.
 
 ## Safety Model
 

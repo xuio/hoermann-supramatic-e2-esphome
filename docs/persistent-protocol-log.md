@@ -21,7 +21,7 @@ The PSRAM capture avoids flash wear entirely. On measured idle SupraMatic E2 HCP
 No persistent-log partition migration is needed. A normal ESPHome OTA upload is enough:
 
 ```bash
-uv run esphome upload supramatic-e2.yaml --device <local-ip>
+uv run esphome upload configs/supramatic-e2.yaml --device <esp-ip-or-hostname>
 ```
 
 The old `/persistent_log/format` endpoint remains as a compatibility alias for clearing the PSRAM buffer. It does not format flash.

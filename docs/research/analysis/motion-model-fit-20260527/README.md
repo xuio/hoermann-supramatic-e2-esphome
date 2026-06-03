@@ -4,7 +4,7 @@ This report uses the earlier timing-aligned full-travel capture as the only full
 
 ## Sources Used
 
-- Full-travel timing-aligned capture: `captures/hcp-timing-calibration-20260527-164141/hcp-video-timing-alignment.json`
+- Full-travel timing-aligned capture: `uncommitted-capture-bundles/hcp-timing-calibration/hcp-video-timing-alignment.json`
 - Interrupted target run: `docs/research/analysis/phone-sync-auto04-20260527/summary.json`
 - AUTO_04 video-derived position samples: `docs/research/analysis/phone-sync-auto04-20260527/auto04_progress_5fps.csv`
 

@@ -2,7 +2,7 @@
 
 The SupraMatic E2/HCP1 status frames may not expose a trustworthy continuous door position. The main firmware can therefore expose a Shelly-style position-capable Home Assistant cover by estimating position from travel time.
 
-This is enabled in [supramatic-e2.yaml](supramatic-e2.yaml):
+This is enabled in [configs/supramatic-e2.yaml](../configs/supramatic-e2.yaml):
 
 ```yaml
 cover:
@@ -86,7 +86,7 @@ These values show the active calibration from the cover component. You can still
 - The firmware will not publish exact `0%` closed from timing alone. It only publishes `0%` after the HCP closed bit is decoded.
 - The obstruction latch is inferred from a failed timed close, not from a confirmed E2 error-code field. Keep protocol logging available during further obstruction tests so a future explicit E2 error bit can replace or refine the inference if one is found.
 - `position_deadband` is limited to `20%` or less at ESPHome config validation time so a broad deadband cannot hide large position errors.
-- Downward position moves require `allow_remote_close: true`; the default YAML keeps it `false` until you have verified state decoding and obstruction protection.
+- Downward position moves require `allow_remote_close: true`. The minimal bring-up YAML keeps it `false`; the full tested YAML enables it after state decoding and obstruction behavior have been verified.
 - Intermediate target stopping relies on the stop command path. On this E2, movement broadcasts can decode as `0x0000` / stopped while the door is physically moving, so percentage control requires `use_unverified_stop_command: true`; that allows the raw HCP stop command even when the moving bit is not present, while still requiring a fresh valid bus broadcast.
 - Do not expose position control to HomeKit until open, close, stop, and state correction have been tested while physically present.
 
@@ -100,17 +100,17 @@ These values show the active calibration from the cover component. You can still
 6. Test `75%`, `50%`, and `25%` with the `Garage Door Target Position` number while standing at the door.
 7. If a value is obviously wrong, enter a corrected duration manually after analyzing synchronized video/HCP data.
 
-For repeatable position tests, use [tools/garage_test_wizard.py](tools/garage_test_wizard.py). It records full-open clear height in meters and asks for measured clear opening height after each target. The saved CSV gives actual position and target error without guessing percentages by eye.
+For repeatable position tests, use [tools/garage_test_wizard.py](../tools/garage_test_wizard.py). It records full-open clear height in meters and asks for measured clear opening height after each target. The saved CSV gives actual position and target error without guessing percentages by eye.
 
 The Loxone Hörmann Air adapter is a useful reference point: it integrates through the Hörmann BUS, supports the Garage/Gate block including partially-open input, and documents automatic learning of travel durations. This firmware follows the same practical model, but keeps the timing estimate local and inspectable in ESPHome logs.
 
 ## HCP / Video Timing Alignment
 
-Use [tools/run_hcp_timing_calibration.py](tools/run_hcp_timing_calibration.py) when the video curve has already been extracted and you only need a normal HCP run. It commands a full open/close sequence through the ESPHome native API, captures the ESP persistent protocol log, and then calls [tools/analyze_hcp_timing.py](tools/analyze_hcp_timing.py).
+Use [tools/run_hcp_timing_calibration.py](../tools/run_hcp_timing_calibration.py) when the video curve has already been extracted and you only need a normal HCP run. It commands a full open/close sequence through the ESPHome native API, captures the ESP persistent protocol log, and then calls [tools/analyze_hcp_timing.py](../tools/analyze_hcp_timing.py).
 
 The analyzer treats the first HCP open or closed endpoint bit after a command as the fully stopped endpoint, then shifts the ArUco curve so its end aligns to that HCP endpoint. The reported offset is therefore a combined command-to-motion-start and endpoint-report offset; splitting those requires simultaneous video and HCP capture.
 
-For a simultaneous phone video run, start with the door fully closed and use [tools/run_phone_video_sync_capture.py](tools/run_phone_video_sync_capture.py). It opens a fullscreen Tk display on the MacBook, starts the ESP persistent HCP logger, records a near full-height compact QR timecode timeline, and runs the default `position_targets` sequence after `Space`: full open, full close, `25%` from closed, full close, `50%` from closed, full close, full open, `75%` from open, full open, `50%` from open, and final close. Each command is separated by a timed delay and settle period.
+For a simultaneous phone video run, start with the door fully closed and use [tools/run_phone_video_sync_capture.py](../tools/run_phone_video_sync_capture.py). It opens a fullscreen Tk display on the MacBook, starts the ESP persistent HCP logger, records a near full-height compact QR timecode timeline, and runs the default `position_targets` sequence after `Space`: full open, full close, `25%` from closed, full close, `50%` from closed, full close, full open, `75%` from open, full open, `50%` from open, and final close. Each command is separated by a timed delay and settle period.
 
 For a second position-only run, use `--sequence position_targets_no_calibration`. It assumes the door starts fully closed and skips the initial full-open/full-close calibration pair, then tests `25%`, `50%`, and `75%` from closed plus `75%`, `50%`, and `25%` from open with endpoint resets between targets. The runner uses a `1s` settle delay between phases by default.
 

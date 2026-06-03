@@ -1,6 +1,6 @@
 {
   "sources_used": {
-    "full_travel_calibration": "captures/hcp-timing-calibration-20260527-164141/hcp-video-timing-alignment.json",
+    "full_travel_calibration": "uncommitted-capture-bundles/hcp-timing-calibration/hcp-video-timing-alignment.json",
     "interrupted_target_run": "docs/research/analysis/phone-sync-auto04-20260527/summary.json",
     "auto04_progress": "docs/research/analysis/phone-sync-auto04-20260527/auto04_progress_5fps.csv",
     "excluded": [

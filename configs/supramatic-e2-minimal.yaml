@@ -1,13 +1,12 @@
 substitutions:
-  name: "supramatic-e2-monitor"
-  friendly_name: "Garage Door RS485 Monitor"
-  rs485_rx_pin: GPIO17
+  name: "supramatic-e2"
+  friendly_name: "Garage Door"
+  rs485_rx_pin: GPIO16
+  rs485_tx_pin: GPIO17
 
 esphome:
   name: "${name}"
   friendly_name: "${friendly_name}"
-  platformio_options:
-    board_build.f_cpu: 240000000L
 
 esp32:
   board: esp32-s3-devkitc-1
@@ -18,7 +17,7 @@ esp32:
 external_components:
   - source:
       type: local
-      path: components
+      path: ../components
 
 logger:
   level: INFO
@@ -55,21 +54,36 @@ uart:
   parity: NONE
   stop_bits: 1
   rx_pin: ${rs485_rx_pin}
-  rx_buffer_size: 2048
+  tx_pin: ${rs485_tx_pin}
 
-rs485_http_monitor:
-  id: garage_rs485_http_monitor
+uapbridge_esp:
+  id: garage_door_comp
   uart_id: uart_bus
-  port: 8080
-  send_gaps: true
-  gap_threshold: 3ms
-  history_size: 200
+  diagnostic_mode: false
+  listen_only: false
+  valid_broadcast_timeout: 10s
+  require_fresh_broadcast_for_commands: true
+  allow_remote_close: false
+  allow_remote_impulse: false
+  use_unverified_stop_command: false
+
+cover:
+  - platform: uapbridge
+    name: "${friendly_name}"
+    device_class: garage
 
 binary_sensor:
   - platform: status
     name: "${friendly_name} ESPHome Status"
+  - platform: uapbridge
+    got_valid_broadcast:
+      name: "${friendly_name} Valid HCP Broadcast"
+    error_state:
+      name: "${friendly_name} Error State"
 
 text_sensor:
+  - platform: uapbridge
+    name: "${friendly_name} State"
   - platform: ethernet_info
     ip_address:
       name: "${friendly_name} IP Address"

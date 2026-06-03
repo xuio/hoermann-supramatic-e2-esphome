@@ -318,7 +318,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--expected-name", default="supramatic-e2")
     parser.add_argument("--cover-object-id", default=DEFAULT_COVER_OBJECT_ID)
     parser.add_argument("--api-key", default=os.environ.get("ESPHOME_API_KEY"))
-    parser.add_argument("--secrets-file", type=Path, default=Path("secrets.yaml"))
+    parser.add_argument("--secrets-file", type=Path, default=Path("configs/secrets.yaml"))
     parser.add_argument("--sequence", default="open,close", help="Comma-separated full-travel sequence, for example open,close")
     parser.add_argument("--curve-lookup", type=Path, default=Path("docs/research/analysis/garage-door-motion-20260527/curve_lookup.json"))
     parser.add_argument("--motion-timeout", type=float, default=90.0)

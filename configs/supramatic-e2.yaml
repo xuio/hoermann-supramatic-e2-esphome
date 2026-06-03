@@ -24,7 +24,7 @@ psram:
 external_components:
   - source:
       type: local
-      path: components
+      path: ../components
 
 logger:
   level: DEBUG

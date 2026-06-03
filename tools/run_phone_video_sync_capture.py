@@ -1499,7 +1499,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--expected-name", default="supramatic-e2")
     parser.add_argument("--cover-object-id", default=DEFAULT_COVER_OBJECT_ID)
     parser.add_argument("--api-key", default=os.environ.get("ESPHOME_API_KEY"))
-    parser.add_argument("--secrets-file", type=Path, default=Path("secrets.yaml"))
+    parser.add_argument("--secrets-file", type=Path, default=Path("configs/secrets.yaml"))
     parser.add_argument("--command-delay", type=float, default=10.0, help="Fallback delay for manual scheduled commands")
     parser.add_argument("--initial-delay", type=float, default=15.0, help="Delay after Space before the first automatic command")
     parser.add_argument("--settle-delay", type=float, default=1.0, help="Delay between one reached HCP state and the next command")

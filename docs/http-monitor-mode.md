@@ -2,7 +2,7 @@
 
 HTTP monitor mode flashes the Waveshare ESP32-S3-ETH PoE hardware as a read-only RS-485 capture node. It is intentionally different from proxy mode: it never transmits to the Hörmann bus, so it is useful for remote inspection when TCP-proxy TX latency is too high for live protocol experiments.
 
-Use [supramatic-e2-monitor.yaml](supramatic-e2-monitor.yaml) for this mode.
+Use [configs/supramatic-e2-monitor.yaml](../configs/supramatic-e2-monitor.yaml) for this mode.
 
 ## Endpoints
 

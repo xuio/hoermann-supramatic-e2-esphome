@@ -2,7 +2,7 @@
 
 Source video: `uncommitted-videos/phone-sync-auto04.mov`
 
-Source capture bundle: `captures/phone-sync-capture-20260527-230736`
+Source capture bundle: `uncommitted-capture-bundles/phone-sync-auto04`
 
 This was a successful `position_targets_no_calibration` run. The QR fit maps video time to ESP run time as:
 `run_elapsed_s = 0.99997635 * video_time_s + 17.862`.

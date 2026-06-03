@@ -1,7 +1,7 @@
 substitutions:
-  name: "supramatic-e2-proxy"
-  friendly_name: "Garage Door RS485 Proxy"
-  rs485_rx_pin: GPIO16
+  name: "supramatic-e2-monitor"
+  friendly_name: "Garage Door RS485 Monitor"
+  rs485_rx_pin: GPIO17
 
 esphome:
   name: "${name}"
@@ -18,7 +18,7 @@ esp32:
 external_components:
   - source:
       type: local
-      path: components
+      path: ../components
 
 logger:
   level: INFO
@@ -55,17 +55,15 @@ uart:
   parity: NONE
   stop_bits: 1
   rx_pin: ${rs485_rx_pin}
-  rx_buffer_size: 1024
+  rx_buffer_size: 2048
 
-rs485_proxy:
-  id: garage_rs485_proxy
+rs485_http_monitor:
+  id: garage_rs485_http_monitor
   uart_id: uart_bus
-  port: 6638
-  allow_tx: false
-  # To test active transmission, set allow_tx true and configure:
-  # auth_token: !secret proxy_auth_token
+  port: 8080
   send_gaps: true
   gap_threshold: 3ms
+  history_size: 200
 
 binary_sensor:
   - platform: status

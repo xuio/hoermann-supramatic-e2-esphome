@@ -1,9 +1,9 @@
 # SupraMatic E2 Log Capture
 
-Temporarily set `diagnostic_mode: true` in `supramatic-e2.yaml`, then run:
+Temporarily set `diagnostic_mode: true` in `configs/supramatic-e2.yaml`, then run:
 
 ```bash
-uv run esphome logs supramatic-e2.yaml
+uv run esphome logs configs/supramatic-e2.yaml
 ```
 
 Capture one block per physical door state.
@@ -44,4 +44,4 @@ curl http://supramatic-e2.local:8080/persistent_log/stop
 curl --max-time 120 http://supramatic-e2.local:8080/persistent_log.bin > persistent-log.bin
 ```
 
-The dump is a compact binary capture from the ESP's PSRAM buffer and does not write flash. See [persistent-protocol-log.md](docs/persistent-protocol-log.md).
+The dump is a compact binary capture from the ESP's PSRAM buffer and does not write flash. See [persistent-protocol-log.md](persistent-protocol-log.md).

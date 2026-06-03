@@ -24,14 +24,14 @@ The analysis fits opening and closing separately because the drive uses differen
 
 ## Artifacts
 
-- [curve_lookup.json](docs/research/analysis/garage-door-motion-20260527/curve_lookup.json): lookup table at 5% intervals for firmware calibration.
-- [opening_curve.csv](docs/research/analysis/garage-door-motion-20260527/opening_curve.csv): per-frame opening curve.
-- [closing_curve.csv](docs/research/analysis/garage-door-motion-20260527/closing_curve.csv): per-frame closing curve.
-- [opening-curve.png](docs/research/analysis/garage-door-motion-20260527/opening-curve.png): opening plot.
-- [closing-curve.png](docs/research/analysis/garage-door-motion-20260527/closing-curve.png): closing plot.
-- [normalized-curves.png](docs/research/analysis/garage-door-motion-20260527/normalized-curves.png): opening and closing over normalized travel time.
-- [hcp-video-timing-alignment.md](docs/research/analysis/garage-door-motion-20260527/hcp-video-timing-alignment.md): HCP endpoint timing aligned to the video curves.
-- [hcp-video-timing-alignment.png](docs/research/analysis/garage-door-motion-20260527/hcp-video-timing-alignment.png): HCP/video timing overlay plot.
+- [curve_lookup.json](curve_lookup.json): lookup table at 5% intervals for firmware calibration.
+- [opening_curve.csv](opening_curve.csv): per-frame opening curve.
+- [closing_curve.csv](closing_curve.csv): per-frame closing curve.
+- [opening-curve.png](opening-curve.png): opening plot.
+- [closing-curve.png](closing-curve.png): closing plot.
+- [normalized-curves.png](normalized-curves.png): opening and closing over normalized travel time.
+- [hcp-video-timing-alignment.md](hcp-video-timing-alignment.md): HCP endpoint timing aligned to the video curves.
+- [hcp-video-timing-alignment.png](hcp-video-timing-alignment.png): HCP/video timing overlay plot.
 
 ## Sectional-Door Caveat
 
