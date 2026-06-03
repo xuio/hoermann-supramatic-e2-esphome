@@ -58,7 +58,7 @@ Test in this order while physically present:
 2. Stop/impulse behavior
 3. Open
 4. Close
-5. Position targets
+5. Position targets, only if you want percentage control
 6. Obstruction behavior
 
 Disable remote close and impulse again if you do not need them after testing.

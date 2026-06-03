@@ -21,6 +21,8 @@ The garage light can be exposed separately. It does not need to be grouped into 
 
 HomeKit garage-door accessories do not expose the ESPHome percentage-position model. Use Home Assistant for percentage tests and HomeKit for normal open/close garage-door behavior.
 
+The visual calibration workflow is optional and is only useful for improving Home Assistant percentage targets. It is unnecessary if you only plan to use Apple Home for normal garage-door open/close control.
+
 ## If HomeKit Looks Stale
 
 1. Confirm `cover.garage` changes correctly in Home Assistant.

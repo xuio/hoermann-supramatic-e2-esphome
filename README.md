@@ -133,11 +133,16 @@ See [docs/home-assistant-homekit.md](docs/home-assistant-homekit.md).
 
 ## Position Calibration
 
-The SupraMatic E2 does not appear to expose reliable continuous position over the BUS. This firmware therefore uses a calibrated time-based model:
+This step is optional. If you only want normal garage-door behavior such as open, close, stop, light, Home Assistant state, and HomeKit Bridge support, you do not need the visual calibration workflow.
+
+The calibration exists for one extra feature: percentage position control, where Home Assistant can request a target like `25%` or `50%` open. The SupraMatic E2 does not appear to expose reliable continuous position over the BUS, so percentage control has to be estimated from travel time.
+
+The included defaults are based on the tested door. Reproducing the calibration for another door is deliberately a bit overengineered: it uses printed ArUco markers, phone video, QR timecode alignment, and HCP/BUS protocol logs. That complexity is only useful if you want to tune position control accurately.
+
+The model has two parts:
 
 - Full open and full close use measured motion curves and confirmed endpoint status.
 - Intermediate percentage targets use a measured interrupted-stop model.
-- Calibration was derived from ArUco marker video, QR timecode alignment, and HCP/BUS protocol logs.
 
 See [docs/time-based-position.md](docs/time-based-position.md) for the firmware settings and [tools/README.md](tools/README.md) for the visual calibration workflow with screenshots and plots.
 

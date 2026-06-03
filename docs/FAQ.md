@@ -40,6 +40,16 @@ The tested SupraMatic E2 emits one-byte status broadcasts that do not carry a re
 
 Home Assistant garage-door cards may hide position sliders for `device_class: garage`. The cover still supports position, and the separate number entity gives a visible slider for percentage testing.
 
+## Do I need visual calibration?
+
+No. Visual calibration is fully optional. You can use the project as a normal garage-door controller for open, close, stop, light, state reporting, diagnostics, OTA, and HomeKit Bridge without filming the door or printing markers.
+
+The visual calibration workflow is only for tuning percentage position control. It is intentionally a bit overengineered because it was built to measure and audit the timing model: printed ArUco markers track the door in video, a QR code aligns the video to ESP/HCP logs, and the analysis turns that into motion curves.
+
+## What happens if I skip position calibration?
+
+The door still works as a garage-door cover. You should rely on open/close/stop and confirmed endpoint state. Intermediate percentage targets may be less accurate, especially on doors whose speed profile differs from the tested SupraMatic E2.
+
 ## How does HomeKit work?
 
 HomeKit is handled by Home Assistant's HomeKit Bridge. The ESP32 only exposes ESPHome entities to Home Assistant.

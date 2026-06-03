@@ -8,6 +8,8 @@ Private details such as exact serial number and local filesystem paths are inten
 
 ## Visual Calibration Gallery
 
+This gallery documents the optional percentage-position calibration. It is not needed for normal open/close garage-door control, Home Assistant state reporting, or HomeKit Bridge. It is included so the time-based position model can be audited and reproduced by people who want accurate intermediate targets.
+
 The latest successful synchronized video run is [phone-sync-auto04-20260527](analysis/phone-sync-auto04-20260527/README.md). It combines:
 
 - A phone video of the door and ArUco markers.

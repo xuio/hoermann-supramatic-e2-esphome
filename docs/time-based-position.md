@@ -2,6 +2,22 @@
 
 The SupraMatic E2/HCP1 status frames may not expose a trustworthy continuous door position. The main firmware can therefore expose a Shelly-style position-capable Home Assistant cover by estimating position from travel time.
 
+## Do You Need This?
+
+Probably not for basic garage-door control. Normal open, close, stop, light, Home Assistant state, obstruction latch, diagnostics, OTA, and HomeKit Bridge support do not require visual calibration.
+
+Time-based position estimation matters only if you want Home Assistant to request intermediate positions such as `25%`, `50%`, or `75%` open. Without it, the integration can still work as a normal garage-door cover.
+
+The visual calibration workflow is intentionally a bit overengineered. It was built to debug one real SupraMatic E2 installation and to make the resulting timing model auditable. It is useful when you want accurate percentage control, or when your door's motion differs from the included defaults. It is unnecessary if you are satisfied with open/close and endpoint state.
+
+At a high level, visual calibration answers three questions:
+
+- How long does the visible door motion take when opening and closing?
+- How much command/report delay exists between the ESP command, visible movement, and the final HCP end-state bit?
+- If the firmware sends a stop command for an intermediate target, where does the door actually settle?
+
+The tools answer those questions by filming printed ArUco markers on the door while a large QR timecode is visible on a MacBook screen. The QR aligns video time with the ESP/HCP protocol log, and the marker positions convert the video into a physical position curve. That is more machinery than most users need, but it gives repeatable evidence instead of guessing timings by eye.
+
 This is enabled in [configs/supramatic-e2.yaml](../configs/supramatic-e2.yaml):
 
 ```yaml
@@ -61,7 +77,7 @@ The main E2 YAML keeps automatic travel-duration learning disabled so the video-
 
 These values show the active calibration from the cover component. You can still override them manually from Home Assistant; manual changes are persisted by the cover component as well.
 
-The visual calibration process is documented with screenshots and plots in [tools/README.md](../tools/README.md#visual-calibration-workflow). The underlying research artifacts are collected in [docs/research/README.md](research/README.md#visual-calibration-gallery), including the latest `AUTO_04` contact sheet, position timeline, HCP timing alignment, and interrupted-stop model fit.
+The optional visual calibration process is documented with screenshots and plots in [tools/README.md](../tools/README.md#visual-calibration-workflow). The underlying research artifacts are collected in [docs/research/README.md](research/README.md#visual-calibration-gallery), including the latest `AUTO_04` contact sheet, position timeline, HCP timing alignment, and interrupted-stop model fit.
 
 ## Behavior
 
@@ -93,6 +109,8 @@ The visual calibration process is documented with screenshots and plots in [tool
 - Do not expose position control to HomeKit until open, close, stop, and state correction have been tested while physically present.
 
 ## Calibration
+
+Skip this section unless you are tuning percentage position control. It is not part of the normal first install.
 
 1. Start fully closed.
 2. Open fully and wait for the HCP open end state.

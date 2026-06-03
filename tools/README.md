@@ -18,7 +18,17 @@ This directory contains the Python helpers used to build, test, capture, and cal
 
 ## Visual Calibration Workflow
 
-The position model is calibrated from synchronized video and HCP data because the HCP1 status broadcasts do not expose a trustworthy continuous position. The latest successful visual run is `AUTO_04` from 2026-05-27.
+This workflow is optional. It is not needed to build, flash, wire, or use the opener as a normal Home Assistant garage-door cover. Skip it if you only want open, close, stop, light, endpoint state, diagnostics, and HomeKit Bridge.
+
+The visual workflow is for one narrow problem: making percentage position control more accurate. Because the HCP1 status broadcasts do not expose a trustworthy continuous position, the firmware estimates position from timing. The marker/video process is a way to measure that timing instead of guessing.
+
+It is also fair to call this overengineered for most installs. It combines phone video, printed ArUco tracking markers, a fullscreen QR timecode, and ESP protocol logs so the motion model can be audited later. The latest successful visual run is `AUTO_04` from 2026-05-27.
+
+The capture measures:
+
+- The visible opening and closing motion curves.
+- The delay between command send, visible movement, and the HCP endpoint report.
+- The difference between an intermediate stop position and the final settled door position.
 
 ### 1. Record A Synchronized Video
 
