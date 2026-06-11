@@ -14,5 +14,6 @@ dist/
 secrets.yaml
 .upstream/
 captures/
+AGENTS.md
 
 configs/secrets.yaml

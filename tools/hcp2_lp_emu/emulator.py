@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import struct
+import ctypes
 from collections import Counter, deque
 from dataclasses import dataclass
 from pathlib import Path
@@ -194,9 +195,10 @@ def _read_u32_mem(uc: Uc, addr: int) -> int:
 
 
 class LPEmulator:
-    def __init__(self, elf_path: Path) -> None:
+    def __init__(self, elf_path: Path, shared_lp_sram: ctypes.Array[ctypes.c_char] | None = None) -> None:
         self.elf_path = elf_path.resolve()
         self.uc = Uc(UC_ARCH_RISCV, UC_MODE_RISCV32)
+        self.shared_lp_sram = shared_lp_sram
         self.entry = LP_SRAM_BASE + 0x80
         self.symbols: dict[str, int] = {}
         self.sections: list[SectionRange] = []
@@ -252,8 +254,8 @@ class LPEmulator:
         self.uc.reg_write(UC_RISCV_REG_PC, self.entry)
 
     @classmethod
-    def from_blob(cls, blob: Path) -> "LPEmulator":
-        return cls(resolve_elf(blob))
+    def from_blob(cls, blob: Path, shared_lp_sram: ctypes.Array[ctypes.c_char] | None = None) -> "LPEmulator":
+        return cls(resolve_elf(blob), shared_lp_sram=shared_lp_sram)
 
     @property
     def time_us(self) -> float:
@@ -269,7 +271,15 @@ class LPEmulator:
         self.trace_events.append(event)
 
     def _map_memory(self) -> None:
-        self.uc.mem_map(LP_SRAM_BASE, LP_SRAM_MAP_SIZE, UC_PROT_ALL)
+        if self.shared_lp_sram is None:
+            self.uc.mem_map(LP_SRAM_BASE, LP_SRAM_MAP_SIZE, UC_PROT_ALL)
+        else:
+            self.uc.mem_map_ptr(
+                LP_SRAM_BASE,
+                LP_SRAM_MAP_SIZE,
+                UC_PROT_ALL,
+                ctypes.addressof(self.shared_lp_sram),
+            )
         for page in sorted(MODELED_MMIO_PAGES):
             self.uc.mem_map(page, 0x1000, UC_PROT_ALL)
 

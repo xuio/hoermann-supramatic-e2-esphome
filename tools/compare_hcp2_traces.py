@@ -15,20 +15,35 @@ REQUIRED_TYPES = ("master_frame", "slave_frame", "reply_latency", "de")
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Compare Wokwi and ISS HCP2 canonical traces")
-    parser.add_argument("--wokwi-log", type=Path, required=True, help="Wokwi console log containing HCP2_TRACE lines")
+    parser = argparse.ArgumentParser(description="Compare two HCP2 canonical traces")
+    parser.add_argument("--left-trace", type=Path, help="Left trace source: JSON report, JSONL, or HCP2_TRACE log")
+    parser.add_argument("--right-trace", type=Path, help="Right trace source: JSON report, JSONL, or HCP2_TRACE log")
+    parser.add_argument("--left-label", default="left", help="Label for the left trace in reports")
+    parser.add_argument("--right-label", default="right", help="Label for the right trace in reports")
+    parser.add_argument("--wokwi-log", type=Path, help="Legacy alias for --left-trace with label 'wokwi'")
     parser.add_argument(
         "--iss-report",
         type=Path,
-        required=True,
-        help="ISS JSON report containing lp_emu.trace, or a JSONL trace file",
+        help="Legacy alias for --right-trace with label 'iss'",
     )
     parser.add_argument("--latency-tolerance-us", type=float, default=2500.0)
     parser.add_argument("--output", type=Path, help="Write a JSON comparison report")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+
+    if args.left_trace is None and args.wokwi_log is not None:
+        args.left_trace = args.wokwi_log
+        if args.left_label == "left":
+            args.left_label = "wokwi"
+    if args.right_trace is None and args.iss_report is not None:
+        args.right_trace = args.iss_report
+        if args.right_label == "right":
+            args.right_label = "iss"
+    if args.left_trace is None or args.right_trace is None:
+        parser.error("--left-trace and --right-trace are required")
+    return args
 
 
-def load_wokwi_trace(path: Path) -> list[dict[str, Any]]:
+def load_trace_prefixed_log(path: Path) -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
         if TRACE_PREFIX not in line:
@@ -38,15 +53,22 @@ def load_wokwi_trace(path: Path) -> list[dict[str, Any]]:
     return events
 
 
-def load_iss_trace(path: Path) -> list[dict[str, Any]]:
+def load_canonical_trace(path: Path) -> list[dict[str, Any]]:
     text = path.read_text(encoding="utf-8")
+    if TRACE_PREFIX in text:
+        return load_trace_prefixed_log(path)
+
     stripped = text.lstrip()
     if stripped.startswith("{"):
-        payload = json.loads(text)
-        trace = payload.get("lp_emu", {}).get("trace", payload.get("trace"))
-        if not isinstance(trace, list):
-            raise ValueError(f"{path} does not contain lp_emu.trace")
-        return trace
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            payload = None
+        if payload is not None:
+            trace = payload.get("lp_emu", {}).get("trace", payload.get("trace", payload.get("events")))
+            if not isinstance(trace, list):
+                raise ValueError(f"{path} does not contain lp_emu.trace, trace, or events")
+            return trace
 
     events = []
     for line in text.splitlines():
@@ -85,47 +107,50 @@ def latency_summary(values: list[float]) -> dict[str, float | None]:
 
 
 def compare(args: argparse.Namespace) -> tuple[bool, dict[str, Any]]:
-    wokwi = load_wokwi_trace(args.wokwi_log)
-    iss = load_iss_trace(args.iss_report)
-    wokwi_counts = count_by_type(wokwi)
-    iss_counts = count_by_type(iss)
+    left = load_canonical_trace(args.left_trace)
+    right = load_canonical_trace(args.right_trace)
+    left_label = str(args.left_label)
+    right_label = str(args.right_label)
+    left_counts = count_by_type(left)
+    right_counts = count_by_type(right)
     failures: list[str] = []
 
-    if not wokwi:
-        failures.append("wokwi trace is empty")
-    if not iss:
-        failures.append("iss trace is empty")
+    if not left:
+        failures.append(f"{left_label} trace is empty")
+    if not right:
+        failures.append(f"{right_label} trace is empty")
 
     for event_type in REQUIRED_TYPES:
-        if wokwi_counts[event_type] == 0:
-            failures.append(f"wokwi missing {event_type} events")
-        if iss_counts[event_type] == 0:
-            failures.append(f"iss missing {event_type} events")
-        if wokwi_counts[event_type] != iss_counts[event_type]:
+        if left_counts[event_type] == 0:
+            failures.append(f"{left_label} missing {event_type} events")
+        if right_counts[event_type] == 0:
+            failures.append(f"{right_label} missing {event_type} events")
+        if left_counts[event_type] != right_counts[event_type]:
             failures.append(
-                f"{event_type} count differs: wokwi={wokwi_counts[event_type]} iss={iss_counts[event_type]}"
+                f"{event_type} count differs: {left_label}={left_counts[event_type]} "
+                f"{right_label}={right_counts[event_type]}"
             )
 
     for event_type in FRAME_TYPES:
-        wokwi_raw = raw_sequence(wokwi, event_type)
-        iss_raw = raw_sequence(iss, event_type)
-        if wokwi_raw != iss_raw:
+        left_raw = raw_sequence(left, event_type)
+        right_raw = raw_sequence(right, event_type)
+        if left_raw != right_raw:
             first_diff = next(
-                (i for i, (left, right) in enumerate(zip(wokwi_raw, iss_raw)) if left != right),
-                min(len(wokwi_raw), len(iss_raw)),
+                (i for i, (left_item, right_item) in enumerate(zip(left_raw, right_raw)) if left_item != right_item),
+                min(len(left_raw), len(right_raw)),
             )
             failures.append(f"{event_type} raw sequence differs at index {first_diff}")
 
-    wokwi_latency = latency_summary(latencies(wokwi))
-    iss_latency = latency_summary(latencies(iss))
+    left_latency = latency_summary(latencies(left))
+    right_latency = latency_summary(latencies(right))
     latency_delta: dict[str, float | None] = {}
     for key in ("min", "mean", "max"):
-        left = wokwi_latency[key]
-        right = iss_latency[key]
-        if left is None or right is None:
+        left_value = left_latency[key]
+        right_value = right_latency[key]
+        if left_value is None or right_value is None:
             latency_delta[key] = None
             continue
-        delta = abs(left - right)
+        delta = abs(left_value - right_value)
         latency_delta[key] = delta
         if delta > args.latency_tolerance_us:
             failures.append(f"reply_latency {key} differs by {delta:.1f} us")
@@ -133,10 +158,12 @@ def compare(args: argparse.Namespace) -> tuple[bool, dict[str, Any]]:
     report: dict[str, Any] = {
         "verdict": "fail" if failures else "ok",
         "failures": failures,
-        "wokwi_counts": dict(sorted(wokwi_counts.items())),
-        "iss_counts": dict(sorted(iss_counts.items())),
-        "wokwi_latency_us": wokwi_latency,
-        "iss_latency_us": iss_latency,
+        "left_label": left_label,
+        "right_label": right_label,
+        "left_counts": dict(sorted(left_counts.items())),
+        "right_counts": dict(sorted(right_counts.items())),
+        "left_latency_us": left_latency,
+        "right_latency_us": right_latency,
         "latency_delta_us": latency_delta,
         "latency_tolerance_us": args.latency_tolerance_us,
     }
@@ -154,10 +181,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.output:
         args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(
-        "verdict={verdict} wokwi_events={wokwi} iss_events={iss}".format(
+        "verdict={verdict} {left_label}_events={left_events} {right_label}_events={right_events}".format(
             verdict=report["verdict"],
-            wokwi=sum(report["wokwi_counts"].values()),
-            iss=sum(report["iss_counts"].values()),
+            left_label=report["left_label"],
+            right_label=report["right_label"],
+            left_events=sum(report["left_counts"].values()),
+            right_events=sum(report["right_counts"].values()),
         )
     )
     if report["failures"]:

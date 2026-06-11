@@ -15,7 +15,16 @@ Useful commands:
 ```sh
 uv run garage-hcp2-lp-emu --rvc-smoke
 uv run garage-hcp2-lp-emu --blob firmware/hcp2-lp/build/hcp2_lp.bin --cycles 1000 --report lp-report.json
+uv run pytest tests/hcp2/test_lp_emu.py
 ```
+
+The same package also contains the Phase 0d Tier 1 dual-ISS harness. It maps one
+host LP-SRAM buffer into two Unicorn engines with `uc_mem_map_ptr()`: the LP
+engine runs the real LP ELF, while the HP engine runs a tiny RV32 bare-metal
+control loop linked against the portable `hcp2_supervisor` and mailbox sources.
+The HP ISS build needs a RISC-V bare-metal GCC (`riscv32-esp-elf-gcc` or
+`riscv64-unknown-elf-gcc`); without one, local tests skip the dual-ISS cases.
+CI installs the compiler in the LP emulation job.
 
 This is instruction-set emulation, not a full C6 SoC timing model. The report
 maps instruction/cycle counts to 20 MHz and uses fast-forwarded LP busy-wait

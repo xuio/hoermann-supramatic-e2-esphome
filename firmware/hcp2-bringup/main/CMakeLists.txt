@@ -9,6 +9,7 @@ idf_component_register(
     "${HCP2_CORE_DIR}/hcp2_frame.c"
     "${HCP2_CORE_DIR}/hcp2_engine.c"
     "${HCP2_CORE_DIR}/hcp2_mailbox.c"
+    "${HCP2_CORE_DIR}/hcp2_supervisor.c"
   INCLUDE_DIRS
     "."
     "${HCP2_CORE_DIR}"

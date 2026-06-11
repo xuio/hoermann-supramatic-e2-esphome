@@ -82,6 +82,11 @@ jobs:
       - name: Install dependencies
         run: uv sync --locked
 
+      - name: Install RISC-V bare-metal compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-riscv64-unknown-elf
+
       - name: Build HCP2 LP firmware
         uses: espressif/esp-idf-ci-action@v1
         with:

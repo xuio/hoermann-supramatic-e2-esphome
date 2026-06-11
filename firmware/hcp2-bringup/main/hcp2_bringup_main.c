@@ -24,6 +24,7 @@
 #include "hcp2_engine.h"
 #include "hcp2_mailbox.h"
 #include "hcp2_port.h"
+#include "hcp2_supervisor.h"
 
 #define HCP2_BRINGUP_UART UART_NUM_1
 #define HCP2_BRINGUP_UART_RX GPIO_NUM_4
@@ -55,6 +56,10 @@ static volatile hcp2_lp_mailbox_t s_mailbox_double;
 static volatile hcp2_lp_mailbox_t *lp_mailbox_(void) {
   return (volatile hcp2_lp_mailbox_t *) HCP2_LP_MAILBOX_ADDR;
 }
+
+#if CONFIG_HCP2_BRINGUP_LP_IN_LOOP
+static hcp2_hp_supervisor_t s_lp_supervisor;
+#endif
 
 #if CONFIG_HCP2_BRINGUP_HP_FALLBACK
 static uint32_t now_us_cb(void *user) {
@@ -115,36 +120,39 @@ static bool run_mailbox_test_double(void) {
   uint32_t heartbeat_after;
   uint32_t last_sequence = 0;
   hcp2_lp_command_t command;
+  hcp2_hp_supervisor_t supervisor;
+  uint32_t sequence;
 
   hcp2_lp_mailbox_init(&s_mailbox_double);
+  hcp2_hp_supervisor_init(&supervisor, &s_mailbox_double, HCP2_LP_FIRMWARE_VERSION);
   heartbeat_before = s_mailbox_double.heartbeat;
   s_mailbox_double.heartbeat = heartbeat_before + 1u;
   heartbeat_after = s_mailbox_double.heartbeat;
 
-  if (hcp2_lp_mailbox_reload_decision(&s_mailbox_double, HCP2_LP_FIRMWARE_VERSION, heartbeat_before,
-                                      heartbeat_after) != HCP2_LP_RELOAD_SKIP) {
+  if (!hcp2_hp_supervisor_is_healthy(&supervisor, heartbeat_before, heartbeat_after)) {
     ESP_LOGE(TAG, "HCP2_SUPERVISOR_SKIP_RELOAD_FAIL");
     return false;
   }
   ESP_LOGI(TAG, "HCP2_SUPERVISOR_SKIP_RELOAD_OK heartbeat_before=%" PRIu32 " heartbeat_after=%" PRIu32,
            heartbeat_before, heartbeat_after);
 
-  if (hcp2_lp_mailbox_reload_decision(&s_mailbox_double, HCP2_LP_FIRMWARE_VERSION, heartbeat_after,
-                                      heartbeat_after) != HCP2_LP_RELOAD_REQUIRED) {
+  if (hcp2_hp_supervisor_reload_decision(&supervisor, heartbeat_after, heartbeat_after) !=
+      HCP2_LP_RELOAD_REQUIRED) {
     ESP_LOGE(TAG, "HCP2_SUPERVISOR_STALE_HEARTBEAT_FAIL");
     return false;
   }
   ESP_LOGI(TAG, "HCP2_SUPERVISOR_STALE_HEARTBEAT_OK");
 
+  hcp2_hp_supervisor_begin_session(&supervisor, 0x22220000u);
   hcp2_lp_mailbox_send_command(&s_mailbox_double, 0x11110000u, 1u, HCP2_LP_COMMAND_OPEN, 0u);
   if (hcp2_lp_mailbox_take_command(&s_mailbox_double, 0x22220000u, &last_sequence, &command)) {
     ESP_LOGE(TAG, "HCP2_SUPERVISOR_EPOCH_REPLAY_FAIL");
     return false;
   }
 
-  hcp2_lp_mailbox_send_command(&s_mailbox_double, 0x22220000u, 1u, HCP2_LP_COMMAND_CLOSE, 0u);
+  sequence = hcp2_hp_supervisor_send_command(&supervisor, HCP2_LP_COMMAND_CLOSE, 0u);
   if (!hcp2_lp_mailbox_take_command(&s_mailbox_double, 0x22220000u, &last_sequence, &command) ||
-      command.command_id != HCP2_LP_COMMAND_CLOSE || s_mailbox_double.command_ack_sequence != 1u) {
+      command.command_id != HCP2_LP_COMMAND_CLOSE || !hcp2_hp_supervisor_ack_received(&supervisor, sequence)) {
     ESP_LOGE(TAG, "HCP2_SUPERVISOR_EPOCH_ACK_FAIL");
     return false;
   }
@@ -239,8 +247,7 @@ static bool healthy_lp_running_(uint32_t *heartbeat_before, uint32_t *heartbeat_
   if (heartbeat_after != NULL) {
     *heartbeat_after = after;
   }
-  return hcp2_lp_mailbox_reload_decision(mailbox, HCP2_LP_FIRMWARE_VERSION, before, after) ==
-         HCP2_LP_RELOAD_SKIP;
+  return hcp2_hp_supervisor_is_healthy(&s_lp_supervisor, before, after);
 }
 
 static esp_err_t load_and_start_lp_(void) {
@@ -254,12 +261,10 @@ static esp_err_t load_and_start_lp_(void) {
   ESP_RETURN_ON_ERROR(init_lp_bus_io_(), TAG, "LP bus IO init failed");
   ESP_RETURN_ON_ERROR(ulp_lp_core_load_binary(hcp2_lp_bin_start, blob_size), TAG, "LP binary load failed");
   hcp2_lp_mailbox_init(mailbox);
-  mailbox->command_epoch = fresh_epoch_();
-  mailbox->command_sequence = 0u;
-  mailbox->command_ack_sequence = 0u;
+  hcp2_hp_supervisor_begin_session(&s_lp_supervisor, fresh_epoch_());
   ESP_RETURN_ON_ERROR(ulp_lp_core_run(&cfg), TAG, "LP core start failed");
   ESP_LOGI(TAG, "HCP2_LP_LOAD_RELOAD bytes=%u mailbox=0x%08x epoch=%" PRIu32, (unsigned) blob_size,
-           (unsigned) HCP2_LP_MAILBOX_ADDR, mailbox->command_epoch);
+           (unsigned) HCP2_LP_MAILBOX_ADDR, s_lp_supervisor.epoch);
   return ESP_OK;
 }
 
@@ -279,16 +284,15 @@ static esp_err_t start_or_skip_lp_(void) {
 }
 
 static bool wait_for_ack_(uint32_t sequence) {
-  volatile hcp2_lp_mailbox_t *mailbox = lp_mailbox_();
   const int attempts = HCP2_BRINGUP_MAILBOX_TIMEOUT_MS / HCP2_BRINGUP_HEARTBEAT_PROBE_MS;
 
   for (int i = 0; i < attempts; i++) {
-    if (mailbox->command_ack_sequence == sequence) {
+    if (hcp2_hp_supervisor_ack_received(&s_lp_supervisor, sequence)) {
       return true;
     }
     vTaskDelay(pdMS_TO_TICKS(HCP2_BRINGUP_HEARTBEAT_PROBE_MS));
   }
-  return mailbox->command_ack_sequence == sequence;
+  return hcp2_hp_supervisor_ack_received(&s_lp_supervisor, sequence);
 }
 
 static bool verify_real_mailbox_(void) {
@@ -317,11 +321,7 @@ static bool verify_real_mailbox_(void) {
                 " heartbeat_after=%" PRIu32,
            heartbeat_before, heartbeat_after);
 
-  mailbox->command_epoch = epoch;
-  mailbox->command_id = HCP2_LP_COMMAND_NONE;
-  mailbox->command_argument = 0u;
-  mailbox->command_ack_sequence = 0u;
-  mailbox->command_sequence = 0u;
+  hcp2_hp_supervisor_begin_session(&s_lp_supervisor, epoch);
   vTaskDelay(pdMS_TO_TICKS(HCP2_BRINGUP_HEARTBEAT_PROBE_MS * 2));
 
   hcp2_lp_mailbox_send_command(mailbox, stale_epoch, 1u, HCP2_LP_COMMAND_OPEN, 0u);
@@ -331,13 +331,13 @@ static bool verify_real_mailbox_(void) {
     return false;
   }
 
-  hcp2_lp_mailbox_send_command(mailbox, epoch, 1u, HCP2_LP_COMMAND_STOP, 0u);
-  if (!wait_for_ack_(1u)) {
+  const uint32_t sequence = hcp2_hp_supervisor_send_command(&s_lp_supervisor, HCP2_LP_COMMAND_STOP, 0u);
+  if (!wait_for_ack_(sequence)) {
     ESP_LOGE(TAG, "HCP2_SUPERVISOR_REAL_EPOCH_ACK_FAIL ack=%" PRIu32, mailbox->command_ack_sequence);
     return false;
   }
 
-  ESP_LOGI(TAG, "HCP2_SUPERVISOR_REAL_EPOCH_OK epoch=%" PRIu32 " sequence=1", epoch);
+  ESP_LOGI(TAG, "HCP2_SUPERVISOR_REAL_EPOCH_OK epoch=%" PRIu32 " sequence=%" PRIu32, epoch, sequence);
   ESP_LOGI(TAG, "HCP2_SUPERVISOR_REAL_MAILBOX_OK");
   return true;
 }
@@ -394,6 +394,7 @@ void app_main(void) {
 
 #if CONFIG_HCP2_BRINGUP_LP_IN_LOOP
   ESP_LOGI(TAG, "HCP2_BRINGUP_MODE lp-in-loop");
+  hcp2_hp_supervisor_init(&s_lp_supervisor, lp_mailbox_(), HCP2_LP_FIRMWARE_VERSION);
   ESP_ERROR_CHECK(start_or_skip_lp_());
   xTaskCreate(lp_supervisor_task, "hcp2_lp_supervisor", 4096, NULL, 5, NULL);
 #else
