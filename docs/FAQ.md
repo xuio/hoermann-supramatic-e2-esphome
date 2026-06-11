@@ -14,7 +14,12 @@ No. The intended design is one ESP32 plus an RS-485 adapter. The RS-485 adapter 
 
 ## Does it work with Series 4, HCP2, UAP1-HCP, or BlueSecur?
 
-No. This project targets the older HCP1/UAP1 bus used by the tested SupraMatic E2 setup.
+Series 4 / HCP2 support is under development for a separate ESP32-C6 target. The current
+codebase includes a protocol core, simulator, LP-core firmware, Wokwi harness, and
+ESPHome component skeleton, but this path is still simulation-first and bench-only. It has
+not passed hardware-in-the-loop testing and must not be connected to a real motor yet.
+
+BlueSecur cloud/app integrations are out of scope.
 
 ## Can I use Wi-Fi instead of Ethernet?
 

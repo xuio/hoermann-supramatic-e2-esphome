@@ -56,6 +56,14 @@ Supported and tested in Home Assistant:
 
 This is an unofficial reverse-engineered integration. Treat it as a careful builder project, not as an official Hörmann product.
 
+### Series 4 / HCP2 Development Status
+
+Support for **Hörmann Series 4 / HCP2 / UAP1-HCP** drives is under active development
+for a separate **ESP32-C6** target. The HCP2 protocol core, simulator, LP-core firmware,
+Wokwi harness, and ESPHome component skeleton are in-tree, but this path is still
+simulation-first and bench-only. It has not yet passed hardware-in-the-loop testing and
+must not be connected to a real motor.
+
 ## Safety First
 
 Garage doors can injure people and damage property. Build and test this only while physically present at the door.
@@ -162,6 +170,7 @@ Primary files:
 
 - [configs/supramatic-e2.yaml](configs/supramatic-e2.yaml): main Ethernet/PoE firmware
 - [configs/supramatic-e2-minimal.yaml](configs/supramatic-e2-minimal.yaml): safer minimal bring-up config
+- [configs/supramatic-4-dev.yaml](configs/supramatic-4-dev.yaml): ESP32-C6 HCP2 simulation/bench development firmware
 - [configs/supramatic-e2-proxy.yaml](configs/supramatic-e2-proxy.yaml): RS-485 network proxy/debug mode
 - [configs/supramatic-e2-monitor.yaml](configs/supramatic-e2-monitor.yaml): read-only HTTP monitor firmware
 - [docs/FAQ.md](docs/FAQ.md): common hardware, protocol, and Home Assistant questions
@@ -199,11 +208,11 @@ Normal users only need ESPHome. The Python tools are mainly for protocol debuggi
 
 ## Compatibility
 
-This project targets the older wired accessory BUS used by the tested Hörmann SupraMatic E2 setup. It is not intended for:
+The production-ready firmware targets the older wired accessory BUS used by the tested Hörmann SupraMatic E2 setup.
+Series 4 / HCP2 support is present only as simulation and ESP32-C6 bench-development code until the HIL and real-motor phases are complete.
+This project is not intended for:
 
-- Hörmann Series 4 / HCP2 systems
 - BlueSecur cloud/app integrations
-- UAP1-HCP for newer openers
 - Relay-only installations
 - Setups that require a physical UAP1 module
 

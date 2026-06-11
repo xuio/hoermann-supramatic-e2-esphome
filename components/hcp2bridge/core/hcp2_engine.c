@@ -62,6 +62,7 @@ static void handle_decoded_(hcp2_engine_t *engine, const hcp2_decoded_frame_t *f
   switch (frame->type) {
     case HCP2_FRAME_BROADCAST_STATUS:
       engine->drive_status = frame->drive_status;
+      engine->broadcasts_received++;
       break;
     case HCP2_FRAME_BUS_SCAN:
       tx_len = hcp2_frame_build_scan_response(engine->config.slave_id, engine->config.signature, tx);

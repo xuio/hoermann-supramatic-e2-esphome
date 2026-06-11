@@ -1,0 +1,86 @@
+substitutions:
+  name: "supramatic-4-dev"
+  friendly_name: "Garage Door HCP2 Dev"
+  hcp2_rx_pin: GPIO4
+  hcp2_tx_pin: GPIO5
+  hcp2_de_pin: GPIO6
+
+esphome:
+  name: "${name}"
+  friendly_name: "${friendly_name}"
+
+esp32:
+  board: esp32-c6-devkitc-1
+  variant: ESP32C6
+  framework:
+    type: esp-idf
+    version: 5.5.4
+    sdkconfig_options:
+      CONFIG_UART_ISR_IN_IRAM: "y"
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+
+logger:
+  level: INFO
+  hardware_uart: USB_SERIAL_JTAG
+
+wifi:
+  ssid: !secret wifi_ssid_supramatic_4_dev
+  password: !secret wifi_password_supramatic_4_dev
+
+api:
+  reboot_timeout: 0s
+  encryption:
+    key: !secret api_key_supramatic_4_dev
+
+ota:
+  - platform: esphome
+    password: !secret ota_password_supramatic_4_dev
+
+safe_mode:
+  disabled: false
+  num_attempts: 10
+  boot_is_good_after: 1min
+  reboot_timeout: 10min
+
+hcp2bridge:
+  id: hcp2_dev
+  rx_pin: ${hcp2_rx_pin}
+  tx_pin: ${hcp2_tx_pin}
+  de_pin: ${hcp2_de_pin}
+  uart_num: 1
+  slave_id: 2
+  device_signature: "00000205043010FFA855"
+  response_delay: 4500us
+  button_press_duration: 100ms
+  hp_fallback: true
+
+cover:
+  - platform: hcp2bridge
+    hcp2bridge_id: hcp2_dev
+    name: "${friendly_name}"
+    device_class: garage
+
+light:
+  - platform: hcp2bridge
+    hcp2bridge_id: hcp2_dev
+    name: "${friendly_name} Light"
+
+binary_sensor:
+  - platform: status
+    name: "${friendly_name} ESPHome Status"
+  - platform: hcp2bridge
+    hcp2bridge_id: hcp2_dev
+    got_valid_broadcast:
+      name: "${friendly_name} Valid HCP2 Broadcast"
+    moving:
+      name: "${friendly_name} Moving"
+    open:
+      name: "${friendly_name} Open"
+    closed:
+      name: "${friendly_name} Closed"
+    light:
+      name: "${friendly_name} Light Feedback"

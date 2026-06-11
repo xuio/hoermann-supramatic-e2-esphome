@@ -64,6 +64,7 @@ idf.py -C firmware/hcp2-bringup -B firmware/hcp2-bringup/build-wokwi-hp-fallback
   -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.hp-fallback.defaults" build
 idf.py -C firmware/hcp2-bringup -B firmware/hcp2-bringup/build-wokwi-hp-fallback-restart \
   -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.hp-fallback.defaults;sdkconfig.restart.defaults" build
+uv run esphome compile configs/supramatic-4-dev.yaml
 garage-generate-wokwi-hcp2-constants --check
 cd emulation/wokwi
 wokwi-cli chip compile supramatic4.chip.c -o chips/supramatic4.chip.wasm
@@ -106,8 +107,19 @@ wokwi-cli emulation/wokwi --diagram-file diagram.restart.json \
 cp /tmp/hcp2-wokwi.toml emulation/wokwi/wokwi.toml
 ```
 
+Run the ESPHome-built HP-fallback firmware against the same custom chip:
+
+```sh
+cp emulation/wokwi/wokwi.toml /tmp/hcp2-wokwi.toml
+cp emulation/wokwi/wokwi.esphome.toml emulation/wokwi/wokwi.toml
+wokwi-cli emulation/wokwi --diagram-file diagram.esphome.json \
+  --scenario esphome-steady-state.yaml
+cp /tmp/hcp2-wokwi.toml emulation/wokwi/wokwi.toml
+```
+
 `PASS` and `FAIL` are still output pins on the custom chip for interactive
 inspection, but CI greps the full `wokwi-cli` log for
 `HCP2_WOKWI_VERDICT_*` markers because scenario `wait-serial` only watches the
 ESP serial stream, while custom-chip `printf()` output is emitted on the chip
-console.
+console. The ESPHome scenario is therefore a fixed-duration run whose assertion
+is the custom-chip verdict in the full log.

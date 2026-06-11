@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "author": "garage-door-controller",
+  "editor": "wokwi",
+  "parts": [
+    {
+      "type": "board-esp32-c6-devkitc-1",
+      "id": "esp",
+      "top": 5.29,
+      "left": 4.12,
+      "attrs": {}
+    },
+    {
+      "type": "chip-supramatic4",
+      "id": "sim",
+      "top": 105,
+      "left": -135,
+      "attrs": {
+        "cycles": "200",
+        "mode": "0",
+        "missedThreshold": "5",
+        "requireRecovery": "0",
+        "startDelayUs": "8000000"
+      }
+    }
+  ],
+  "connections": [
+    ["esp:TX", "$serialMonitor:RX", "", []],
+    ["esp:RX", "$serialMonitor:TX", "", []],
+    ["sim:TX", "esp:4", "green", ["h26", "v-48"]],
+    ["esp:5", "sim:RX", "blue", ["h-28", "v72"]],
+    ["esp:6", "sim:DE", "orange", ["h-16", "v56"]],
+    ["sim:GND", "esp:GND.1", "black", ["h42", "v24"]]
+  ],
+  "serialMonitor": {
+    "display": "terminal"
+  },
+  "dependencies": {}
+}

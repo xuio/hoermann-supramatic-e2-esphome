@@ -39,9 +39,13 @@ jobs:
           uv run esphome config configs/supramatic-e2-monitor-rx17.yaml
           uv run esphome config configs/supramatic-e2-monitor-idle-tx.yaml
           uv run esphome config configs/supramatic-e2-proxy.yaml
+          uv run esphome config configs/supramatic-4-dev.yaml
 
       - name: Compile main firmware
         run: uv run esphome compile configs/supramatic-e2.yaml
+
+      - name: Compile HCP2 ESPHome dev firmware
+        run: uv run esphome compile configs/supramatic-4-dev.yaml
 
       - name: Run Python tool self-test
         run: uv run garage-decode-phone-sync-video --self-test
@@ -134,6 +138,9 @@ jobs:
       - name: Check generated Wokwi constants
         run: uv run garage-generate-wokwi-hcp2-constants --check
 
+      - name: Generate example secrets
+        run: uv run garage-init-secrets
+
       - name: Build HCP2 bring-up firmware
         uses: espressif/esp-idf-ci-action@v1
         with:
@@ -197,6 +204,10 @@ jobs:
         working-directory: emulation/wokwi
         run: wokwi-cli chip compile supramatic4.chip.c -o chips/supramatic4.chip.wasm
 
+      - name: Build HCP2 ESPHome Wokwi firmware
+        if: ${{ env.WOKWI_CLI_TOKEN != '' }}
+        run: uv run esphome compile configs/supramatic-4-dev.yaml
+
       - name: Run Wokwi LP execution probe
         if: ${{ env.WOKWI_CLI_TOKEN != '' }}
         run: |
@@ -247,6 +258,24 @@ jobs:
             --fail-text HCP2_WOKWI_VERDICT_FAIL \
             --serial-log-file emulation/wokwi/restart-loop.serial.log | tee emulation/wokwi/restart-loop.full.log
           grep -q "HCP2_WOKWI_VERDICT_OK reason=restart-recovered" emulation/wokwi/restart-loop.full.log
+          restore
+          trap - EXIT
+
+      - name: Run Wokwi ESPHome-built steady-state scenario
+        if: ${{ env.WOKWI_CLI_TOKEN != '' }}
+        run: |
+          set -o pipefail
+          cp emulation/wokwi/wokwi.toml /tmp/hcp2-wokwi.toml
+          restore() { cp /tmp/hcp2-wokwi.toml emulation/wokwi/wokwi.toml; }
+          trap restore EXIT
+          cp emulation/wokwi/wokwi.esphome.toml emulation/wokwi/wokwi.toml
+          wokwi-cli emulation/wokwi \
+            --diagram-file diagram.esphome.json \
+            --scenario esphome-steady-state.yaml \
+            --timeout 45000 \
+            --fail-text HCP2_WOKWI_VERDICT_FAIL \
+            --serial-log-file emulation/wokwi/esphome-steady-state.serial.log | tee emulation/wokwi/esphome-steady-state.full.log
+          grep -q "HCP2_WOKWI_VERDICT_OK reason=steady-state" emulation/wokwi/esphome-steady-state.full.log
           restore
           trap - EXIT
 

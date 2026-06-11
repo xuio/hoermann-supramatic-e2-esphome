@@ -38,6 +38,7 @@ typedef struct {
   uint32_t mode_attr;
   uint32_t missed_threshold_attr;
   uint32_t require_recovery_attr;
+  uint32_t start_delay_us_attr;
   uint32_t cycles_target;
   sim_mode_t mode;
   sim_phase_t phase;
@@ -369,6 +370,7 @@ void chip_init(void) {
   chip->mode_attr = attr_init("mode", MODE_STEADY);
   chip->missed_threshold_attr = attr_init("missedThreshold", HCP2_WOKWI_DEFAULT_MISSED_POLL_THRESHOLD);
   chip->require_recovery_attr = attr_init("requireRecovery", 0);
+  chip->start_delay_us_attr = attr_init("startDelayUs", HCP2_WOKWI_START_DELAY_US);
   chip->pass_pin = pin_init("PASS", OUTPUT_LOW);
   chip->fail_pin = pin_init("FAIL", OUTPUT_LOW);
   chip->de_pin = pin_init("DE", INPUT_PULLDOWN);
@@ -405,7 +407,8 @@ void chip_init(void) {
   }
   chip->phase = PHASE_START;
 
-  printf("HCP2_WOKWI_MASTER_READY mode=%u cycles=%u missed_threshold=%u\n", (unsigned) chip->mode,
-         chip->cycles_target, chip->missed_threshold);
-  timer_start(chip->timer, HCP2_WOKWI_START_DELAY_US, false);
+  const uint32_t start_delay_us = attr_read(chip->start_delay_us_attr);
+  printf("HCP2_WOKWI_MASTER_READY mode=%u cycles=%u missed_threshold=%u start_delay_us=%u\n", (unsigned) chip->mode,
+         chip->cycles_target, chip->missed_threshold, start_delay_us);
+  timer_start(chip->timer, start_delay_us == 0u ? HCP2_WOKWI_START_DELAY_US : start_delay_us, false);
 }

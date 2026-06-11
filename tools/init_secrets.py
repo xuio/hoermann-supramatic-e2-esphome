@@ -16,6 +16,10 @@ DEFAULT_OUTPUT = Path("configs/secrets.yaml")
 SECRET_KEYS = (
     "api_key_supramatic_e2",
     "ota_password_supramatic_e2",
+    "api_key_supramatic_4_dev",
+    "ota_password_supramatic_4_dev",
+    "wifi_ssid_supramatic_4_dev",
+    "wifi_password_supramatic_4_dev",
     "proxy_auth_token",
 )
 
@@ -25,6 +29,8 @@ PLACEHOLDER_VALUES = {
     "replace-with-a-real-esphome-api-key",
     "replace-with-a-long-random-ota-password",
     "replace-with-a-long-random-token",
+    "replace-with-wifi-ssid",
+    "replace-with-wifi-password",
 }
 
 
@@ -35,6 +41,10 @@ def generate_values() -> dict[str, str]:
         # ESPHome API encryption keys are base64-encoded 32-byte Noise PSKs.
         "api_key_supramatic_e2": base64.b64encode(secrets.token_bytes(32)).decode("ascii"),
         "ota_password_supramatic_e2": secrets.token_urlsafe(32),
+        "api_key_supramatic_4_dev": base64.b64encode(secrets.token_bytes(32)).decode("ascii"),
+        "ota_password_supramatic_4_dev": secrets.token_urlsafe(32),
+        "wifi_ssid_supramatic_4_dev": "Wokwi-GUEST",
+        "wifi_password_supramatic_4_dev": "",
         "proxy_auth_token": secrets.token_urlsafe(32),
     }
 

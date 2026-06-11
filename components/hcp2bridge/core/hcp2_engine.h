@@ -33,6 +33,7 @@ typedef struct {
   uint32_t press_until_us;
   hcp2_drive_status_t drive_status;
   uint32_t valid_frames;
+  uint32_t broadcasts_received;
   uint32_t crc_errors;
   uint32_t rx_errors;
   uint32_t responses_sent;

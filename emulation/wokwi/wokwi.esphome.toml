@@ -1,0 +1,8 @@
+[wokwi]
+version = 1
+firmware = "../../configs/.esphome/build/supramatic-4-dev/.pioenvs/supramatic-4-dev/firmware.factory.bin"
+elf = "../../configs/.esphome/build/supramatic-4-dev/.pioenvs/supramatic-4-dev/firmware.elf"
+
+[[chip]]
+name = "supramatic4"
+binary = "chips/supramatic4.chip.wasm"
