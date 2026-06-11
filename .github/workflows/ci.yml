@@ -161,6 +161,7 @@ jobs:
           path: firmware/hcp2-bringup
           command: >
             idf.py -B build-wokwi
+            -D SDKCONFIG=/tmp/hcp2-bringup-wokwi-sdkconfig
             -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.wokwi.defaults"
             build
 
@@ -172,6 +173,7 @@ jobs:
           path: firmware/hcp2-bringup
           command: >
             idf.py -B build-wokwi-hp-fallback
+            -D SDKCONFIG=/tmp/hcp2-bringup-wokwi-hp-fallback-sdkconfig
             -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.hp-fallback.defaults"
             build
 
@@ -183,6 +185,7 @@ jobs:
           path: firmware/hcp2-bringup
           command: >
             idf.py -B build-wokwi-hp-fallback-restart
+            -D SDKCONFIG=/tmp/hcp2-bringup-wokwi-hp-fallback-restart-sdkconfig
             -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.hp-fallback.defaults;sdkconfig.restart.defaults"
             build
 

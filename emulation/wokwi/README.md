@@ -29,8 +29,11 @@ as an LP execution authority.
 
 What this proves:
 
-- The real HP firmware can embed and call `ulp_lp_core_load_binary()` /
-  `ulp_lp_core_run()` with the real Phase 0c LP blob.
+- The real HP firmware build embeds the Phase 0c LP blob and reaches the LP
+  reload decision path with the same mailbox ABI. The Wokwi-specific LP probe
+  deliberately bypasses LP-control register calls, including
+  `ulp_lp_core_load_binary()` / `ulp_lp_core_run()`, because current Wokwi
+  hangs inside that unsupported path.
 - The Wokwi LP execution probe records the current simulator limitation with
   `HCP2_WOKWI_LP_EXEC_UNSUPPORTED` instead of pretending the LP path passed.
 - The HP fallback responder can run against the same pin-to-pin custom-chip
@@ -57,7 +60,8 @@ Entry spike status:
 - LP-UART at 57600 8E1: Wokwi currently cannot execute this path. The LP-UART
   register block is at least partially modeled, but `LP_UART_REG_UPDATE` remains
   set after the IDF driver writes it. The `supervisor.yaml` LP probe expects
-  `HCP2_WOKWI_LP_EXEC_UNSUPPORTED` after load/run, documenting the simulator gap.
+  `HCP2_WOKWI_LP_EXEC_UNSUPPORTED` from the Wokwi-only bypass path before any
+  LP-control register calls, documenting the simulator gap without hanging CI.
 - FIFO partial-TX fidelity: Wokwi behavior is intentionally judged by comparison
   to the ISS trace; any divergence is recorded as a simulator-fidelity finding.
 - DE via LP GPIO: GPIO6 is wired to the custom chip and emitted as `de` trace
@@ -70,10 +74,13 @@ Build the firmware and custom chip:
 ```sh
 idf.py -C firmware/hcp2-bringup build
 idf.py -C firmware/hcp2-bringup -B firmware/hcp2-bringup/build-wokwi \
+  -D SDKCONFIG=/tmp/hcp2-bringup-wokwi-sdkconfig \
   -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.wokwi.defaults" build
 idf.py -C firmware/hcp2-bringup -B firmware/hcp2-bringup/build-wokwi-hp-fallback \
+  -D SDKCONFIG=/tmp/hcp2-bringup-wokwi-hp-fallback-sdkconfig \
   -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.hp-fallback.defaults" build
 idf.py -C firmware/hcp2-bringup -B firmware/hcp2-bringup/build-wokwi-hp-fallback-restart \
+  -D SDKCONFIG=/tmp/hcp2-bringup-wokwi-hp-fallback-restart-sdkconfig \
   -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.hp-fallback.defaults;sdkconfig.restart.defaults" build
 uv run esphome compile configs/supramatic-4-dev.yaml
 garage-generate-wokwi-hcp2-constants --check

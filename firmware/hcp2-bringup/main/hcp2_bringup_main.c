@@ -53,11 +53,11 @@ static hcp2_bringup_ctx_t s_ctx;
 static volatile hcp2_lp_mailbox_t s_mailbox_double;
 #endif
 
+#if CONFIG_HCP2_BRINGUP_LP_IN_LOOP
 static volatile hcp2_lp_mailbox_t *lp_mailbox_(void) {
   return (volatile hcp2_lp_mailbox_t *) HCP2_LP_MAILBOX_ADDR;
 }
 
-#if CONFIG_HCP2_BRINGUP_LP_IN_LOOP
 static hcp2_hp_supervisor_t s_lp_supervisor;
 #endif
 
@@ -199,6 +199,7 @@ static uint32_t fresh_epoch_(void) {
   return epoch;
 }
 
+#if !CONFIG_HCP2_BRINGUP_WOKWI_LP_UART_BYPASS
 static esp_err_t init_lp_bus_io_(void) {
   lp_core_uart_cfg_t uart_cfg = LP_CORE_UART_DEFAULT_CONFIG();
 
@@ -219,20 +220,10 @@ static esp_err_t init_lp_bus_io_(void) {
   ESP_RETURN_ON_ERROR(rtc_gpio_set_level(HCP2_BRINGUP_DE, 0), TAG, "drive LP DE low");
   ESP_RETURN_ON_ERROR(rtc_gpio_pulldown_en(HCP2_BRINGUP_DE), TAG, "enable LP DE pulldown");
 
-#if CONFIG_HCP2_BRINGUP_WOKWI_LP_UART_BYPASS
-  ESP_LOGW(TAG, "HCP2_WOKWI_LP_UART_BYPASS");
-  ESP_RETURN_ON_ERROR(rtc_gpio_init(HCP2_BRINGUP_UART_TX), TAG, "init LP UART TX GPIO");
-  ESP_RETURN_ON_ERROR(rtc_gpio_set_direction(HCP2_BRINGUP_UART_TX, RTC_GPIO_MODE_OUTPUT_ONLY), TAG,
-                      "set LP UART TX output");
-  ESP_RETURN_ON_ERROR(rtc_gpio_init(HCP2_BRINGUP_UART_RX), TAG, "init LP UART RX GPIO");
-  ESP_RETURN_ON_ERROR(rtc_gpio_set_direction(HCP2_BRINGUP_UART_RX, RTC_GPIO_MODE_INPUT_ONLY), TAG,
-                      "set LP UART RX input");
-  return ESP_OK;
-#else
   ESP_RETURN_ON_ERROR(lp_core_uart_init(&uart_cfg), TAG, "init LP UART");
   return ESP_OK;
-#endif
 }
+#endif
 
 static bool healthy_lp_running_(uint32_t *heartbeat_before, uint32_t *heartbeat_after) {
   volatile hcp2_lp_mailbox_t *mailbox = lp_mailbox_();
@@ -253,19 +244,30 @@ static bool healthy_lp_running_(uint32_t *heartbeat_before, uint32_t *heartbeat_
 static esp_err_t load_and_start_lp_(void) {
   volatile hcp2_lp_mailbox_t *mailbox = lp_mailbox_();
   const size_t blob_size = (size_t) (hcp2_lp_bin_end - hcp2_lp_bin_start);
+
+#if CONFIG_HCP2_BRINGUP_WOKWI_LP_UART_BYPASS
+  hcp2_lp_mailbox_init(mailbox);
+  hcp2_hp_supervisor_begin_session(&s_lp_supervisor, fresh_epoch_());
+  ESP_LOGW(TAG, "HCP2_WOKWI_LP_UART_BYPASS");
+  ESP_LOGI(TAG, "HCP2_LP_LOAD_RELOAD bytes=%u mailbox=0x%08x epoch=%" PRIu32 " wokwi_bypass=1",
+           (unsigned) blob_size, (unsigned) HCP2_LP_MAILBOX_ADDR, s_lp_supervisor.epoch);
+  ESP_LOGW(TAG, "HCP2_WOKWI_LP_EXEC_UNSUPPORTED");
+  return ESP_OK;
+#else
   ulp_lp_core_cfg_t cfg = {
       .wakeup_source = ULP_LP_CORE_WAKEUP_SOURCE_HP_CPU,
   };
 
   ulp_lp_core_stop();
   ESP_RETURN_ON_ERROR(init_lp_bus_io_(), TAG, "LP bus IO init failed");
-  ESP_RETURN_ON_ERROR(ulp_lp_core_load_binary(hcp2_lp_bin_start, blob_size), TAG, "LP binary load failed");
   hcp2_lp_mailbox_init(mailbox);
   hcp2_hp_supervisor_begin_session(&s_lp_supervisor, fresh_epoch_());
+  ESP_RETURN_ON_ERROR(ulp_lp_core_load_binary(hcp2_lp_bin_start, blob_size), TAG, "LP binary load failed");
   ESP_RETURN_ON_ERROR(ulp_lp_core_run(&cfg), TAG, "LP core start failed");
   ESP_LOGI(TAG, "HCP2_LP_LOAD_RELOAD bytes=%u mailbox=0x%08x epoch=%" PRIu32, (unsigned) blob_size,
            (unsigned) HCP2_LP_MAILBOX_ADDR, s_lp_supervisor.epoch);
   return ESP_OK;
+#endif
 }
 
 static esp_err_t start_or_skip_lp_(void) {
@@ -346,7 +348,7 @@ static void lp_supervisor_task(void *arg) {
   (void) arg;
   if (!verify_real_mailbox_()) {
 #if CONFIG_HCP2_BRINGUP_WOKWI_LP_UART_BYPASS
-    ESP_LOGW(TAG, "HCP2_WOKWI_LP_EXEC_UNSUPPORTED");
+    ESP_LOGW(TAG, "HCP2_WOKWI_LP_EXEC_UNSUPPORTED mailbox_probe=stale");
 #else
     ESP_LOGE(TAG, "HCP2_SUPERVISOR_REAL_MAILBOX_FAIL");
 #endif
