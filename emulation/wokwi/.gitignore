@@ -1,0 +1,4 @@
+/chips/*.wasm
+/wokwi-api.h
+/*.log
+/*.vcd

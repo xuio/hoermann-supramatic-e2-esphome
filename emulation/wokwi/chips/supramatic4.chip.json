@@ -1,0 +1,39 @@
+{
+  "name": "SupraMatic 4 HCP2 master",
+  "author": "garage-door-controller",
+  "pins": ["RX", "TX", "PASS", "FAIL", "GND"],
+  "controls": [
+    {
+      "id": "cycles",
+      "label": "Cycles",
+      "type": "range",
+      "min": 1,
+      "max": 1000,
+      "step": 1
+    },
+    {
+      "id": "mode",
+      "label": "Mode",
+      "type": "range",
+      "min": 0,
+      "max": 1,
+      "step": 1
+    },
+    {
+      "id": "missedThreshold",
+      "label": "Missed Poll Threshold",
+      "type": "range",
+      "min": 1,
+      "max": 200,
+      "step": 1
+    },
+    {
+      "id": "requireRecovery",
+      "label": "Require Recovery",
+      "type": "range",
+      "min": 0,
+      "max": 1,
+      "step": 1
+    }
+  ]
+}

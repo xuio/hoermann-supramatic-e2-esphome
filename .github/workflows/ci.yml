@@ -108,3 +108,100 @@ jobs:
             firmware/hcp2-lp/build/hcp2_lp.elf
             firmware/hcp2-lp/build/hcp2_lp.map
             firmware/hcp2-lp/build/hcp2_lp.sym
+
+  hcp2-wokwi:
+    name: Build and emulate HCP2 HP firmware
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      WOKWI_CLI_TOKEN: ${{ secrets.WOKWI_CLI_TOKEN }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        run: python -m pip install uv
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Check generated Wokwi constants
+        run: uv run garage-generate-wokwi-hcp2-constants --check
+
+      - name: Build HCP2 bring-up firmware
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: release-v5.5
+          target: esp32c6
+          path: firmware/hcp2-bringup
+
+      - name: Build HCP2 bring-up restart firmware
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: release-v5.5
+          target: esp32c6
+          path: firmware/hcp2-bringup
+          command: >
+            idf.py -B build-restart
+            -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.restart.defaults"
+            build
+
+      - name: Skip Wokwi scenarios without token
+        if: ${{ env.WOKWI_CLI_TOKEN == '' }}
+        run: echo "WOKWI_CLI_TOKEN is not set; skipping Phase 0d Wokwi scenarios."
+
+      - name: Install Wokwi CLI
+        if: ${{ env.WOKWI_CLI_TOKEN != '' }}
+        run: |
+          curl -L https://wokwi.com/ci/install.sh | sh
+          echo "$HOME/.wokwi/bin" >> "$GITHUB_PATH"
+
+      - name: Compile Wokwi SupraMatic chip
+        if: ${{ env.WOKWI_CLI_TOKEN != '' }}
+        working-directory: emulation/wokwi
+        run: wokwi-cli chip compile supramatic4.chip.c -o chips/supramatic4.chip.wasm
+
+      - name: Run Wokwi supervisor scenario
+        if: ${{ env.WOKWI_CLI_TOKEN != '' }}
+        run: >
+          wokwi-cli emulation/wokwi
+          --scenario supervisor.yaml
+          --timeout 10000
+          --fail-text HCP2_SUPERVISOR_TEST_DOUBLE_FAIL
+          --serial-log-file supervisor.log
+
+      - name: Run Wokwi steady-state scenario
+        if: ${{ env.WOKWI_CLI_TOKEN != '' }}
+        run: >
+          wokwi-cli emulation/wokwi
+          --scenario steady-state.yaml
+          --timeout 30000
+          --fail-text HCP2_WOKWI_VERDICT_FAIL
+          --serial-log-file steady-state.log
+
+      - name: Run Wokwi restart-loop scenario
+        if: ${{ env.WOKWI_CLI_TOKEN != '' }}
+        run: |
+          cp emulation/wokwi/wokwi.toml /tmp/hcp2-wokwi.toml
+          cp emulation/wokwi/wokwi.restart.toml emulation/wokwi/wokwi.toml
+          wokwi-cli emulation/wokwi \
+            --diagram-file diagram.restart.json \
+            --scenario restart-loop.yaml \
+            --timeout 35000 \
+            --fail-text HCP2_WOKWI_VERDICT_FAIL \
+            --serial-log-file restart-loop.log
+          cp /tmp/hcp2-wokwi.toml emulation/wokwi/wokwi.toml
+
+      - name: Upload Wokwi logs
+        if: ${{ always() && env.WOKWI_CLI_TOKEN != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: hcp2-wokwi-logs
+          path: |
+            emulation/wokwi/*.log

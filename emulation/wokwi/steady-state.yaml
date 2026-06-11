@@ -1,0 +1,18 @@
+name: HCP2 Wokwi steady state
+version: 1
+author: garage-door-controller
+
+steps:
+  - wait-serial: "HCP2_SUPERVISOR_SKIP_RELOAD_OK"
+  - wait-serial: "HCP2_SUPERVISOR_STALE_HEARTBEAT_OK"
+  - wait-serial: "HCP2_SUPERVISOR_EPOCH_OK"
+  - wait-serial: "HCP2_BRINGUP_READY"
+  - delay: 20s
+  - expect-pin:
+      part-id: sim
+      pin: FAIL
+      expected: 0
+  - expect-pin:
+      part-id: sim
+      pin: PASS
+      expected: 1
