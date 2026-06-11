@@ -54,3 +54,50 @@ jobs:
           path: |
             tests/hcp2/build/fuzz-report.json
             tests/hcp2/build/simulator-soak-report.json
+
+  lp-iss-soak:
+    name: HCP2 LP ISS soak
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        run: python -m pip install uv
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Build HCP2 LP firmware
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: release-v5.5
+          target: esp32c6
+          path: firmware/hcp2-lp
+
+      - name: Run accelerated LP ISS soak
+        run: >
+          uv run garage-hcp2-lp-emu
+          --blob firmware/hcp2-lp/build/hcp2_lp.bin
+          --cycles 5000
+          --fault corrupt-crc
+          --fault truncated
+          --fault duplicate
+          --fault jitter
+          --fault garbage
+          --fault split
+          --command open
+          --report lp-soak-report.json
+
+      - name: Upload LP ISS soak report
+        uses: actions/upload-artifact@v4
+        with:
+          name: hcp2-lp-iss-soak-report
+          path: lp-soak-report.json

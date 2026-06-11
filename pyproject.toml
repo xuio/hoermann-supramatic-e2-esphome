@@ -21,6 +21,7 @@ garage-analyze-hcp-timing = "tools.analyze_hcp_timing:main"
 garage-decode-phone-sync-video = "tools.decode_phone_sync_video:main"
 garage-fetch-hcp2-reference = "tools.fetch_hcp2_reference:main"
 garage-generate-aruco-markers = "tools.generate_aruco_marker_pdfs:main"
+garage-hcp2-lp-emu = "tools.hcp2_lp_emu.__main__:main"
 garage-hcp-proxy-client = "tools.hcp_proxy_client:main"
 garage-hcp-timing-calibration = "tools.run_hcp_timing_calibration:main"
 garage-init-secrets = "tools.init_secrets:main"
@@ -30,7 +31,9 @@ garage-test-wizard = "tools.garage_test_wizard:main"
 
 [dependency-groups]
 dev = [
+  "pyelftools>=0.31",
   "pytest>=8.0",
+  "unicorn>=2.1",
 ]
 
 [build-system]

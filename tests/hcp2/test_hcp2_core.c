@@ -6,6 +6,7 @@
 #include "hcp2_crc.h"
 #include "hcp2_engine.h"
 #include "hcp2_frame.h"
+#include "hcp2_mailbox.h"
 
 #define ARRAY_LEN(x) (sizeof(x) / sizeof((x)[0]))
 
@@ -331,6 +332,76 @@ static void test_rx_error_resets_partial_frame(void) {
   assert(test_port.tx_count == 1);
 }
 
+static void test_mailbox_layout_and_reload_decision(void) {
+  hcp2_lp_mailbox_t mailbox;
+
+  hcp2_lp_mailbox_init(&mailbox);
+  assert(HCP2_LP_MAILBOX_ADDR == 0x50002000u);
+  assert(sizeof(mailbox) == 512u);
+  assert(mailbox.magic == HCP2_LP_MAILBOX_MAGIC);
+  assert(mailbox.abi_version == HCP2_LP_MAILBOX_ABI_VERSION);
+  assert(mailbox.struct_size == HCP2_LP_MAILBOX_SIZE);
+  assert(mailbox.firmware_version == HCP2_LP_FIRMWARE_VERSION);
+  assert(hcp2_lp_mailbox_reload_decision(&mailbox, HCP2_LP_FIRMWARE_VERSION, 7u, 7u) ==
+         HCP2_LP_RELOAD_REQUIRED);
+  mailbox.heartbeat = 8u;
+  assert(hcp2_lp_mailbox_reload_decision(&mailbox, HCP2_LP_FIRMWARE_VERSION, 7u, mailbox.heartbeat) ==
+         HCP2_LP_RELOAD_SKIP);
+  assert(hcp2_lp_mailbox_reload_decision(&mailbox, HCP2_LP_FIRMWARE_VERSION + 1u, 7u, mailbox.heartbeat) ==
+         HCP2_LP_RELOAD_REQUIRED);
+  mailbox.magic = 0u;
+  assert(hcp2_lp_mailbox_reload_decision(&mailbox, HCP2_LP_FIRMWARE_VERSION, 7u, 8u) ==
+         HCP2_LP_RELOAD_REQUIRED);
+}
+
+static void test_mailbox_state_seqlock(void) {
+  hcp2_lp_mailbox_t mailbox;
+  hcp2_drive_status_t state;
+  hcp2_lp_state_snapshot_t snapshot;
+
+  hcp2_lp_mailbox_init(&mailbox);
+  memset(&state, 0, sizeof(state));
+  state.target_position = 200u;
+  state.current_position = 128u;
+  state.state = HCP2_DRIVE_OPENING;
+  state.light_on = 1u;
+  hcp2_lp_mailbox_publish_state(&mailbox, &state, 123456u);
+
+  assert(hcp2_lp_mailbox_read_state(&mailbox, &snapshot));
+  assert(snapshot.target_position == 200u);
+  assert(snapshot.current_position == 128u);
+  assert(snapshot.state == HCP2_DRIVE_OPENING);
+  assert(snapshot.light_on == 1u);
+  assert(snapshot.updated_us == 123456u);
+
+  mailbox.state_seq |= 1u;
+  assert(!hcp2_lp_mailbox_read_state(&mailbox, &snapshot));
+}
+
+static void test_mailbox_command_epoch_and_ack(void) {
+  hcp2_lp_mailbox_t mailbox;
+  hcp2_lp_command_t command;
+  uint32_t last_sequence = 0u;
+
+  hcp2_lp_mailbox_init(&mailbox);
+  hcp2_lp_mailbox_send_command(&mailbox, 0xA5A5u, 1u, HCP2_LP_COMMAND_OPEN, 0u);
+  assert(!hcp2_lp_mailbox_take_command(&mailbox, 0x1111u, &last_sequence, &command));
+  assert(last_sequence == 0u);
+  assert(hcp2_lp_mailbox_take_command(&mailbox, 0xA5A5u, &last_sequence, &command));
+  assert(command.epoch == 0xA5A5u);
+  assert(command.sequence == 1u);
+  assert(command.command_id == HCP2_LP_COMMAND_OPEN);
+  assert(mailbox.command_ack_sequence == 1u);
+  assert(!hcp2_lp_mailbox_take_command(&mailbox, 0xA5A5u, &last_sequence, &command));
+
+  hcp2_lp_mailbox_send_command(&mailbox, 0xBEEFu, 2u, HCP2_LP_COMMAND_LIGHT, 1u);
+  assert(!hcp2_lp_mailbox_take_command(&mailbox, 0xA5A5u, &last_sequence, &command));
+  assert(hcp2_lp_mailbox_take_command(&mailbox, 0xBEEFu, &last_sequence, &command));
+  assert(command.command_id == HCP2_LP_COMMAND_LIGHT);
+  assert(command.argument == 1u);
+  assert(mailbox.command_ack_sequence == 2u);
+}
+
 int main(void) {
   test_vector_crc_file();
   test_crc_known_frame();
@@ -342,6 +413,9 @@ int main(void) {
   test_button_press_release_sequence();
   test_bad_crc_no_response_and_recovery();
   test_rx_error_resets_partial_frame();
+  test_mailbox_layout_and_reload_decision();
+  test_mailbox_state_seqlock();
+  test_mailbox_command_epoch_and_ack();
   puts("hcp2 core tests ok");
   return 0;
 }
