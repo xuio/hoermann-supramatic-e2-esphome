@@ -7,9 +7,9 @@ on:
 
 jobs:
   parser-fuzz:
-    name: HCP2 parser fuzz
+    name: HCP2 parser fuzz and simulator soak
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 90
 
     steps:
       - name: Check out repository
@@ -32,8 +32,25 @@ jobs:
       - name: Run ASan/UBSan parser fuzz
         run: make -C tests/hcp2 asan FUZZ_ITERATIONS=1000000 FUZZ_REPORT=build/fuzz-report.json
 
+      - name: Run accelerated simulator soak
+        run: >
+          uv run garage-supramatic-sim
+          --socketpair
+          --cycles 1000000
+          --speed-factor 1000000
+          --dut-response-delay-us 0
+          --fault corrupt-crc
+          --fault truncated
+          --fault duplicate
+          --fault jitter
+          --fault garbage
+          --fault split
+          --report tests/hcp2/build/simulator-soak-report.json
+
       - name: Upload HCP2 fuzz report
         uses: actions/upload-artifact@v4
         with:
           name: hcp2-fuzz-report
-          path: tests/hcp2/build/fuzz-report.json
+          path: |
+            tests/hcp2/build/fuzz-report.json
+            tests/hcp2/build/simulator-soak-report.json

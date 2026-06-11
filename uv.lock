@@ -860,6 +860,7 @@ dependencies = [
     { name = "numpy" },
     { name = "opencv-contrib-python-headless" },
     { name = "pillow" },
+    { name = "pyserial" },
     { name = "reportlab" },
 ]
 
@@ -876,6 +877,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.0" },
     { name = "opencv-contrib-python-headless", specifier = ">=4.10" },
     { name = "pillow", specifier = ">=10.0" },
+    { name = "pyserial", specifier = ">=3.5" },
     { name = "reportlab", specifier = ">=4.0" },
 ]
 

@@ -11,6 +11,7 @@ dependencies = [
   "numpy>=2.0",
   "opencv-contrib-python-headless>=4.10",
   "pillow>=10.0",
+  "pyserial>=3.5",
   "reportlab>=4.0",
 ]
 
@@ -24,6 +25,7 @@ garage-hcp-proxy-client = "tools.hcp_proxy_client:main"
 garage-hcp-timing-calibration = "tools.run_hcp_timing_calibration:main"
 garage-init-secrets = "tools.init_secrets:main"
 garage-phone-sync = "tools.run_phone_video_sync_capture:main"
+garage-supramatic-sim = "tools.supramatic_sim.__main__:main"
 garage-test-wizard = "tools.garage_test_wizard:main"
 
 [dependency-groups]

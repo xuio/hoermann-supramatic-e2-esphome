@@ -49,5 +49,11 @@ jobs:
       - name: Run HCP2 host tests
         run: uv run pytest tests/hcp2
 
+      - name: Run HCP2 simulator self-test
+        run: uv run garage-supramatic-sim --selftest
+
+      - name: Run HCP2 simulator PTY smoke
+        run: uv run garage-supramatic-sim --pty --cycles 1000 --report hcp2-sim-report.json
+
       - name: Run HCP2 sanitizer build
         run: make -C tests/hcp2 asan
