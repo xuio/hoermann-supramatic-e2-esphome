@@ -6,6 +6,14 @@ This project is released under The Unlicense. It also contains code and protocol
 
 - `hoermann_door` ESPHome/UAP1 implementations, especially ESP32-compatible forks used as the starting point for the local ESPHome external component.
 - Other public HCP/Hörmann protocol notes and experiments used only as protocol references.
+- HCP2 / UAP1-HCP protocol facts and public capture fixtures from
+  `Tysonpower/HCPBridgeMqtt_tynet` at commit
+  `e2d8297a868d4dd62781b8b4a305279b787d250c`, file
+  `docs/Investigation.zip` (SHA-256
+  `9130bf43f433d95bf9dc32f1449b854355e5fd5a94c63b0d79b54e556eeb1567`).
+  The canonical original investigation is `hkiam/HCPBridge` under `Investigation/`.
+  The repository uses only protocol facts and capture bytes from this corpus, not
+  GPL-family implementation code.
 
 The original upstream license text kept from the `hoermann_door` lineage is in [LICENSE.upstream-hoermann_door](LICENSE.upstream-hoermann_door).
 
@@ -16,3 +24,7 @@ Hörmann, SupraMatic, UAP1, Home Assistant, ESPHome, Apple Home, and HomeKit are
 ## Protocol Notice
 
 The HCP1/UAP1 behavior documented here is based on observed traffic and public reverse-engineering. It may be incomplete or wrong for other opener models, firmware indexes, or regional variants.
+
+The HCP2 / UAP1-HCP behavior under development is likewise based on observed public
+traffic and must be validated in simulation, hardware-in-the-loop, and finally
+listen-only real-motor captures before active motor control.

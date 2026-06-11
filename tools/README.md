@@ -8,6 +8,7 @@ This directory contains the Python helpers used to build, test, capture, and cal
 | --- | --- | --- |
 | `uv run garage-phone-sync` | [run_phone_video_sync_capture.py](run_phone_video_sync_capture.py) | Fullscreen phone-video sync display, HCP command runner, and ESP persistent-log coordinator |
 | `uv run garage-decode-phone-sync-video` | [decode_phone_sync_video.py](decode_phone_sync_video.py) | Decode the fullscreen QR timecode from a phone video |
+| `uv run garage-fetch-hcp2-reference` | [fetch_hcp2_reference.py](fetch_hcp2_reference.py) | Fetch and normalize the pinned public HCP2 reference corpus into ignored `captures/hcp2/` |
 | `uv run garage-analyze-aruco-video` | [analyze_garage_aruco_video.py](analyze_garage_aruco_video.py) | Extract door motion curves from ArUco marker videos |
 | `uv run garage-hcp-timing-calibration` | [run_hcp_timing_calibration.py](run_hcp_timing_calibration.py) | Run a normal HCP open/close timing capture through ESPHome |
 | `uv run garage-analyze-hcp-timing` | [analyze_hcp_timing.py](analyze_hcp_timing.py) | Align persistent HCP logs with previously extracted motion curves |

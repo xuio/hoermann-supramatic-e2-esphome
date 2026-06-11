@@ -1,0 +1,39 @@
+name: HCP2 Nightly
+
+on:
+  schedule:
+    - cron: "23 2 * * *"
+  workflow_dispatch:
+
+jobs:
+  parser-fuzz:
+    name: HCP2 parser fuzz
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        run: python -m pip install uv
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Run HCP2 host tests
+        run: uv run pytest tests/hcp2
+
+      - name: Run ASan/UBSan parser fuzz
+        run: make -C tests/hcp2 asan FUZZ_ITERATIONS=1000000 FUZZ_REPORT=build/fuzz-report.json
+
+      - name: Upload HCP2 fuzz report
+        uses: actions/upload-artifact@v4
+        with:
+          name: hcp2-fuzz-report
+          path: tests/hcp2/build/fuzz-report.json

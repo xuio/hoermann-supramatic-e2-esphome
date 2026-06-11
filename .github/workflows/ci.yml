@@ -45,3 +45,9 @@ jobs:
 
       - name: Run Python tool self-test
         run: uv run garage-decode-phone-sync-video --self-test
+
+      - name: Run HCP2 host tests
+        run: uv run pytest tests/hcp2
+
+      - name: Run HCP2 sanitizer build
+        run: make -C tests/hcp2 asan

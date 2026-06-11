@@ -18,12 +18,18 @@ dependencies = [
 garage-analyze-aruco-video = "tools.analyze_garage_aruco_video:main"
 garage-analyze-hcp-timing = "tools.analyze_hcp_timing:main"
 garage-decode-phone-sync-video = "tools.decode_phone_sync_video:main"
+garage-fetch-hcp2-reference = "tools.fetch_hcp2_reference:main"
 garage-generate-aruco-markers = "tools.generate_aruco_marker_pdfs:main"
 garage-hcp-proxy-client = "tools.hcp_proxy_client:main"
 garage-hcp-timing-calibration = "tools.run_hcp_timing_calibration:main"
 garage-init-secrets = "tools.init_secrets:main"
 garage-phone-sync = "tools.run_phone_video_sync_capture:main"
 garage-test-wizard = "tools.garage_test_wizard:main"
+
+[dependency-groups]
+dev = [
+  "pytest>=8.0",
+]
 
 [build-system]
 requires = ["hatchling"]
