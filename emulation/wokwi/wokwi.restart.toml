@@ -1,7 +1,7 @@
 [wokwi]
 version = 1
-firmware = "../../firmware/hcp2-bringup/build-restart/flasher_args.json"
-elf = "../../firmware/hcp2-bringup/build-restart/hcp2_bringup.elf"
+firmware = "../../firmware/hcp2-bringup/build-wokwi-hp-fallback-restart/flasher_args.json"
+elf = "../../firmware/hcp2-bringup/build-wokwi-hp-fallback-restart/hcp2_bringup.elf"
 
 [[chip]]
 name = "supramatic4"

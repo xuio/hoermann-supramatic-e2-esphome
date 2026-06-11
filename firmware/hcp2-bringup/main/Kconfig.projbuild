@@ -32,4 +32,14 @@ config HCP2_BRINGUP_MAILBOX_TEST_DOUBLE
         synthetic healthy LP mailbox during Wokwi/HP integration tests. The
         LP-in-the-loop mode uses the real mailbox ABI instead.
 
+config HCP2_BRINGUP_WOKWI_LP_UART_BYPASS
+    bool "Bypass ESP-IDF LP-UART init wait for Wokwi"
+    default n
+    help
+        Wokwi's ESP32-C6 LP-UART model currently does not clear the UART
+        reg_update bit that ESP-IDF waits on during lp_core_uart_init(), which
+        deadlocks the HP core before the LP blob can start. Enable only for the
+        Wokwi build overlay; real hardware must use the normal ESP-IDF LP-UART
+        initialization path.
+
 endmenu

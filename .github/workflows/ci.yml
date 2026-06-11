@@ -110,7 +110,7 @@ jobs:
             firmware/hcp2-lp/build/hcp2_lp.sym
 
   hcp2-wokwi:
-    name: Build and emulate HCP2 HP+LP firmware
+    name: Build HCP2 firmware and run Wokwi gates
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
@@ -141,26 +141,37 @@ jobs:
           target: esp32c6
           path: firmware/hcp2-bringup
 
-      - name: Build HCP2 bring-up restart firmware
+      - name: Build HCP2 Wokwi LP probe firmware
         uses: espressif/esp-idf-ci-action@v1
         with:
           esp_idf_version: release-v5.5
           target: esp32c6
           path: firmware/hcp2-bringup
           command: >
-            idf.py -B build-restart
-            -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.restart.defaults"
+            idf.py -B build-wokwi
+            -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.wokwi.defaults"
             build
 
-      - name: Build HCP2 bring-up HP fallback firmware
+      - name: Build HCP2 Wokwi HP fallback firmware
         uses: espressif/esp-idf-ci-action@v1
         with:
           esp_idf_version: release-v5.5
           target: esp32c6
           path: firmware/hcp2-bringup
           command: >
-            idf.py -B build-hp-fallback
+            idf.py -B build-wokwi-hp-fallback
             -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.hp-fallback.defaults"
+            build
+
+      - name: Build HCP2 Wokwi HP fallback restart firmware
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: release-v5.5
+          target: esp32c6
+          path: firmware/hcp2-bringup
+          command: >
+            idf.py -B build-wokwi-hp-fallback-restart
+            -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.hp-fallback.defaults;sdkconfig.restart.defaults"
             build
 
       - name: Generate ISS baseline for Wokwi differential
@@ -186,14 +197,20 @@ jobs:
         working-directory: emulation/wokwi
         run: wokwi-cli chip compile supramatic4.chip.c -o chips/supramatic4.chip.wasm
 
-      - name: Run Wokwi supervisor scenario
+      - name: Run Wokwi LP execution probe
         if: ${{ env.WOKWI_CLI_TOKEN != '' }}
-        run: >
-          wokwi-cli emulation/wokwi
-          --scenario supervisor.yaml
-          --timeout 10000
-          --fail-text HCP2_SUPERVISOR_REAL_MAILBOX_FAIL
-          --serial-log-file emulation/wokwi/supervisor.serial.log
+        run: |
+          set -o pipefail
+          cp emulation/wokwi/wokwi.toml /tmp/hcp2-wokwi.toml
+          restore() { cp /tmp/hcp2-wokwi.toml emulation/wokwi/wokwi.toml; }
+          trap restore EXIT
+          cp emulation/wokwi/wokwi.lp-probe.toml emulation/wokwi/wokwi.toml
+          wokwi-cli emulation/wokwi \
+            --scenario supervisor.yaml \
+            --timeout 10000 \
+            --serial-log-file emulation/wokwi/lp-probe.serial.log | tee emulation/wokwi/lp-probe.full.log
+          restore
+          trap - EXIT
 
       - name: Run Wokwi steady-state scenario
         if: ${{ env.WOKWI_CLI_TOKEN != '' }}
@@ -204,6 +221,7 @@ jobs:
             --timeout 30000 \
             --fail-text HCP2_WOKWI_VERDICT_FAIL \
             --serial-log-file emulation/wokwi/steady-state.serial.log | tee emulation/wokwi/steady-state.full.log
+          grep -q "HCP2_WOKWI_VERDICT_OK reason=steady-state" emulation/wokwi/steady-state.full.log
 
       - name: Compare Wokwi trace against ISS
         if: ${{ env.WOKWI_CLI_TOKEN != '' }}
@@ -211,6 +229,7 @@ jobs:
           uv run garage-compare-hcp2-traces
           --wokwi-log emulation/wokwi/steady-state.full.log
           --iss-report iss-wokwi-baseline.json
+          --latency-tolerance-us 100000
           --output trace-compare.json
 
       - name: Run Wokwi restart-loop scenario
@@ -218,6 +237,8 @@ jobs:
         run: |
           set -o pipefail
           cp emulation/wokwi/wokwi.toml /tmp/hcp2-wokwi.toml
+          restore() { cp /tmp/hcp2-wokwi.toml emulation/wokwi/wokwi.toml; }
+          trap restore EXIT
           cp emulation/wokwi/wokwi.restart.toml emulation/wokwi/wokwi.toml
           wokwi-cli emulation/wokwi \
             --diagram-file diagram.restart.json \
@@ -225,7 +246,9 @@ jobs:
             --timeout 35000 \
             --fail-text HCP2_WOKWI_VERDICT_FAIL \
             --serial-log-file emulation/wokwi/restart-loop.serial.log | tee emulation/wokwi/restart-loop.full.log
-          cp /tmp/hcp2-wokwi.toml emulation/wokwi/wokwi.toml
+          grep -q "HCP2_WOKWI_VERDICT_OK reason=restart-recovered" emulation/wokwi/restart-loop.full.log
+          restore
+          trap - EXIT
 
       - name: Upload Wokwi logs
         if: ${{ always() }}

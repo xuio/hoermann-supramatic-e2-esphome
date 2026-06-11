@@ -210,8 +210,20 @@ static esp_err_t init_lp_bus_io_(void) {
                       "set LP DE output");
   ESP_RETURN_ON_ERROR(rtc_gpio_set_level(HCP2_BRINGUP_DE, 0), TAG, "drive LP DE low");
   ESP_RETURN_ON_ERROR(rtc_gpio_pulldown_en(HCP2_BRINGUP_DE), TAG, "enable LP DE pulldown");
+
+#if CONFIG_HCP2_BRINGUP_WOKWI_LP_UART_BYPASS
+  ESP_LOGW(TAG, "HCP2_WOKWI_LP_UART_BYPASS");
+  ESP_RETURN_ON_ERROR(rtc_gpio_init(HCP2_BRINGUP_UART_TX), TAG, "init LP UART TX GPIO");
+  ESP_RETURN_ON_ERROR(rtc_gpio_set_direction(HCP2_BRINGUP_UART_TX, RTC_GPIO_MODE_OUTPUT_ONLY), TAG,
+                      "set LP UART TX output");
+  ESP_RETURN_ON_ERROR(rtc_gpio_init(HCP2_BRINGUP_UART_RX), TAG, "init LP UART RX GPIO");
+  ESP_RETURN_ON_ERROR(rtc_gpio_set_direction(HCP2_BRINGUP_UART_RX, RTC_GPIO_MODE_INPUT_ONLY), TAG,
+                      "set LP UART RX input");
+  return ESP_OK;
+#else
   ESP_RETURN_ON_ERROR(lp_core_uart_init(&uart_cfg), TAG, "init LP UART");
   return ESP_OK;
+#endif
 }
 
 static bool healthy_lp_running_(uint32_t *heartbeat_before, uint32_t *heartbeat_after) {
@@ -285,8 +297,17 @@ static bool verify_real_mailbox_(void) {
   uint32_t heartbeat_after = 0;
   const uint32_t epoch = fresh_epoch_();
   const uint32_t stale_epoch = epoch ^ 0xA5A55A5Au;
+  const int health_attempts = HCP2_BRINGUP_MAILBOX_TIMEOUT_MS / HCP2_BRINGUP_HEARTBEAT_PROBE_MS;
+  bool healthy = false;
 
-  if (!healthy_lp_running_(&heartbeat_before, &heartbeat_after)) {
+  for (int i = 0; i < health_attempts; i++) {
+    if (healthy_lp_running_(&heartbeat_before, &heartbeat_after)) {
+      healthy = true;
+      break;
+    }
+  }
+
+  if (!healthy) {
     ESP_LOGE(TAG, "HCP2_SUPERVISOR_REAL_SKIP_RELOAD_FAIL heartbeat_before=%" PRIu32
                   " heartbeat_after=%" PRIu32,
              heartbeat_before, heartbeat_after);
@@ -324,7 +345,11 @@ static bool verify_real_mailbox_(void) {
 static void lp_supervisor_task(void *arg) {
   (void) arg;
   if (!verify_real_mailbox_()) {
+#if CONFIG_HCP2_BRINGUP_WOKWI_LP_UART_BYPASS
+    ESP_LOGW(TAG, "HCP2_WOKWI_LP_EXEC_UNSUPPORTED");
+#else
     ESP_LOGE(TAG, "HCP2_SUPERVISOR_REAL_MAILBOX_FAIL");
+#endif
   }
 
   for (;;) {

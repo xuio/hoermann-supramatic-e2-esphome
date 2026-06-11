@@ -6,8 +6,11 @@ default mode is LP-in-the-loop: the HP firmware embeds and loads the same Phase
 at `HCP2_LP_MAILBOX_ADDR`.
 
 The fallback mode still runs the portable `hcp2_core` responder on the ESP32-C6
-HP core. That mode is for Wokwi/bring-up fallback only if the Wokwi LP-UART spike
-shows a simulator gap; production HCP2 support remains LP-core based.
+HP core. That mode is for Wokwi/bring-up fallback only. A token-gated Wokwi run
+on 2026-06-11 showed that the current Wokwi C6 simulator does not execute this
+LP-UART LP blob far enough for the mailbox heartbeat to advance, even though
+`ulp_lp_core_run()` returns `ESP_OK`. Production HCP2 support remains LP-core
+based and Phase 1 HIL remains the authority for LP behavior.
 
 Both modes use the fixed target pins:
 
@@ -22,19 +25,22 @@ Build with the local ESP-IDF environment:
 idf.py -C firmware/hcp2-bringup build
 ```
 
-The restart-loop build used by Wokwi CI overlays `sdkconfig.restart.defaults`
-and keeps LP-in-the-loop mode enabled:
+The Wokwi LP probe overlays `sdkconfig.wokwi.defaults`. This enables a
+Wokwi-only bypass around the ESP-IDF LP-UART `reg_update` wait so the probe can
+reach `ulp_lp_core_run()` and record the current simulator limitation:
 
 ```sh
-idf.py -C firmware/hcp2-bringup -B firmware/hcp2-bringup/build-restart \
-  -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.restart.defaults" build
+idf.py -C firmware/hcp2-bringup -B firmware/hcp2-bringup/build-wokwi \
+  -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.wokwi.defaults" build
 ```
 
-The HP-fallback build overlays `sdkconfig.hp-fallback.defaults`:
+The HP-fallback Wokwi builds overlay `sdkconfig.hp-fallback.defaults`:
 
 ```sh
-idf.py -C firmware/hcp2-bringup -B firmware/hcp2-bringup/build-hp-fallback \
+idf.py -C firmware/hcp2-bringup -B firmware/hcp2-bringup/build-wokwi-hp-fallback \
   -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.hp-fallback.defaults" build
+idf.py -C firmware/hcp2-bringup -B firmware/hcp2-bringup/build-wokwi-hp-fallback-restart \
+  -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.hp-fallback.defaults;sdkconfig.restart.defaults" build
 ```
 
 In LP-in-the-loop mode the boot log contains:

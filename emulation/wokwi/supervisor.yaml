@@ -1,9 +1,9 @@
-name: HCP2 Wokwi real mailbox supervisor
+name: HCP2 Wokwi LP execution probe
 version: 1
 author: garage-door-controller
 
 steps:
   - wait-serial: "HCP2_BRINGUP_MODE lp-in-loop"
-  - wait-serial: "HCP2_SUPERVISOR_REAL_SKIP_RELOAD_OK"
-  - wait-serial: "HCP2_SUPERVISOR_REAL_EPOCH_OK"
-  - wait-serial: "HCP2_SUPERVISOR_REAL_MAILBOX_OK"
+  - wait-serial: "HCP2_WOKWI_LP_UART_BYPASS"
+  - wait-serial: "HCP2_LP_LOAD_RELOAD"
+  - wait-serial: "HCP2_WOKWI_LP_EXEC_UNSUPPORTED"

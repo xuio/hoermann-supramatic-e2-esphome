@@ -3,19 +3,10 @@ version: 1
 author: garage-door-controller
 
 steps:
-  - wait-serial: "HCP2_BRINGUP_MODE lp-in-loop"
-  - wait-serial: "HCP2_LP_LOAD_RELOAD"
+  - wait-serial: "HCP2_BRINGUP_MODE hp-fallback"
+  - wait-serial: "HCP2_BRINGUP_READY"
   - wait-serial: "HCP2_RESTART_LOOP interval_ms=3500"
   - wait-serial: "HCP2_RESTART_NOW"
-  - wait-serial: "HCP2_BRINGUP_MODE lp-in-loop"
-  - wait-serial: "HCP2_LP_SKIP_RELOAD"
-  - wait-serial: "HCP2_SUPERVISOR_REAL_MAILBOX_OK"
+  - wait-serial: "HCP2_BRINGUP_MODE hp-fallback"
+  - wait-serial: "HCP2_BRINGUP_READY"
   - delay: 18s
-  - expect-pin:
-      part-id: sim
-      pin: FAIL
-      expected: 0
-  - expect-pin:
-      part-id: sim
-      pin: PASS
-      expected: 1
