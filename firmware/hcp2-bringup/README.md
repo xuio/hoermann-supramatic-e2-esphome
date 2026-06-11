@@ -6,11 +6,13 @@ default mode is LP-in-the-loop: the HP firmware embeds and loads the same Phase
 at `HCP2_LP_MAILBOX_ADDR`.
 
 The fallback mode still runs the portable `hcp2_core` responder on the ESP32-C6
-HP core. That mode is for Wokwi/bring-up fallback only. A token-gated Wokwi run
-on 2026-06-11 showed that the current Wokwi C6 simulator does not execute this
-LP-UART LP blob far enough for the mailbox heartbeat to advance, even though
-`ulp_lp_core_run()` returns `ESP_OK`. Production HCP2 support remains LP-core
-based and Phase 1 HIL remains the authority for LP behavior.
+HP core. That mode is for Wokwi/bring-up fallback only. A token-gated Wokwi
+research pass on 2026-06-11 showed that current Wokwi C6 LP execution is not
+usable for this firmware path: the official Wokwi C6 LP example no longer
+completes, an IDF 5.5.4 rebuild of that example also fails, a minimal
+no-peripheral LP shared-variable example fails, and the LP-UART `reg_update` bit
+does not self-clear. Production HCP2 support remains LP-core based and Phase 1
+HIL remains the authority for LP behavior.
 
 Both modes use the fixed target pins:
 

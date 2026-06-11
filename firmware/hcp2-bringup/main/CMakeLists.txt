@@ -1,5 +1,6 @@
 set(HCP2_CORE_DIR "${CMAKE_CURRENT_LIST_DIR}/../../../components/hcp2bridge/core")
 set(HCP2_LP_MAIN_DIR "${CMAKE_CURRENT_LIST_DIR}/../../hcp2-lp/main")
+set(HCP2_IDF_LP_CORE_PRIVATE_INCLUDE "$ENV{IDF_PATH}/components/ulp/lp_core/lp_core/include")
 
 idf_component_register(
   SRCS
@@ -11,6 +12,8 @@ idf_component_register(
   INCLUDE_DIRS
     "."
     "${HCP2_CORE_DIR}"
+    "${HCP2_LP_MAIN_DIR}/lp_core"
+    "${HCP2_IDF_LP_CORE_PRIVATE_INCLUDE}"
   REQUIRES
     driver
     esp_timer

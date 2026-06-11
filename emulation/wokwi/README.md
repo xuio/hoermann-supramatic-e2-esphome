@@ -9,13 +9,23 @@ SupraMatic 4 HCP2 master chip:
 - GPIO6: LP GPIO DE, watched by the master chip for canonical trace events
 
 As of the 2026-06-11 check of <https://docs.wokwi.com/guides/esp32>, Wokwi lists
-ESP32-C6 UART and the C6 ULP processor as supported. A token-gated Phase 0d run
-on 2026-06-11 found two narrower simulator gaps for this firmware path:
-ESP-IDF's `lp_core_uart_init()` blocks forever waiting for the LP-UART
-`reg_update` bit, and even with a Wokwi-only bypass for that wait,
-`ulp_lp_core_run()` returns `ESP_OK` but the LP heartbeat never advances. CI
-therefore treats Wokwi as an HP-firmware/custom-chip integration layer, not as
-an LP execution authority.
+ESP32-C6 UART and the C6 ULP processor as supported. A token-gated Phase 0d
+research pass on 2026-06-11 found that LP-in-the-loop is not currently viable
+for this project:
+
+- The unmodified official `wokwi/esp32c6-i2c-lp` prebuilt ELF at commit
+  `e065aa65ef924bf4e57e011ab659b9f1788e833c` loads the LP firmware and enters
+  deep sleep, then hits HP watchdog resets and times out.
+- Rebuilding the same Espressif `lp_i2c` example with ESP-IDF 5.5.4 also loops
+  through `TG1_WDT_HPSYS` resets without an LP wakeup.
+- A minimal no-peripheral HP_CPU-started LP shared-variable example also fails:
+  the HP task waits forever for an LP-written value and trips the task watchdog.
+- HP-side reads from the LP-UART register block return plausible reset values,
+  but `LP_UART_REG_UPDATE` never self-clears after being set, so ESP-IDF's
+  `lp_core_uart_init()` can hang in its hardware-sync wait.
+
+CI therefore treats Wokwi as an HP-firmware/custom-chip integration layer, not
+as an LP execution authority.
 
 What this proves:
 
@@ -44,9 +54,10 @@ What this does not prove:
 
 Entry spike status:
 
-- LP-UART at 57600 8E1: Wokwi currently cannot execute this path. The
-  `supervisor.yaml` LP probe expects `HCP2_WOKWI_LP_EXEC_UNSUPPORTED` after
-  load/run, documenting the simulator gap.
+- LP-UART at 57600 8E1: Wokwi currently cannot execute this path. The LP-UART
+  register block is at least partially modeled, but `LP_UART_REG_UPDATE` remains
+  set after the IDF driver writes it. The `supervisor.yaml` LP probe expects
+  `HCP2_WOKWI_LP_EXEC_UNSUPPORTED` after load/run, documenting the simulator gap.
 - FIFO partial-TX fidelity: Wokwi behavior is intentionally judged by comparison
   to the ISS trace; any divergence is recorded as a simulator-fidelity finding.
 - DE via LP GPIO: GPIO6 is wired to the custom chip and emitted as `de` trace
@@ -70,7 +81,8 @@ cd emulation/wokwi
 wokwi-cli chip compile supramatic4.chip.c -o chips/supramatic4.chip.wasm
 ```
 
-Run the LP execution probe:
+Run the LP execution probe. This is expected to record the current Wokwi
+limitation, not prove LP execution:
 
 ```sh
 cp emulation/wokwi/wokwi.toml /tmp/hcp2-wokwi.toml
@@ -78,6 +90,11 @@ cp emulation/wokwi/wokwi.lp-probe.toml emulation/wokwi/wokwi.toml
 wokwi-cli emulation/wokwi --scenario supervisor.yaml
 cp /tmp/hcp2-wokwi.toml emulation/wokwi/wokwi.toml
 ```
+
+The upstream repro draft is in
+[`UPSTREAM_REPRO.md`](UPSTREAM_REPRO.md). It records the official-example
+control run, IDF 5.5.4 rebuild, minimal LP shared-variable probe, and LP-UART
+register probe in a form suitable for `wokwi/wokwi-features`.
 
 Run the HP-fallback steady-state scenario and ISS frame comparison:
 
