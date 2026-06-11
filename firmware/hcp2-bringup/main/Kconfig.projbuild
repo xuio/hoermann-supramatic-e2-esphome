@@ -1,5 +1,21 @@
 menu "HCP2 bring-up"
 
+choice HCP2_BRINGUP_RESPONDER_MODE
+    prompt "Responder mode"
+    default HCP2_BRINGUP_LP_IN_LOOP
+
+config HCP2_BRINGUP_LP_IN_LOOP
+    bool "LP core in the loop"
+    help
+        Load the real HCP2 LP blob and let the LP core answer the simulated bus.
+
+config HCP2_BRINGUP_HP_FALLBACK
+    bool "HP fallback responder"
+    help
+        Run hcp2_core on the HP core. This is a Wokwi/bring-up fallback only.
+
+endchoice
+
 config HCP2_BRINGUP_RESTART_INTERVAL_MS
     int "esp_restart test interval in milliseconds"
     default 0
@@ -9,9 +25,11 @@ config HCP2_BRINGUP_RESTART_INTERVAL_MS
 
 config HCP2_BRINGUP_MAILBOX_TEST_DOUBLE
     bool "Run LP mailbox supervisor test double at boot"
-    default y
+    default y if HCP2_BRINGUP_HP_FALLBACK
+    default n
     help
         Exercises skip-reload, heartbeat, and command epoch paths against a
-        synthetic healthy LP mailbox during Wokwi/HP integration tests.
+        synthetic healthy LP mailbox during Wokwi/HP integration tests. The
+        LP-in-the-loop mode uses the real mailbox ABI instead.
 
 endmenu

@@ -1,28 +1,51 @@
 # HCP2 Wokwi Emulation
 
-This directory contains the Phase 0d full-firmware emulation harness. It boots
-the ESP32-C6 HP core in Wokwi, runs the plain ESP-IDF bring-up firmware, and
-connects UART1 on GPIO4/GPIO5 to a custom SupraMatic 4 HCP2 master chip.
+This directory contains the Phase 0d full-system emulation harness. It boots the
+ESP32-C6 HP firmware in Wokwi, loads the real Phase 0c `hcp2_lp` blob onto the
+simulated LP core, and connects the LP-UART pins to a custom SupraMatic 4 HCP2
+master chip:
+
+- GPIO4: LP-UART RX from the master chip
+- GPIO5: LP-UART TX to the master chip
+- GPIO6: LP GPIO DE, watched by the master chip for canonical trace events
+
+As of the 2026-06-11 check of <https://docs.wokwi.com/guides/esp32>, Wokwi lists
+ESP32-C6 UART and the C6 ULP processor as supported. Wokwi is closed source, so
+this harness treats Wokwi as the full-system integration layer and differential
+reference, not as the authority for LP micro-behavior.
 
 What this proves:
 
-- ESP-IDF boot and UART1 configuration on the fixed HCP2 pins.
-- The HP fallback responder can answer bus scan and steady-state polls.
-- `esp_restart()` integration returns to the responder after an HP reboot.
-- HP supervisor code exercises skip-reload, stale-heartbeat, and epoch paths
-  against a mailbox test double.
+- The real HP firmware can embed, load, supervise, and skip-reload the real LP
+  blob through the fixed mailbox ABI.
+- The simulated C6 LP core can run the LP-UART responder against a pin-to-pin
+  custom-chip master.
+- The Wokwi master and Phase 0c ISS harness emit the same canonical event trace
+  format: `master_frame`, `slave_frame`, `reply_latency`, and `de`.
+- The trace comparator can fail CI on divergence between Wokwi and the ISS.
 
 What this does not prove:
 
-- Physical RS-485 timing, parity, baud tolerance, line contention, or DE
-  turnaround. Wokwi UART emulation is byte-level for this harness.
-- Production LP-core behavior. The LP responder is validated by the Phase 0c
-  ISS harness; Wokwi is an integration test for the HP firmware path.
+- Physical RS-485 timing, parity, baud tolerance, fail-safe biasing, line
+  contention, or real transceiver DE timing.
+- Wokwi LP-UART FIFO fidelity. The ISS remains the Phase 0c reference for
+  16-byte FIFO pressure, partial TX acceptance, MMIO coverage, and instruction
+  budgets.
+- Silicon reset behavior. Wokwi restart-loop mode is a useful integration spike;
+  Phase 1 HIL is still the authority for whether `esp_restart()` leaves the real
+  LP core running.
 
-As of the June 2026 Wokwi feature table, ESP32-C6 UART and the C6 ULP processor
-are both listed as simulated. This harness still keeps Wokwi LP coverage as a
-differential reference only: the Phase 0c ISS harness remains the authority for
-the exact LP blob until Wokwi's C6 LP-UART path is modeled and cross-checked.
+Entry spike status:
+
+- LP-UART at 57600 8E1: wired and CI-gated through `steady-state.yaml`; local
+  execution requires `WOKWI_CLI_TOKEN`.
+- FIFO partial-TX fidelity: Wokwi behavior is intentionally judged by comparison
+  to the ISS trace; any divergence is recorded as a simulator-fidelity finding.
+- DE via LP GPIO: GPIO6 is wired to the custom chip and emitted as `de` trace
+  events.
+- `esp_restart()` LP survival: `restart-loop.yaml` expects `HCP2_LP_SKIP_RELOAD`
+  after the HP reboot. If Wokwi does not preserve simulated LP state, this
+  scenario fails and the README should be updated with that observed limitation.
 
 Build the firmware and custom chip:
 
@@ -35,19 +58,31 @@ cd emulation/wokwi
 wokwi-cli chip compile supramatic4.chip.c -o chips/supramatic4.chip.wasm
 ```
 
-Run the steady-state scenario:
+Run the steady-state scenario and ISS comparison:
 
 ```sh
-wokwi-cli emulation/wokwi --scenario steady-state.yaml --fail-text HCP2_WOKWI_VERDICT_FAIL
+uv run garage-hcp2-lp-emu \
+  --blob firmware/hcp2-bringup/build/esp-idf/main/hcp2_lp/hcp2_lp.bin \
+  --cycles 200 \
+  --report iss-wokwi-baseline.json \
+  --trace iss-wokwi-trace.jsonl
+wokwi-cli emulation/wokwi \
+  --scenario steady-state.yaml \
+  --fail-text HCP2_WOKWI_VERDICT_FAIL | tee emulation/wokwi/steady-state.full.log
+uv run garage-compare-hcp2-traces \
+  --wokwi-log emulation/wokwi/steady-state.full.log \
+  --iss-report iss-wokwi-baseline.json \
+  --output trace-compare.json
 ```
 
 Run the restart-loop scenario:
 
 ```sh
+cp emulation/wokwi/wokwi.toml /tmp/hcp2-wokwi.toml
 cp emulation/wokwi/wokwi.restart.toml emulation/wokwi/wokwi.toml
 wokwi-cli emulation/wokwi --diagram-file diagram.restart.json \
   --scenario restart-loop.yaml --fail-text HCP2_WOKWI_VERDICT_FAIL
-git checkout -- emulation/wokwi/wokwi.toml
+cp /tmp/hcp2-wokwi.toml emulation/wokwi/wokwi.toml
 ```
 
 `PASS` and `FAIL` are output pins on the custom chip so automation scenarios can

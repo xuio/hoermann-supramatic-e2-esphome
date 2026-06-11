@@ -230,6 +230,7 @@ class LPEmulator:
 
         self.de_enabled = False
         self.de_events: list[dict[str, int | bool]] = []
+        self.trace_events: list[dict[str, object]] = []
         self.tx_when_de_low = 0
         self.rx_overflows = 0
         self.tx_overflows = 0
@@ -257,6 +258,15 @@ class LPEmulator:
     @property
     def time_us(self) -> float:
         return (self.cycles * 1_000_000.0) / LP_CLOCK_HZ
+
+    def _trace(self, event_type: str, **fields: object) -> None:
+        event: dict[str, object] = {
+            "source": "iss",
+            "type": event_type,
+            "t_us": round(self.time_us),
+        }
+        event.update(fields)
+        self.trace_events.append(event)
 
     def _map_memory(self) -> None:
         self.uc.mem_map(LP_SRAM_BASE, LP_SRAM_MAP_SIZE, UC_PROT_ALL)
@@ -407,9 +417,9 @@ class LPEmulator:
             if self.tx_first_cycle is None:
                 self.tx_first_cycle = self.tx_next_due_cycle
                 if self.last_master_write_cycle is not None:
-                    self.reply_latencies_us.append(
-                        (self.tx_first_cycle - self.last_master_write_cycle) * 1_000_000.0 / LP_CLOCK_HZ
-                    )
+                    latency_us = (self.tx_first_cycle - self.last_master_write_cycle) * 1_000_000.0 / LP_CLOCK_HZ
+                    self.reply_latencies_us.append(latency_us)
+                    self._trace("reply_latency", latency_us=round(latency_us))
             self.tx_output.append(byte)
             self.tx_next_due_cycle = self.tx_next_due_cycle + UART_BYTE_CYCLES if self.tx_fifo else None
 
@@ -494,6 +504,7 @@ class LPEmulator:
             return
         self.de_enabled = enabled
         self.de_events.append({"cycle": self.cycles, "time_us": round(self.time_us), "enabled": enabled})
+        self._trace("de", enabled=enabled)
 
     def _hook_invalid_mem(self, uc: Uc, access: int, address: int, size: int, value: int, user_data: object | None) -> bool:
         page = address & ~0xFFF
@@ -534,6 +545,7 @@ class LPEmulator:
 
     def write_uart(self, data: bytes) -> None:
         self.boot()
+        self._trace("master_frame", raw=data.hex())
         start = max(self.cycles, self.rx_last_due_cycle)
         self.tx_first_cycle = None
         for byte in data:
@@ -558,6 +570,8 @@ class LPEmulator:
     def _take_tx_output(self) -> bytes:
         data = bytes(self.tx_output)
         self.tx_output.clear()
+        if data:
+            self._trace("slave_frame", raw=data.hex())
         return data
 
     def heartbeat(self) -> int:
@@ -631,6 +645,8 @@ class LPEmulator:
             "tx_overflows": self.tx_overflows,
             "tx_when_de_low": self.tx_when_de_low,
             "de_events": self.de_events[:20],
+            "trace_event_count": len(self.trace_events),
+            "trace": self.trace_events,
             "reply_latency_min_us": latencies[0] if latencies else None,
             "reply_latency_p99_us": latency_p99,
             "reply_latency_max_us": latencies[-1] if latencies else None,

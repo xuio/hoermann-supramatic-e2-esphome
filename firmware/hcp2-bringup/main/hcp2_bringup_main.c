@@ -3,15 +3,23 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "driver/rtc_io.h"
 #include "driver/gpio.h"
 #include "driver/uart.h"
+#include "esp_check.h"
 #include "esp_err.h"
 #include "esp_log.h"
+#include "esp_random.h"
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "hal/gpio_types.h"
+#include "hal/uart_types.h"
+#include "hcp2_lp.h"
 #include "nvs_flash.h"
+#include "lp_core_uart.h"
+#include "ulp_lp_core.h"
 
 #include "hcp2_engine.h"
 #include "hcp2_mailbox.h"
@@ -24,16 +32,31 @@
 #define HCP2_BRINGUP_BAUD 57600
 #define HCP2_BRINGUP_RX_BUF 256
 #define HCP2_BRINGUP_TX_BUF 256
+#define HCP2_BRINGUP_HEARTBEAT_PROBE_MS 20
+#define HCP2_BRINGUP_MAILBOX_TIMEOUT_MS 250
 
 static const char *TAG = "hcp2_bringup";
+
+extern const uint8_t hcp2_lp_bin_start[] asm("_binary_hcp2_lp_bin_start");
+extern const uint8_t hcp2_lp_bin_end[] asm("_binary_hcp2_lp_bin_end");
 
 typedef struct {
   hcp2_engine_t engine;
 } hcp2_bringup_ctx_t;
 
+#if CONFIG_HCP2_BRINGUP_HP_FALLBACK
 static hcp2_bringup_ctx_t s_ctx;
-static volatile hcp2_lp_mailbox_t s_mailbox_double;
+#endif
 
+#if CONFIG_HCP2_BRINGUP_MAILBOX_TEST_DOUBLE && CONFIG_HCP2_BRINGUP_HP_FALLBACK
+static volatile hcp2_lp_mailbox_t s_mailbox_double;
+#endif
+
+static volatile hcp2_lp_mailbox_t *lp_mailbox_(void) {
+  return (volatile hcp2_lp_mailbox_t *) HCP2_LP_MAILBOX_ADDR;
+}
+
+#if CONFIG_HCP2_BRINGUP_HP_FALLBACK
 static uint32_t now_us_cb(void *user) {
   (void) user;
   return (uint32_t) esp_timer_get_time();
@@ -84,7 +107,9 @@ static void init_uart(void) {
   ESP_ERROR_CHECK(uart_set_pin(HCP2_BRINGUP_UART, HCP2_BRINGUP_UART_TX, HCP2_BRINGUP_UART_RX, UART_PIN_NO_CHANGE,
                                UART_PIN_NO_CHANGE));
 }
+#endif
 
+#if CONFIG_HCP2_BRINGUP_MAILBOX_TEST_DOUBLE && CONFIG_HCP2_BRINGUP_HP_FALLBACK
 static bool run_mailbox_test_double(void) {
   uint32_t heartbeat_before;
   uint32_t heartbeat_after;
@@ -127,7 +152,9 @@ static bool run_mailbox_test_double(void) {
            command.sequence);
   return true;
 }
+#endif
 
+#if CONFIG_HCP2_BRINGUP_HP_FALLBACK
 static void responder_task(void *arg) {
   hcp2_bringup_ctx_t *ctx = (hcp2_bringup_ctx_t *) arg;
   hcp2_engine_config_t config;
@@ -152,6 +179,165 @@ static void responder_task(void *arg) {
     vTaskDelay(pdMS_TO_TICKS(1));
   }
 }
+#endif
+
+#if CONFIG_HCP2_BRINGUP_LP_IN_LOOP
+static uint32_t fresh_epoch_(void) {
+  uint32_t epoch = esp_random();
+
+  if (epoch == 0u) {
+    epoch = (uint32_t) esp_timer_get_time() ^ 0xC6000001u;
+  }
+  return epoch;
+}
+
+static esp_err_t init_lp_bus_io_(void) {
+  lp_core_uart_cfg_t uart_cfg = LP_CORE_UART_DEFAULT_CONFIG();
+
+  uart_cfg.uart_proto_cfg.baud_rate = HCP2_BRINGUP_BAUD;
+  uart_cfg.uart_proto_cfg.data_bits = UART_DATA_8_BITS;
+  uart_cfg.uart_proto_cfg.parity = UART_PARITY_EVEN;
+  uart_cfg.uart_proto_cfg.stop_bits = UART_STOP_BITS_1;
+  uart_cfg.uart_proto_cfg.flow_ctrl = UART_HW_FLOWCTRL_DISABLE;
+  uart_cfg.uart_proto_cfg.rx_flow_ctrl_thresh = 0;
+  uart_cfg.uart_pin_cfg.tx_io_num = HCP2_BRINGUP_UART_TX;
+  uart_cfg.uart_pin_cfg.rx_io_num = HCP2_BRINGUP_UART_RX;
+  uart_cfg.uart_pin_cfg.rts_io_num = -1;
+  uart_cfg.uart_pin_cfg.cts_io_num = -1;
+
+  ESP_RETURN_ON_ERROR(rtc_gpio_init(HCP2_BRINGUP_DE), TAG, "init LP DE GPIO");
+  ESP_RETURN_ON_ERROR(rtc_gpio_set_direction(HCP2_BRINGUP_DE, RTC_GPIO_MODE_OUTPUT_ONLY), TAG,
+                      "set LP DE output");
+  ESP_RETURN_ON_ERROR(rtc_gpio_set_level(HCP2_BRINGUP_DE, 0), TAG, "drive LP DE low");
+  ESP_RETURN_ON_ERROR(rtc_gpio_pulldown_en(HCP2_BRINGUP_DE), TAG, "enable LP DE pulldown");
+  ESP_RETURN_ON_ERROR(lp_core_uart_init(&uart_cfg), TAG, "init LP UART");
+  return ESP_OK;
+}
+
+static bool healthy_lp_running_(uint32_t *heartbeat_before, uint32_t *heartbeat_after) {
+  volatile hcp2_lp_mailbox_t *mailbox = lp_mailbox_();
+  const uint32_t before = mailbox->heartbeat;
+  uint32_t after;
+
+  vTaskDelay(pdMS_TO_TICKS(HCP2_BRINGUP_HEARTBEAT_PROBE_MS));
+  after = mailbox->heartbeat;
+  if (heartbeat_before != NULL) {
+    *heartbeat_before = before;
+  }
+  if (heartbeat_after != NULL) {
+    *heartbeat_after = after;
+  }
+  return hcp2_lp_mailbox_reload_decision(mailbox, HCP2_LP_FIRMWARE_VERSION, before, after) ==
+         HCP2_LP_RELOAD_SKIP;
+}
+
+static esp_err_t load_and_start_lp_(void) {
+  volatile hcp2_lp_mailbox_t *mailbox = lp_mailbox_();
+  const size_t blob_size = (size_t) (hcp2_lp_bin_end - hcp2_lp_bin_start);
+  ulp_lp_core_cfg_t cfg = {
+      .wakeup_source = ULP_LP_CORE_WAKEUP_SOURCE_HP_CPU,
+  };
+
+  ulp_lp_core_stop();
+  ESP_RETURN_ON_ERROR(init_lp_bus_io_(), TAG, "LP bus IO init failed");
+  ESP_RETURN_ON_ERROR(ulp_lp_core_load_binary(hcp2_lp_bin_start, blob_size), TAG, "LP binary load failed");
+  hcp2_lp_mailbox_init(mailbox);
+  mailbox->command_epoch = fresh_epoch_();
+  mailbox->command_sequence = 0u;
+  mailbox->command_ack_sequence = 0u;
+  ESP_RETURN_ON_ERROR(ulp_lp_core_run(&cfg), TAG, "LP core start failed");
+  ESP_LOGI(TAG, "HCP2_LP_LOAD_RELOAD bytes=%u mailbox=0x%08x epoch=%" PRIu32, (unsigned) blob_size,
+           (unsigned) HCP2_LP_MAILBOX_ADDR, mailbox->command_epoch);
+  return ESP_OK;
+}
+
+static esp_err_t start_or_skip_lp_(void) {
+  uint32_t heartbeat_before = 0;
+  uint32_t heartbeat_after = 0;
+
+  if (healthy_lp_running_(&heartbeat_before, &heartbeat_after)) {
+    ESP_LOGI(TAG, "HCP2_LP_SKIP_RELOAD heartbeat_before=%" PRIu32 " heartbeat_after=%" PRIu32,
+             heartbeat_before, heartbeat_after);
+    return ESP_OK;
+  }
+
+  ESP_LOGI(TAG, "HCP2_LP_RELOAD_REQUIRED heartbeat_before=%" PRIu32 " heartbeat_after=%" PRIu32,
+           heartbeat_before, heartbeat_after);
+  return load_and_start_lp_();
+}
+
+static bool wait_for_ack_(uint32_t sequence) {
+  volatile hcp2_lp_mailbox_t *mailbox = lp_mailbox_();
+  const int attempts = HCP2_BRINGUP_MAILBOX_TIMEOUT_MS / HCP2_BRINGUP_HEARTBEAT_PROBE_MS;
+
+  for (int i = 0; i < attempts; i++) {
+    if (mailbox->command_ack_sequence == sequence) {
+      return true;
+    }
+    vTaskDelay(pdMS_TO_TICKS(HCP2_BRINGUP_HEARTBEAT_PROBE_MS));
+  }
+  return mailbox->command_ack_sequence == sequence;
+}
+
+static bool verify_real_mailbox_(void) {
+  volatile hcp2_lp_mailbox_t *mailbox = lp_mailbox_();
+  uint32_t heartbeat_before = 0;
+  uint32_t heartbeat_after = 0;
+  const uint32_t epoch = fresh_epoch_();
+  const uint32_t stale_epoch = epoch ^ 0xA5A55A5Au;
+
+  if (!healthy_lp_running_(&heartbeat_before, &heartbeat_after)) {
+    ESP_LOGE(TAG, "HCP2_SUPERVISOR_REAL_SKIP_RELOAD_FAIL heartbeat_before=%" PRIu32
+                  " heartbeat_after=%" PRIu32,
+             heartbeat_before, heartbeat_after);
+    return false;
+  }
+  ESP_LOGI(TAG, "HCP2_SUPERVISOR_REAL_SKIP_RELOAD_OK heartbeat_before=%" PRIu32
+                " heartbeat_after=%" PRIu32,
+           heartbeat_before, heartbeat_after);
+
+  mailbox->command_epoch = epoch;
+  mailbox->command_id = HCP2_LP_COMMAND_NONE;
+  mailbox->command_argument = 0u;
+  mailbox->command_ack_sequence = 0u;
+  mailbox->command_sequence = 0u;
+  vTaskDelay(pdMS_TO_TICKS(HCP2_BRINGUP_HEARTBEAT_PROBE_MS * 2));
+
+  hcp2_lp_mailbox_send_command(mailbox, stale_epoch, 1u, HCP2_LP_COMMAND_OPEN, 0u);
+  vTaskDelay(pdMS_TO_TICKS(HCP2_BRINGUP_HEARTBEAT_PROBE_MS * 2));
+  if (mailbox->command_ack_sequence != 0u) {
+    ESP_LOGE(TAG, "HCP2_SUPERVISOR_REAL_EPOCH_REPLAY_FAIL ack=%" PRIu32, mailbox->command_ack_sequence);
+    return false;
+  }
+
+  hcp2_lp_mailbox_send_command(mailbox, epoch, 1u, HCP2_LP_COMMAND_STOP, 0u);
+  if (!wait_for_ack_(1u)) {
+    ESP_LOGE(TAG, "HCP2_SUPERVISOR_REAL_EPOCH_ACK_FAIL ack=%" PRIu32, mailbox->command_ack_sequence);
+    return false;
+  }
+
+  ESP_LOGI(TAG, "HCP2_SUPERVISOR_REAL_EPOCH_OK epoch=%" PRIu32 " sequence=1", epoch);
+  ESP_LOGI(TAG, "HCP2_SUPERVISOR_REAL_MAILBOX_OK");
+  return true;
+}
+
+static void lp_supervisor_task(void *arg) {
+  (void) arg;
+  if (!verify_real_mailbox_()) {
+    ESP_LOGE(TAG, "HCP2_SUPERVISOR_REAL_MAILBOX_FAIL");
+  }
+
+  for (;;) {
+    uint32_t heartbeat_before = 0;
+    uint32_t heartbeat_after = 0;
+    if (!healthy_lp_running_(&heartbeat_before, &heartbeat_after)) {
+      ESP_LOGE(TAG, "HCP2_LP_HEARTBEAT_STALE heartbeat_before=%" PRIu32 " heartbeat_after=%" PRIu32,
+               heartbeat_before, heartbeat_after);
+    }
+    vTaskDelay(pdMS_TO_TICKS(1000));
+  }
+}
+#endif
 
 #if CONFIG_HCP2_BRINGUP_RESTART_INTERVAL_MS > 0
 static void restart_task(void *arg) {
@@ -175,14 +361,21 @@ void app_main(void) {
     ESP_ERROR_CHECK(nvs_status);
   }
 
-#if CONFIG_HCP2_BRINGUP_MAILBOX_TEST_DOUBLE
+#if CONFIG_HCP2_BRINGUP_MAILBOX_TEST_DOUBLE && CONFIG_HCP2_BRINGUP_HP_FALLBACK
   if (!run_mailbox_test_double()) {
     ESP_LOGE(TAG, "HCP2_SUPERVISOR_TEST_DOUBLE_FAIL");
   }
 #endif
 
+#if CONFIG_HCP2_BRINGUP_LP_IN_LOOP
+  ESP_LOGI(TAG, "HCP2_BRINGUP_MODE lp-in-loop");
+  ESP_ERROR_CHECK(start_or_skip_lp_());
+  xTaskCreate(lp_supervisor_task, "hcp2_lp_supervisor", 4096, NULL, 5, NULL);
+#else
+  ESP_LOGI(TAG, "HCP2_BRINGUP_MODE hp-fallback");
   init_uart();
   xTaskCreate(responder_task, "hcp2_responder", 4096, &s_ctx, configMAX_PRIORITIES - 1, NULL);
+#endif
 
 #if CONFIG_HCP2_BRINGUP_RESTART_INTERVAL_MS > 0
   xTaskCreate(restart_task, "hcp2_restart", 2048, NULL, 1, NULL);

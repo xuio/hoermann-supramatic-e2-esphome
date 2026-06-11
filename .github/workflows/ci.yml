@@ -110,7 +110,7 @@ jobs:
             firmware/hcp2-lp/build/hcp2_lp.sym
 
   hcp2-wokwi:
-    name: Build and emulate HCP2 HP firmware
+    name: Build and emulate HCP2 HP+LP firmware
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
@@ -152,6 +152,25 @@ jobs:
             -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.restart.defaults"
             build
 
+      - name: Build HCP2 bring-up HP fallback firmware
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: release-v5.5
+          target: esp32c6
+          path: firmware/hcp2-bringup
+          command: >
+            idf.py -B build-hp-fallback
+            -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.hp-fallback.defaults"
+            build
+
+      - name: Generate ISS baseline for Wokwi differential
+        run: >
+          uv run garage-hcp2-lp-emu
+          --blob firmware/hcp2-bringup/build/esp-idf/main/hcp2_lp/hcp2_lp.bin
+          --cycles 200
+          --report iss-wokwi-baseline.json
+          --trace iss-wokwi-trace.jsonl
+
       - name: Skip Wokwi scenarios without token
         if: ${{ env.WOKWI_CLI_TOKEN == '' }}
         run: echo "WOKWI_CLI_TOKEN is not set; skipping Phase 0d Wokwi scenarios."
@@ -173,21 +192,31 @@ jobs:
           wokwi-cli emulation/wokwi
           --scenario supervisor.yaml
           --timeout 10000
-          --fail-text HCP2_SUPERVISOR_TEST_DOUBLE_FAIL
-          --serial-log-file supervisor.log
+          --fail-text HCP2_SUPERVISOR_REAL_MAILBOX_FAIL
+          --serial-log-file emulation/wokwi/supervisor.serial.log
 
       - name: Run Wokwi steady-state scenario
         if: ${{ env.WOKWI_CLI_TOKEN != '' }}
+        run: |
+          set -o pipefail
+          wokwi-cli emulation/wokwi \
+            --scenario steady-state.yaml \
+            --timeout 30000 \
+            --fail-text HCP2_WOKWI_VERDICT_FAIL \
+            --serial-log-file emulation/wokwi/steady-state.serial.log | tee emulation/wokwi/steady-state.full.log
+
+      - name: Compare Wokwi trace against ISS
+        if: ${{ env.WOKWI_CLI_TOKEN != '' }}
         run: >
-          wokwi-cli emulation/wokwi
-          --scenario steady-state.yaml
-          --timeout 30000
-          --fail-text HCP2_WOKWI_VERDICT_FAIL
-          --serial-log-file steady-state.log
+          uv run garage-compare-hcp2-traces
+          --wokwi-log emulation/wokwi/steady-state.full.log
+          --iss-report iss-wokwi-baseline.json
+          --output trace-compare.json
 
       - name: Run Wokwi restart-loop scenario
         if: ${{ env.WOKWI_CLI_TOKEN != '' }}
         run: |
+          set -o pipefail
           cp emulation/wokwi/wokwi.toml /tmp/hcp2-wokwi.toml
           cp emulation/wokwi/wokwi.restart.toml emulation/wokwi/wokwi.toml
           wokwi-cli emulation/wokwi \
@@ -195,13 +224,16 @@ jobs:
             --scenario restart-loop.yaml \
             --timeout 35000 \
             --fail-text HCP2_WOKWI_VERDICT_FAIL \
-            --serial-log-file restart-loop.log
+            --serial-log-file emulation/wokwi/restart-loop.serial.log | tee emulation/wokwi/restart-loop.full.log
           cp /tmp/hcp2-wokwi.toml emulation/wokwi/wokwi.toml
 
       - name: Upload Wokwi logs
-        if: ${{ always() && env.WOKWI_CLI_TOKEN != '' }}
+        if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
           name: hcp2-wokwi-logs
           path: |
             emulation/wokwi/*.log
+            iss-wokwi-baseline.json
+            iss-wokwi-trace.jsonl
+            trace-compare.json

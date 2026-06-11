@@ -1,5 +1,6 @@
 #include "wokwi-api.h"
 
+#include <inttypes.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -32,6 +33,7 @@ typedef struct {
   timer_t timer;
   pin_t pass_pin;
   pin_t fail_pin;
+  pin_t de_pin;
   uint32_t cycles_attr;
   uint32_t mode_attr;
   uint32_t missed_threshold_attr;
@@ -54,6 +56,7 @@ typedef struct {
   uint64_t latency_sum_us;
   uint64_t poll_started_us;
   bool scan_ok;
+  bool de_state;
   bool saw_miss;
   bool recovered_after_miss;
   bool verdict_printed;
@@ -78,6 +81,30 @@ static uint64_t now_us(void) {
   return get_sim_nanos() / 1000u;
 }
 
+static void print_hex(const uint8_t *data, uint32_t len) {
+  for (uint32_t i = 0; i < len; i++) {
+    printf("%02x", data[i]);
+  }
+}
+
+static void trace_frame(const char *type, const uint8_t *frame, uint32_t len) {
+  printf("HCP2_TRACE {\"source\":\"wokwi\",\"type\":\"%s\",\"t_us\":%" PRIu64 ",\"raw\":\"", type,
+         now_us());
+  print_hex(frame, len);
+  printf("\"}\n");
+}
+
+static void trace_latency(uint32_t latency_us) {
+  printf("HCP2_TRACE {\"source\":\"wokwi\",\"type\":\"reply_latency\",\"t_us\":%" PRIu64
+         ",\"latency_us\":%u}\n",
+         now_us(), latency_us);
+}
+
+static void trace_de(bool enabled) {
+  printf("HCP2_TRACE {\"source\":\"wokwi\",\"type\":\"de\",\"t_us\":%" PRIu64 ",\"enabled\":%s}\n",
+         now_us(), enabled ? "true" : "false");
+}
+
 static void set_verdict(chip_state_t *chip, bool ok, const char *reason) {
   if (chip->verdict_printed) {
     return;
@@ -93,6 +120,7 @@ static void set_verdict(chip_state_t *chip, bool ok, const char *reason) {
 }
 
 static bool send_frame(chip_state_t *chip, const uint8_t *frame, uint32_t len) {
+  trace_frame("master_frame", frame, len);
   if (!uart_write(chip->uart, (uint8_t *) frame, len)) {
     set_verdict(chip, false, "uart-busy");
     return false;
@@ -102,6 +130,7 @@ static bool send_frame(chip_state_t *chip, const uint8_t *frame, uint32_t len) {
 
 static bool send_scan(chip_state_t *chip) {
   chip->rx_len = 0;
+  chip->poll_started_us = now_us();
   chip->phase = PHASE_WAIT_SCAN;
   if (!send_frame(chip, HCP2_WOKWI_SCAN_REQUEST, HCP2_WOKWI_SCAN_REQUEST_LEN)) {
     return false;
@@ -142,6 +171,7 @@ static bool send_status_poll(chip_state_t *chip) {
 
 static void record_poll_reply(chip_state_t *chip) {
   const uint32_t latency_us = (uint32_t) (now_us() - chip->poll_started_us);
+  trace_latency(latency_us);
   if (chip->replies == 0u || latency_us < chip->latency_min_us) {
     chip->latency_min_us = latency_us;
   }
@@ -210,8 +240,10 @@ static void process_response(chip_state_t *chip, const uint8_t *frame, uint8_t l
   if (crc16_modbus(frame, len) != 0u) {
     return;
   }
+  trace_frame("slave_frame", frame, len);
   if (len == HCP2_WOKWI_SCAN_RESPONSE_LEN && memcmp(frame, HCP2_WOKWI_SCAN_RESPONSE, len) == 0 &&
       chip->phase == PHASE_WAIT_SCAN) {
+    trace_latency((uint32_t) (now_us() - chip->poll_started_us));
     chip->scan_ok = true;
     chip->phase = PHASE_NEXT_CYCLE;
     timer_start(chip->timer, HCP2_WOKWI_SCAN_TO_CYCLE_US, false);
@@ -272,6 +304,18 @@ static void on_uart_write_done(void *user_data) {
   (void) user_data;
 }
 
+static void on_de_change(void *user_data, pin_t pin, uint32_t value) {
+  chip_state_t *chip = (chip_state_t *) user_data;
+  const bool enabled = value != 0u;
+
+  (void) pin;
+  if (chip->de_state == enabled) {
+    return;
+  }
+  chip->de_state = enabled;
+  trace_de(enabled);
+}
+
 static void on_timer(void *user_data) {
   chip_state_t *chip = (chip_state_t *) user_data;
 
@@ -327,6 +371,7 @@ void chip_init(void) {
   chip->require_recovery_attr = attr_init("requireRecovery", 0);
   chip->pass_pin = pin_init("PASS", OUTPUT_LOW);
   chip->fail_pin = pin_init("FAIL", OUTPUT_LOW);
+  chip->de_pin = pin_init("DE", INPUT_PULLDOWN);
 
   memset(&uart_config, 0, sizeof(uart_config));
   uart_config.rx = pin_init("RX", INPUT);
@@ -336,6 +381,13 @@ void chip_init(void) {
   uart_config.write_done = on_uart_write_done;
   uart_config.user_data = chip;
   chip->uart = uart_init(&uart_config);
+
+  const pin_watch_config_t de_watch = {
+      .edge = BOTH,
+      .pin_change = on_de_change,
+      .user_data = chip,
+  };
+  (void) pin_watch(chip->de_pin, &de_watch);
 
   memset(&timer_config, 0, sizeof(timer_config));
   timer_config.callback = on_timer;

@@ -1,7 +1,7 @@
 {
   "name": "SupraMatic 4 HCP2 master",
   "author": "garage-door-controller",
-  "pins": ["RX", "TX", "PASS", "FAIL", "GND"],
+  "pins": ["RX", "TX", "DE", "PASS", "FAIL", "GND"],
   "controls": [
     {
       "id": "cycles",

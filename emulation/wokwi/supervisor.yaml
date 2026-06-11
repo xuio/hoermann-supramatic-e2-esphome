@@ -1,8 +1,9 @@
-name: HCP2 Wokwi supervisor mailbox double
+name: HCP2 Wokwi real mailbox supervisor
 version: 1
 author: garage-door-controller
 
 steps:
-  - wait-serial: "HCP2_SUPERVISOR_SKIP_RELOAD_OK"
-  - wait-serial: "HCP2_SUPERVISOR_STALE_HEARTBEAT_OK"
-  - wait-serial: "HCP2_SUPERVISOR_EPOCH_OK"
+  - wait-serial: "HCP2_BRINGUP_MODE lp-in-loop"
+  - wait-serial: "HCP2_SUPERVISOR_REAL_SKIP_RELOAD_OK"
+  - wait-serial: "HCP2_SUPERVISOR_REAL_EPOCH_OK"
+  - wait-serial: "HCP2_SUPERVISOR_REAL_MAILBOX_OK"

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -19,6 +20,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--speed-factor", type=float, default=1_000_000.0)
     parser.add_argument("--missed-poll-threshold", type=int, default=DEFAULT_MISSED_POLL_THRESHOLD)
     parser.add_argument("--report", type=Path)
+    parser.add_argument("--trace", type=Path, help="Write canonical ISS trace JSONL")
     parser.add_argument("--fault", action="append", choices=sorted(FAULTS), default=[])
     parser.add_argument("--command", choices=["open", "close", "light"])
     parser.add_argument("--rvc-smoke", action="store_true", help="Run a compressed-instruction smoke test and exit")
@@ -43,6 +45,11 @@ def run_closed_loop(args: argparse.Namespace) -> dict[str, object]:
         }
         if args.report:
             write_report(args.report, payload)
+        if args.trace:
+            args.trace.write_text(
+                "".join(json.dumps(event, sort_keys=True) + "\n" for event in transport.emulator.trace_events),
+                encoding="utf-8",
+            )
         return payload
     finally:
         transport.close()
@@ -92,4 +99,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
