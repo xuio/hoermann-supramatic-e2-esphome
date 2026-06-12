@@ -25,6 +25,8 @@ static constexpr size_t HCP2BRIDGE_TX_BUFFER_SIZE = 256;
 static constexpr size_t HCP2BRIDGE_UART_EVENT_QUEUE_LEN = 32;
 static constexpr size_t HCP2BRIDGE_COMMAND_QUEUE_LEN = 8;
 static constexpr uint32_t HCP2BRIDGE_BUS_TASK_STACK_BYTES = 6144;
+static constexpr uint32_t HCP2BRIDGE_OBSTRUCTION_COMMAND_GRACE_MS = 2000;
+static constexpr uint32_t HCP2BRIDGE_OBSTRUCTION_LATCH_MS = 10000;
 
 HCP2Bridge::HCP2Bridge() { hcp2_engine_config_default(&this->config_); }
 
@@ -102,6 +104,8 @@ bool HCP2Bridge::is_open() const { return hcp2_state_is_open(this->drive_status_
 
 bool HCP2Bridge::is_closed() const { return hcp2_state_is_closed(this->drive_status_snapshot_()); }
 
+bool HCP2Bridge::is_obstructed() const { return this->obstruction_snapshot_(); }
+
 hcp2_drive_state_code_t HCP2Bridge::get_drive_state() const {
   return (hcp2_drive_state_code_t) this->drive_status_snapshot_().state;
 }
@@ -142,6 +146,17 @@ bool HCP2Bridge::valid_broadcast_snapshot_() const {
   return value;
 }
 
+bool HCP2Bridge::obstruction_snapshot_() const {
+#ifdef USE_ESP32
+  portENTER_CRITICAL(&this->state_mux_);
+#endif
+  const bool value = this->obstruction_;
+#ifdef USE_ESP32
+  portEXIT_CRITICAL(&this->state_mux_);
+#endif
+  return value;
+}
+
 uint32_t HCP2Bridge::counter_snapshot_(uint32_t HCP2Bridge::*field) const {
 #ifdef USE_ESP32
   portENTER_CRITICAL(&this->state_mux_);
@@ -176,6 +191,8 @@ bool HCP2Bridge::queue_button_(hcp2_button_t button) {
   xTaskNotifyGive(this->bus_task_handle_);
 
   portENTER_CRITICAL(&this->state_mux_);
+  this->last_commanded_button_ = button;
+  this->last_commanded_ms_ = millis();
   this->command_sequence_++;
   this->command_callback_pending_ = true;
   portEXIT_CRITICAL(&this->state_mux_);
@@ -350,15 +367,33 @@ void HCP2Bridge::drain_command_queue_() {
 
 void HCP2Bridge::update_state_from_engine_() {
   const hcp2_drive_status_t *status = hcp2_engine_drive_status(&this->engine_);
+  const uint32_t now_ms = millis();
   bool changed = false;
 
   portENTER_CRITICAL(&this->state_mux_);
   if (status != nullptr && std::memcmp(&this->drive_status_, status, sizeof(this->drive_status_)) != 0) {
+    const hcp2_drive_state_code_t previous_state = static_cast<hcp2_drive_state_code_t>(this->drive_status_.state);
+    const hcp2_drive_state_code_t current_state = static_cast<hcp2_drive_state_code_t>(status->state);
+    hcp2_button_t recent_command = HCP2_BUTTON_NONE;
+    if (this->last_commanded_ms_ != 0 &&
+        (int32_t) (now_ms - (this->last_commanded_ms_ + HCP2BRIDGE_OBSTRUCTION_COMMAND_GRACE_MS)) <= 0) {
+      recent_command = this->last_commanded_button_;
+    }
+    if (this->valid_broadcast_ &&
+        hcp2_is_uncommanded_closing_reversal(previous_state, current_state, recent_command)) {
+      this->obstruction_ = true;
+      this->obstruction_until_ms_ = now_ms + HCP2BRIDGE_OBSTRUCTION_LATCH_MS;
+      changed = true;
+    }
     this->drive_status_ = *status;
     changed = true;
   }
   if (!this->valid_broadcast_ && this->engine_.broadcasts_received > 0) {
     this->valid_broadcast_ = true;
+    changed = true;
+  }
+  if (this->obstruction_ && (int32_t) (now_ms - this->obstruction_until_ms_) >= 0) {
+    this->obstruction_ = false;
     changed = true;
   }
   this->valid_frames_ = this->engine_.valid_frames;

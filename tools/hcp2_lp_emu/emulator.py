@@ -653,6 +653,22 @@ class LPEmulator:
         _write_u32(self.uc, MAILBOX_ADDR + 44, 0)
         self.run(50_000)
 
+    def lp_reset(self) -> None:
+        self.boot()
+        before = _read_u32(self.uc, MAILBOX_ADDR + 72)
+        self._trace("lp_reset")
+        self.tx_fifo.clear()
+        self.tx_next_due_cycle = None
+        self.tx_first_cycle = None
+        self._set_de(False)
+        self.uc.reg_write(UC_RISCV_REG_PC, self.entry)
+        self.uc.reg_write(UC_RISCV_REG_RA, 0)
+        self.running = False
+        ok = self.run_until(lambda: _read_u32(self.uc, MAILBOX_ADDR + 72) > before, instruction_budget=2_000_000)
+        if not ok:
+            raise LPEmuError("LP firmware did not restart after LP reset")
+        self.running = True
+
     def reload_decision(self, heartbeat_before: int, heartbeat_after: int) -> str:
         magic = _read_u32(self.uc, MAILBOX_ADDR + 0)
         abi = struct.unpack("<H", self.uc.mem_read(MAILBOX_ADDR + 4, 2))[0]

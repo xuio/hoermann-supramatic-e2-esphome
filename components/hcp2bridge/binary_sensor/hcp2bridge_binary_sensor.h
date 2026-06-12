@@ -50,5 +50,11 @@ class HCP2BridgeLightSensor : public HCP2BridgeBinarySensorBase {
   const char *sensor_name_() const override { return "Light"; }
 };
 
+class HCP2BridgeObstructionSensor : public HCP2BridgeBinarySensorBase {
+ protected:
+  bool read_state_() const override { return this->parent_->is_obstructed(); }
+  const char *sensor_name_() const override { return "Obstruction"; }
+};
+
 }  // namespace hcp2bridge
 }  // namespace esphome

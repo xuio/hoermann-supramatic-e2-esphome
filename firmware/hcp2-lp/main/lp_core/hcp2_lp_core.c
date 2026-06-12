@@ -305,6 +305,7 @@ static void init_(void) {
   hcp2_port_t port;
   hcp2_engine_config_t config;
   volatile hcp2_lp_mailbox_t *mailbox = mailbox_();
+  const uint32_t pending_sequence = mailbox->command_sequence;
 
   memset(&port, 0, sizeof(port));
   port.now_us = port_now_us_;
@@ -321,7 +322,11 @@ static void init_(void) {
   ulp_lp_core_gpio_set_level(HCP2_LP_RE_IO, 0u);
   flush_stale_uart_rx_();
   active_epoch = mailbox->command_epoch;
-  last_command_sequence = mailbox->command_ack_sequence;
+  last_command_sequence = pending_sequence;
+  if (pending_sequence != 0u && mailbox->command_ack_sequence != pending_sequence) {
+    hcp2_lp_mailbox_ack_command(mailbox, pending_sequence, HCP2_LP_COMMAND_RESULT_EXPIRED);
+    trace_(HCP2_LP_TRACE_COMMAND, (uint16_t) (0xEE00u | (mailbox->command_id & 0xFFu)));
+  }
   mailbox->lp_reset_count++;
   trace_(HCP2_LP_TRACE_BOOT, 1u);
 }

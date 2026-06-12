@@ -6,17 +6,16 @@ default mode is LP-in-the-loop: the HP firmware embeds and loads the same Phase
 at `HCP2_LP_MAILBOX_ADDR`.
 
 The fallback mode still runs the portable `hcp2_core` responder on the ESP32-C6
-HP core. That mode is for Wokwi/bring-up fallback only. A token-gated Wokwi
-retest on 2026-06-11 showed that the current Wokwi backend can run C6 LP code:
-the official LP example wakes the HP core from deep sleep, and this firmware's
-real LP blob passes the mailbox health, skip-reload, and epoch/ack probe. The
-2026-06-12 backend shows partial LP-UART progress at 9600 baud, but byte decode
-is still wrong and the 57600 HCP2 bus-scan fixture still times out. We
-deliberately do not add a GPIO bit-banged UART workaround to the firmware; the
-Wokwi result was reported upstream as a simulator fidelity gap. Once the Wokwi
-backend fix lands completely, this LP-in-the-loop build is the primary
-no-hardware full-firmware gate. Phase 1 HIL remains the authority for physical
-LP-UART timing, RS-485 electrical behavior, and reset-time bus glitches.
+HP core. That mode is for Wokwi/bring-up fallback only. Wokwi retests on
+2026-06-11 and 2026-06-12 verified that the current backend can run C6 LP code
+and native LP-UART pin traffic: the official LP examples pass, the HCP2 scan
+repro receives the exact signature response, and this firmware's real
+LP-in-the-loop steady-state fixture passes with 200/200 replies and zero misses.
+The old GPIO bit-banged UART workaround was deliberately never added, and the
+Wokwi-specific LP-UART `reg_update` bypass remains removed. This LP-in-the-loop
+build is the primary no-hardware full-firmware gate. Phase 1 HIL remains the
+authority for physical LP-UART parity/timing, RS-485 electrical behavior,
+transceiver DE behavior, silicon reset behavior, and reset-time bus glitches.
 
 Both modes use the fixed target pins:
 
@@ -79,6 +78,32 @@ In HP-fallback mode, `CONFIG_HCP2_BRINGUP_MAILBOX_TEST_DOUBLE` can exercise the
 same supervisor helper functions against a synthetic mailbox. That fallback does
 not replace the LP-in-the-loop scenario or silicon validation.
 
+## Load Characterization
+
+The HIL load runner keeps the same virtual SupraMatic master path and starts
+optional shell commands while the serial HIL scenario runs. Use it from the
+NixOS bench host so the RS-485 adapter and ESP32-C6 are local to the same
+machine:
+
+```sh
+uv run garage-hcp2-hil-load \
+  --serial /dev/serial/by-id/usb-1a86_USB_Single_Serial_5ACC032762-if00 \
+  --cycles 1000 \
+  --output captures/hcp2/hil-load-baseline.json
+```
+
+Add `--load-command` entries for API, OTA, ping, log-stream, or Wi-Fi traffic
+generators. Each run writes a JSON report with the simulator verdict and the
+load-command lifecycle:
+
+```sh
+uv run garage-hcp2-hil-load \
+  --serial /dev/serial/by-id/usb-1a86_USB_Single_Serial_5ACC032762-if00 \
+  --cycles 1000 \
+  --load-command 'ping -i 0.05 supramatic-4-dev.local' \
+  --output captures/hcp2/hil-load-ping.json
+```
+
 ## Logic Analyzer Tooling
 
 The logic analyzer is optional until it is physically connected, but the tooling
@@ -134,7 +159,9 @@ Reset matrix:
 Design consequence: treat CPU-only resets as the continuity path, but do not rely
 on RTC-WDT for safety-continuity. The production supervisor still reloads on stale
 heartbeat or ABI/version mismatch; a live, advancing heartbeat is the health
-signal, not the mailbox magic word alone.
+signal, not the mailbox magic word alone. The LP startup path also expires any
+pending mailbox command left behind before an LP-only reset, so an LP-WDT recovery
+cannot replay a stale open/close/light action.
 
 The logic-analyzer checks have not been run on hardware yet because the LA is not
 connected. The `garage-hcp2-hil-la` capture/analyze tooling is covered by host

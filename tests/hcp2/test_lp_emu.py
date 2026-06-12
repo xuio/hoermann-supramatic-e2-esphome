@@ -49,6 +49,7 @@ OFF_POLLS_ANSWERED = 56
 OFF_TX_ABORT_COUNT = 60
 OFF_COLLISION_COUNT = 64
 OFF_MAX_DE_HOLD_US = 68
+OFF_LP_RESET_COUNT = 72
 
 COMMAND_OPEN = 1
 COMMAND_RESULT_EXECUTED = 1
@@ -191,6 +192,25 @@ def test_lp_emulator_expires_stale_command() -> None:
 
     assert emu.run_until(lambda: read_u32(emu, OFF_COMMAND_ACK_SEQUENCE) == 1, instruction_budget=1_000_000)
     assert emu.uc.mem_read(MAILBOX_ADDR + OFF_COMMAND_ACK_RESULT, 1) == bytes([COMMAND_RESULT_EXPIRED])
+
+
+def test_lp_emulator_lp_reset_expires_pending_command_without_replay() -> None:
+    emu = require_emulator()
+    emu.boot()
+    emu.hp_reboot()
+    reset_before = read_u32(emu, OFF_LP_RESET_COUNT)
+    inject_command(emu, epoch=emu.epoch, sequence=7, command_id=COMMAND_OPEN)
+
+    emu.lp_reset()
+
+    assert read_u32(emu, OFF_LP_RESET_COUNT) > reset_before
+    assert read_u32(emu, OFF_COMMAND_ACK_SEQUENCE) == 7
+    assert emu.uc.mem_read(MAILBOX_ADDR + OFF_COMMAND_ACK_RESULT, 1) == bytes([COMMAND_RESULT_EXPIRED])
+    emu.run(250_000)
+    assert read_u32(emu, OFF_COMMAND_ACK_SEQUENCE) == 7
+    assert emu.uc.mem_read(MAILBOX_ADDR + OFF_COMMAND_ACK_RESULT, 1) == bytes([COMMAND_RESULT_EXPIRED])
+
+    assert emu.command("open") == "OK ack=1 result=1"
 
 
 def test_lp_emulator_tx_deadman_releases_de_when_fifo_wedged() -> None:

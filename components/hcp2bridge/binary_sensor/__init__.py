@@ -5,6 +5,7 @@ from esphome.const import (
     DEVICE_CLASS_CONNECTIVITY,
     DEVICE_CLASS_LIGHT,
     DEVICE_CLASS_MOVING,
+    DEVICE_CLASS_PROBLEM,
     ENTITY_CATEGORY_DIAGNOSTIC,
 )
 from .. import CONF_HCP2BRIDGE_ID, HCP2Bridge, hcp2bridge_ns
@@ -18,11 +19,15 @@ HCP2BridgeMovingSensor = hcp2bridge_ns.class_("HCP2BridgeMovingSensor", binary_s
 HCP2BridgeOpenSensor = hcp2bridge_ns.class_("HCP2BridgeOpenSensor", binary_sensor.BinarySensor, cg.Component)
 HCP2BridgeClosedSensor = hcp2bridge_ns.class_("HCP2BridgeClosedSensor", binary_sensor.BinarySensor, cg.Component)
 HCP2BridgeLightSensor = hcp2bridge_ns.class_("HCP2BridgeLightSensor", binary_sensor.BinarySensor, cg.Component)
+HCP2BridgeObstructionSensor = hcp2bridge_ns.class_(
+    "HCP2BridgeObstructionSensor", binary_sensor.BinarySensor, cg.Component
+)
 
 CONF_CLOSED = "closed"
 CONF_GOT_VALID_BROADCAST = "got_valid_broadcast"
 CONF_LIGHT = "light"
 CONF_MOVING = "moving"
+CONF_OBSTRUCTION = "obstruction"
 CONF_OPEN = "open"
 
 CONFIG_SCHEMA = cv.Schema(
@@ -43,6 +48,10 @@ CONFIG_SCHEMA = cv.Schema(
             HCP2BridgeLightSensor,
             device_class=DEVICE_CLASS_LIGHT,
         ),
+        cv.Optional(CONF_OBSTRUCTION): binary_sensor.binary_sensor_schema(
+            HCP2BridgeObstructionSensor,
+            device_class=DEVICE_CLASS_PROBLEM,
+        ),
     }
 )
 
@@ -61,3 +70,4 @@ async def to_code(config):
     await _new_sensor(config, CONF_OPEN, parent)
     await _new_sensor(config, CONF_CLOSED, parent)
     await _new_sensor(config, CONF_LIGHT, parent)
+    await _new_sensor(config, CONF_OBSTRUCTION, parent)

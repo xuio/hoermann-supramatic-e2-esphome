@@ -86,3 +86,5 @@ binary_sensor:
       name: "${friendly_name} Closed"
     light:
       name: "${friendly_name} Light Feedback"
+    obstruction:
+      name: "${friendly_name} Obstruction"

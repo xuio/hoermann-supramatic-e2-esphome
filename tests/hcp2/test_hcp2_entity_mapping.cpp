@@ -6,6 +6,9 @@
 using esphome::hcp2bridge::HCP2CoverOperation;
 using esphome::hcp2bridge::hcp2_cover_button_for_control;
 using esphome::hcp2bridge::hcp2_cover_operation;
+using esphome::hcp2bridge::hcp2_direction_button_for_target;
+using esphome::hcp2bridge::hcp2_is_uncommanded_closing_reversal;
+using esphome::hcp2bridge::hcp2_should_stop_at_target;
 using esphome::hcp2bridge::hcp2_state_is_closed;
 using esphome::hcp2bridge::hcp2_state_is_light_on;
 using esphome::hcp2bridge::hcp2_state_is_moving;
@@ -59,8 +62,28 @@ static void test_cover_control_mapping() {
   assert(hcp2_cover_button_for_control(false, true, 0.0f) == HCP2_BUTTON_CLOSE);
   assert(hcp2_cover_button_for_control(false, true, 0.01f) == HCP2_BUTTON_CLOSE);
   assert(hcp2_cover_button_for_control(false, true, 0.5f) == HCP2_BUTTON_HALF);
+  assert(hcp2_cover_button_for_control(false, true, 0.25f) == HCP2_BUTTON_NONE);
   assert(hcp2_cover_button_for_control(false, true, 0.99f) == HCP2_BUTTON_OPEN);
   assert(hcp2_cover_button_for_control(false, true, 1.0f) == HCP2_BUTTON_OPEN);
+}
+
+static void test_goto_mapping() {
+  assert(hcp2_direction_button_for_target(false, 0.2f, 0.8f, 0.02f) == HCP2_BUTTON_NONE);
+  assert(hcp2_direction_button_for_target(true, 0.2f, 0.8f, 0.02f) == HCP2_BUTTON_OPEN);
+  assert(hcp2_direction_button_for_target(true, 0.8f, 0.2f, 0.02f) == HCP2_BUTTON_CLOSE);
+  assert(hcp2_direction_button_for_target(true, 0.5f, 0.51f, 0.02f) == HCP2_BUTTON_NONE);
+
+  assert(hcp2_should_stop_at_target(0.75f, 0.74f, HCP2CoverOperation::OPENING, 0.02f));
+  assert(!hcp2_should_stop_at_target(0.75f, 0.70f, HCP2CoverOperation::OPENING, 0.02f));
+  assert(hcp2_should_stop_at_target(0.25f, 0.26f, HCP2CoverOperation::CLOSING, 0.02f));
+  assert(!hcp2_should_stop_at_target(0.25f, 0.30f, HCP2CoverOperation::CLOSING, 0.02f));
+}
+
+static void test_obstruction_mapping() {
+  assert(hcp2_is_uncommanded_closing_reversal(HCP2_DRIVE_CLOSING, HCP2_DRIVE_OPENING, HCP2_BUTTON_NONE));
+  assert(!hcp2_is_uncommanded_closing_reversal(HCP2_DRIVE_CLOSING, HCP2_DRIVE_OPENING, HCP2_BUTTON_OPEN));
+  assert(!hcp2_is_uncommanded_closing_reversal(HCP2_DRIVE_OPENING, HCP2_DRIVE_CLOSING, HCP2_BUTTON_NONE));
+  assert(!hcp2_is_uncommanded_closing_reversal(HCP2_DRIVE_CLOSING, HCP2_DRIVE_STOPPED, HCP2_BUTTON_NONE));
 }
 
 static void test_state_names() {
@@ -78,6 +101,8 @@ int main() {
   test_binary_sensor_and_position_mapping();
   test_cover_operation_mapping();
   test_cover_control_mapping();
+  test_goto_mapping();
+  test_obstruction_mapping();
   test_state_names();
   return 0;
 }

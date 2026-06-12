@@ -57,6 +57,7 @@ class HCP2Bridge : public Component {
   bool is_moving() const;
   bool is_open() const;
   bool is_closed() const;
+  bool is_obstructed() const;
   float get_position() const;
   hcp2_drive_state_code_t get_drive_state() const;
   std::string get_state_string() const;
@@ -89,6 +90,7 @@ class HCP2Bridge : public Component {
   const char *drive_state_name_() const;
   hcp2_drive_status_t drive_status_snapshot_() const;
   bool valid_broadcast_snapshot_() const;
+  bool obstruction_snapshot_() const;
   uint32_t counter_snapshot_(uint32_t HCP2Bridge::*field) const;
 
   InternalGPIOPin *rx_pin_{nullptr};
@@ -101,8 +103,12 @@ class HCP2Bridge : public Component {
 
   hcp2_drive_status_t drive_status_{};
   bool valid_broadcast_{false};
+  bool obstruction_{false};
   bool state_callback_pending_{false};
   bool command_callback_pending_{false};
+  hcp2_button_t last_commanded_button_{HCP2_BUTTON_NONE};
+  uint32_t last_commanded_ms_{0};
+  uint32_t obstruction_until_ms_{0};
   uint32_t command_sequence_{0};
   uint32_t valid_frames_{0};
   uint32_t crc_errors_{0};
