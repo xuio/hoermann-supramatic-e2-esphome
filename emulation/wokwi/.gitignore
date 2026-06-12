@@ -2,3 +2,5 @@
 /wokwi-api.h
 /*.log
 /*.vcd
+/*.zip
+/esp32c6-*/

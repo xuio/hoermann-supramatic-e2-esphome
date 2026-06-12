@@ -1,5 +1,6 @@
 #include "hcp2bridge_cover.h"
 
+#include "../hcp2_entity_mapping.h"
 #include "esphome/core/log.h"
 
 namespace esphome {
@@ -25,20 +26,23 @@ cover::CoverTraits HCP2BridgeCover::get_traits() {
 }
 
 void HCP2BridgeCover::control(const cover::CoverCall &call) {
-  if (call.get_stop()) {
-    this->parent_->action_stop();
-    return;
-  }
-
-  if (call.get_position().has_value()) {
-    const float target = *call.get_position();
-    if (target <= 0.01f) {
+  const bool has_position = call.get_position().has_value();
+  const float target = has_position ? *call.get_position() : 0.0f;
+  switch (hcp2_cover_button_for_control(call.get_stop(), has_position, target)) {
+    case HCP2_BUTTON_STOP:
+      this->parent_->action_stop();
+      break;
+    case HCP2_BUTTON_CLOSE:
       this->parent_->action_close();
-    } else if (target >= 0.99f) {
+      break;
+    case HCP2_BUTTON_OPEN:
       this->parent_->action_open();
-    } else {
+      break;
+    case HCP2_BUTTON_HALF:
       this->parent_->action_half();
-    }
+      break;
+    default:
+      break;
   }
 }
 
@@ -48,15 +52,14 @@ void HCP2BridgeCover::on_state_() {
   }
 
   this->position = this->parent_->get_position();
-  switch (this->parent_->get_drive_state()) {
-    case HCP2_DRIVE_OPENING:
-    case HCP2_DRIVE_HALF_OPENING:
+  switch (hcp2_cover_operation(this->parent_->get_drive_state())) {
+    case HCP2CoverOperation::OPENING:
       this->current_operation = cover::COVER_OPERATION_OPENING;
       break;
-    case HCP2_DRIVE_CLOSING:
+    case HCP2CoverOperation::CLOSING:
       this->current_operation = cover::COVER_OPERATION_CLOSING;
       break;
-    default:
+    case HCP2CoverOperation::IDLE:
       this->current_operation = cover::COVER_OPERATION_IDLE;
       break;
   }

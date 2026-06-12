@@ -17,6 +17,14 @@ COMMAND_RESPONSE_BY_COUNTER = {
     0x02: bytes.fromhex("021704020004FD08DE"),
     0x1C: bytes.fromhex("0217041C0004FD0EF6"),
 }
+BUTTON_STATUS_ENCODINGS = {
+    "open": {(0x02, 0x10, 0x00), (0x01, 0x10, 0x00)},
+    "close": {(0x02, 0x20, 0x00), (0x01, 0x20, 0x00)},
+    "stop": {(0x02, 0x40, 0x00), (0x01, 0x40, 0x00)},
+    "vent": {(0x02, 0x00, 0x40), (0x01, 0x00, 0x40)},
+    "half": {(0x02, 0x00, 0x04), (0x01, 0x00, 0x04)},
+    "light": {(0x10, 0x00, 0x02), (0x08, 0x00, 0x02)},
+}
 
 
 @dataclass(frozen=True)
@@ -161,3 +169,19 @@ def decode_response_kind(frame: bytes) -> str:
     if byte_count == 4:
         return "command"
     return "unknown"
+
+
+def response_counter(frame: bytes) -> int | None:
+    if decode_response_kind(frame) not in {"status", "command"} or len(frame) < 4:
+        return None
+    return frame[3]
+
+
+def decode_status_button(frame: bytes) -> str | None:
+    if decode_response_kind(frame) != "status" or len(frame) < 10:
+        return None
+    encoding = (frame[7], frame[8], frame[9])
+    for name, encodings in BUTTON_STATUS_ENCODINGS.items():
+        if encoding in encodings:
+            return name
+    return None

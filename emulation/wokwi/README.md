@@ -6,36 +6,37 @@ SupraMatic 4 HCP2 master chip:
 
 - GPIO4: LP-UART RX from the master chip
 - GPIO5: LP-UART TX to the master chip
-- GPIO6: LP GPIO DE, watched by the master chip for canonical trace events
+- GPIO2: LP GPIO DE, watched by the master chip for canonical trace events
+- GPIO3: /RE, held low by firmware/hardware so RX echo remains visible
 
-As of the 2026-06-11 check of <https://docs.wokwi.com/guides/esp32>, Wokwi lists
-ESP32-C6 UART and the C6 ULP processor as supported. A token-gated Phase 0d
-research pass on 2026-06-11 found that LP-in-the-loop is not currently viable
-for this project:
+Wokwi status changed during the 2026-06-11 and 2026-06-12 retests. The earlier
+Simulation API `1.0.0-20260608-g56f5da7e` could not run basic ESP32-C6 LP
+examples. The 2026-06-11 backend, `1.0.0-20260611-g7cf12162`, now runs enough C6
+LP code for:
 
-- The unmodified official `wokwi/esp32c6-i2c-lp` prebuilt ELF at commit
-  `e065aa65ef924bf4e57e011ab659b9f1788e833c` loads the LP firmware and enters
-  deep sleep, then hits HP watchdog resets and times out.
-- Rebuilding the same Espressif `lp_i2c` example with ESP-IDF 5.5.4 also loops
-  through `TG1_WDT_HPSYS` resets without an LP wakeup.
-- A minimal no-peripheral HP_CPU-started LP shared-variable example also fails:
-  the HP task waits forever for an LP-written value and trips the task watchdog.
-- HP-side reads from the LP-UART register block return plausible reset values,
-  but `LP_UART_REG_UPDATE` never self-clears after being set, so ESP-IDF's
-  `lp_core_uart_init()` can hang in its hardware-sync wait.
+- The unmodified official `wokwi/esp32c6-i2c-lp` example to repeatedly wake the
+  HP core from deep sleep and print lux readings.
+- This firmware's real LP blob to load with `ulp_lp_core_load_binary()`, run
+  with `ulp_lp_core_run()`, advance heartbeat in shared LP SRAM, pass
+  skip-reload health checks, reject a stale command epoch, and ack a fresh
+  command.
 
-CI therefore treats Wokwi as an HP-firmware/custom-chip integration layer, not
-as an LP execution authority.
+A later 2026-06-12 backend, `1.0.0-20260612-g17cab5dd`, fixes the native
+ESP32-C6 LP-UART pin path used by this harness. The official 9600/57600
+LP-UART echo repros pass, the HCP2 scan fixture returns the byte-exact signature
+response, and the real LP-in-loop steady-state run completes 200 polls with 200
+replies, zero misses, and Wokwi reply latency in the 12.869-12.930 ms range. We
+deliberately do not add a GPIO bit-banged UART workaround to the firmware. The
+native LP-UART Wokwi gate can now be treated as the primary cloud
+full-firmware pre-HIL test; set the GitHub repository variable
+`WOKWI_NATIVE_LP_UART_REQUIRED=true` to make it blocking in CI.
 
 What this proves:
 
-- The real HP firmware build embeds the Phase 0c LP blob and reaches the LP
-  reload decision path with the same mailbox ABI. The Wokwi-specific LP probe
-  deliberately bypasses LP-control register calls, including
-  `ulp_lp_core_load_binary()` / `ulp_lp_core_run()`, because current Wokwi
-  hangs inside that unsupported path.
-- The Wokwi LP execution probe records the current simulator limitation with
-  `HCP2_WOKWI_LP_EXEC_UNSUPPORTED` instead of pretending the LP path passed.
+- The real HP firmware build embeds, loads, and runs the Phase 0c LP blob in
+  Wokwi, then verifies the same mailbox ABI used by the ISS and HIL paths.
+- The Wokwi LP execution probe is a mailbox/supervisor gate. It expects
+  `HCP2_SUPERVISOR_REAL_MAILBOX_OK`.
 - The HP fallback responder can run against the same pin-to-pin custom-chip
   master for boot, UART, restart, and trace plumbing.
 - The Wokwi master and Phase 0c ISS harness emit the same canonical event trace
@@ -43,28 +44,32 @@ What this proves:
 - The trace comparator can fail CI on frame-sequence divergence between the
   Wokwi HP-fallback run and the ISS LP baseline. Latency is intentionally loose
   for that comparison because the responder core differs.
+- The Wokwi LP-UART steady-state scenario is the primary no-hardware proof that
+  the real HP firmware, real LP blob, LP-UART pins, DE signal, and custom-chip
+  master stay in lockstep.
 
 What this does not prove:
 
-- Physical RS-485 timing, parity, baud tolerance, fail-safe biasing, line
-  contention, or real transceiver DE timing.
-- Wokwi LP-core or LP-UART execution for this ESP-IDF LP blob. The ISS remains
-  the Phase 0c reference for 16-byte FIFO pressure, partial TX acceptance, MMIO
-  coverage, and instruction budgets.
+- Physical RS-485 timing through a transceiver. Wokwi can become the primary
+  full-firmware pre-HIL gate, but HIL remains the authority for parity,
+  electrical timing, baud tolerance, line contention, fail-safe biasing, and
+  real transceiver DE timing.
+- Instruction-budget proof. The ISS remains the deterministic local reference
+  for 16-byte FIFO pressure, partial TX acceptance, MMIO coverage, and
+  instruction budgets.
 - Silicon reset behavior. Wokwi restart-loop mode is a useful integration spike;
   Phase 1 HIL is still the authority for whether `esp_restart()` leaves the real
   LP core running.
 
 Entry spike status:
 
-- LP-UART at 57600 8E1: Wokwi currently cannot execute this path. The LP-UART
-  register block is at least partially modeled, but `LP_UART_REG_UPDATE` remains
-  set after the IDF driver writes it. The `supervisor.yaml` LP probe expects
-  `HCP2_WOKWI_LP_EXEC_UNSUPPORTED` from the Wokwi-only bypass path before any
-  LP-control register calls, documenting the simulator gap without hanging CI.
+- LP-UART at 57600 8N1 in Wokwi: the native LP-UART RX/TX pin path now passes
+  the real LP-in-loop HCP2 steady-state fixture on Simulation API
+  `1.0.0-20260612-g17cab5dd`. The real bus remains 57600 8E1; Wokwi custom-chip
+  UARTs do not model parity, so HIL remains the parity authority.
 - FIFO partial-TX fidelity: Wokwi behavior is intentionally judged by comparison
   to the ISS trace; any divergence is recorded as a simulator-fidelity finding.
-- DE via LP GPIO: GPIO6 is wired to the custom chip and emitted as `de` trace
+- DE via LP GPIO: GPIO2 is wired to the custom chip and emitted as `de` trace
   events.
 - `esp_restart()` LP survival: not proven in Wokwi. The restart scenario uses
   HP fallback only; Phase 1 HIL remains the authority.
@@ -88,8 +93,8 @@ cd emulation/wokwi
 wokwi-cli chip compile supramatic4.chip.c -o chips/supramatic4.chip.wasm
 ```
 
-Run the LP execution probe. This is expected to record the current Wokwi
-limitation, not prove LP execution:
+Run the LP execution probe. This is expected to pass the real mailbox probe on
+Wokwi backends that include the 2026-06-11 LP execution fix:
 
 ```sh
 cp emulation/wokwi/wokwi.toml /tmp/hcp2-wokwi.toml
@@ -98,10 +103,34 @@ wokwi-cli emulation/wokwi --scenario supervisor.yaml
 cp /tmp/hcp2-wokwi.toml emulation/wokwi/wokwi.toml
 ```
 
-The upstream repro draft is in
-[`UPSTREAM_REPRO.md`](UPSTREAM_REPRO.md). It records the official-example
-control run, IDF 5.5.4 rebuild, minimal LP shared-variable probe, and LP-UART
-register probe in a form suitable for `wokwi/wokwi-features`.
+Run the native LP-UART smoke path. This validates the mailbox path, sends a
+bus-scan frame through the native LP-UART pins, and expects a real response from
+the LP blob.
+
+```sh
+cp emulation/wokwi/wokwi.toml /tmp/hcp2-wokwi.toml
+cp emulation/wokwi/wokwi.lp-probe.toml emulation/wokwi/wokwi.toml
+wokwi-cli emulation/wokwi --scenario lp-uart-repro.yaml --timeout 15000
+cp /tmp/hcp2-wokwi.toml emulation/wokwi/wokwi.toml
+```
+
+Run the native LP-UART steady-state gate. This uses the same real LP-in-loop
+firmware as the repro, but waits long enough for the custom chip to complete the
+full bus scan and steady-state cycle count:
+
+```sh
+cp emulation/wokwi/wokwi.toml /tmp/hcp2-wokwi.toml
+cp emulation/wokwi/wokwi.lp-probe.toml emulation/wokwi/wokwi.toml
+wokwi-cli emulation/wokwi --scenario lp-uart-steady-state.yaml \
+  --timeout 30000 --fail-text HCP2_WOKWI_VERDICT_FAIL | tee emulation/wokwi/lp-uart-steady-state.full.log
+grep -q "HCP2_WOKWI_VERDICT_OK reason=steady-state" emulation/wokwi/lp-uart-steady-state.full.log
+cp /tmp/hcp2-wokwi.toml emulation/wokwi/wokwi.toml
+```
+
+The upstream report text is in [`UPSTREAM_REPRO.md`](UPSTREAM_REPRO.md). It
+records the official-example control run, IDF rebuild, minimal LP shared-variable
+probe, HP-UART positive control, and LP-UART register probe in a form suitable
+for `wokwi/wokwi-features`.
 
 Run the HP-fallback steady-state scenario and ISS frame comparison:
 

@@ -8,6 +8,7 @@ import random
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 
 from . import protocol
 from .protocol import BroadcastState
@@ -34,6 +35,8 @@ class SimulationReport:
     fault_checks: int = 0
     fault_recoveries: int = 0
     fault_unexpected_responses: int = 0
+    ignored_responses: int = 0
+    button_observations: dict[str, int] = field(default_factory=dict)
     verdict: str = "ok"
     latencies_ms: list[float] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
@@ -51,6 +54,8 @@ class SimulationReport:
             "fault_checks": self.fault_checks,
             "fault_recoveries": self.fault_recoveries,
             "fault_unexpected_responses": self.fault_unexpected_responses,
+            "ignored_responses": self.ignored_responses,
+            "button_observations": self.button_observations,
             "latency_min_ms": latencies[0] if latencies else None,
             "latency_mean_ms": (sum(latencies) / len(latencies)) if latencies else None,
             "latency_p99_ms": percentile(latencies, 99) if latencies else None,
@@ -87,6 +92,7 @@ class SupraMaticSimulator:
         missed_poll_threshold: int = DEFAULT_MISSED_POLL_THRESHOLD,
         response_timeout_s: float = DEFAULT_RESPONSE_TIMEOUT_S,
         rng_seed: int = 0x5A17,
+        expected_buttons: set[str] | None = None,
     ) -> None:
         self.transport = transport
         self.slave_id = slave_id
@@ -94,6 +100,7 @@ class SupraMaticSimulator:
         self.missed_poll_threshold = missed_poll_threshold
         self.response_timeout_s = response_timeout_s
         self.rng = random.Random(rng_seed)
+        self.expected_buttons = expected_buttons or set()
         self.rx_buffer = bytearray()
         self.report = SimulationReport()
 
@@ -112,7 +119,13 @@ class SupraMaticSimulator:
         else:
             self.transport.write(frame)
 
-    def read_response(self, timeout_s: float | None = None) -> bytes | None:
+    def read_response(
+        self,
+        timeout_s: float | None = None,
+        *,
+        match: Callable[[bytes], bool] | None = None,
+        context: str = "response",
+    ) -> bytes | None:
         deadline = time.monotonic() + (self.response_timeout_s if timeout_s is None else timeout_s)
         while time.monotonic() < deadline:
             chunk = self.transport.read_available(max(deadline - time.monotonic(), 0.0))
@@ -130,7 +143,12 @@ class SupraMaticSimulator:
                 frame = bytes(self.rx_buffer[:expected])
                 if protocol.crc_ok(frame):
                     del self.rx_buffer[:expected]
-                    return frame
+                    if match is None or match(frame):
+                        return frame
+                    self.report.ignored_responses += 1
+                    if self.report.ignored_responses <= 8:
+                        self.report.notes.append(f"{context} ignored unexpected response {frame.hex()}")
+                    continue
                 del self.rx_buffer[0]
         return None
 
@@ -147,18 +165,39 @@ class SupraMaticSimulator:
                 break
             self.run_cycle(cycle, faults=faults, command=command)
 
-        if self.report.fault_unexpected_responses:
+        missing_buttons = sorted(button for button in self.expected_buttons if button not in self.report.button_observations)
+        if self.report.verdict == "ok" and missing_buttons:
+            self.report.verdict = "button-missing"
+            self.report.notes.append(f"missing button observations: {','.join(missing_buttons)}")
+        elif self.report.fault_unexpected_responses:
             self.report.verdict = "fault-failed"
         elif self.report.consecutive_misses >= self.missed_poll_threshold:
             self.report.verdict = "error-04"
         elif self.report.verdict == "ok":
-            self.report.notes.append("pty/socketpair simulation does not model parity, baud tolerance, or wire timing")
+            if self.transport.__class__.__name__ == "SerialTransport":
+                if getattr(self.transport, "low_latency_enabled", False):
+                    self.report.notes.append(
+                        "serial HIL uses pyserial 8E1 with Linux low_latency mode requested; "
+                        "logic-analyzer electrical timing remains separate"
+                    )
+                else:
+                    low_latency_error = getattr(self.transport, "low_latency_error", None)
+                    detail = f" ({low_latency_error})" if low_latency_error else ""
+                    self.report.notes.append(
+                        "serial HIL uses pyserial 8E1; Linux low_latency mode unavailable"
+                        f"{detail}; logic-analyzer electrical timing remains separate"
+                    )
+            else:
+                self.report.notes.append("pty/socketpair simulation does not model parity, baud tolerance, or wire timing")
         return self.report
 
     def run_bus_scan(self) -> None:
         start = time.monotonic()
         self.write_frame(protocol.bus_scan_request(self.slave_id))
-        frame = self.read_response()
+        frame = self.read_response(
+            match=lambda response: response == protocol.SCAN_RESPONSE,
+            context="bus scan",
+        )
         if frame == protocol.SCAN_RESPONSE:
             self.report.scan_ok = True
             self.report.latencies_ms.append((time.monotonic() - start) * 1000.0)
@@ -204,8 +243,15 @@ class SupraMaticSimulator:
         self.report.polls_sent += 1
         start = time.monotonic()
         self.write_frame(frame, split=split)
-        response = self.read_response()
-        if response is not None and protocol.decode_response_kind(response) == "status":
+        response = self.read_response(
+            match=lambda reply: protocol.decode_response_kind(reply) == "status"
+            and protocol.response_counter(reply) == counter,
+            context=f"status poll {counter:02x}",
+        )
+        if response is not None:
+            button = protocol.decode_status_button(response)
+            if button is not None:
+                self.report.button_observations[button] = self.report.button_observations.get(button, 0) + 1
             latency_ms = (time.monotonic() - start) * 1000.0
             self.report.latencies_ms.append(latency_ms)
             self.report.replies += 1
@@ -219,8 +265,11 @@ class SupraMaticSimulator:
 
     def run_light_command(self, counter: int, *, enabled: bool) -> None:
         self.write_frame(protocol.light_command(counter, enabled, self.slave_id))
-        response = self.read_response()
         expected = protocol.COMMAND_RESPONSE_BY_COUNTER.get(counter)
+        response = self.read_response(
+            match=lambda reply: expected is not None and reply == expected,
+            context=f"light command {counter:02x}",
+        )
         if response == expected:
             self.report.command_replies += 1
         else:

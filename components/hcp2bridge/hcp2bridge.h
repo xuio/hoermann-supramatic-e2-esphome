@@ -34,6 +34,7 @@ class HCP2Bridge : public Component {
   void set_rx_pin(InternalGPIOPin *pin) { this->rx_pin_ = pin; }
   void set_tx_pin(InternalGPIOPin *pin) { this->tx_pin_ = pin; }
   void set_de_pin(InternalGPIOPin *pin) { this->de_pin_ = pin; }
+  void set_re_pin(InternalGPIOPin *pin) { this->re_pin_ = pin; }
   void set_uart_num(uint8_t uart_num) { this->uart_num_config_ = uart_num; }
   void set_slave_id(uint8_t slave_id) { this->config_.slave_id = slave_id; }
   void set_signature_byte(uint8_t index, uint8_t value);
@@ -93,6 +94,7 @@ class HCP2Bridge : public Component {
   InternalGPIOPin *rx_pin_{nullptr};
   InternalGPIOPin *tx_pin_{nullptr};
   InternalGPIOPin *de_pin_{nullptr};
+  InternalGPIOPin *re_pin_{nullptr};
   hcp2_engine_config_t config_{};
   bool hp_fallback_{true};
   uint8_t uart_num_config_{1};

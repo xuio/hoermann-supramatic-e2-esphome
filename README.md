@@ -60,9 +60,12 @@ This is an unofficial reverse-engineered integration. Treat it as a careful buil
 
 Support for **Hörmann Series 4 / HCP2 / UAP1-HCP** drives is under active development
 for a separate **ESP32-C6** target. The HCP2 protocol core, simulator, LP-core firmware,
-Wokwi harness, and ESPHome component skeleton are in-tree, but this path is still
-simulation-first and bench-only. It has not yet passed hardware-in-the-loop testing and
-must not be connected to a real motor.
+Wokwi full-firmware harness, dual-ISS mailbox harness, and ESPHome component skeleton are
+in-tree. The path is still simulation-first and bench-only: Wokwi is the primary
+no-hardware full-firmware gate on the fixed ESP32-C6 native LP-UART backend, the local
+ISS covers deterministic mailbox/FIFO/MMIO checks, and the first ESP32-C6 plus USB-RS485
+HIL bench now passes polling, fault, command, and CPU-only reset scenarios. It still must
+not be connected to a real motor.
 
 ## Safety First
 

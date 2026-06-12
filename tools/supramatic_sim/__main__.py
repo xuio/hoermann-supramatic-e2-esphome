@@ -24,6 +24,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--report", type=Path)
     parser.add_argument("--fault", action="append", choices=sorted(FAULTS), default=[])
     parser.add_argument("--command", choices=["open", "close", "light"])
+    parser.add_argument("--expect-button", action="append", choices=["open", "close", "stop", "vent", "half", "light"], default=[])
     parser.add_argument("--selftest", action="store_true")
     return parser
 
@@ -41,6 +42,7 @@ def run_once(args: argparse.Namespace) -> dict[str, object]:
             transport,
             speed_factor=args.speed_factor,
             missed_poll_threshold=args.missed_poll_threshold,
+            expected_buttons=set(args.expect_button),
         )
         report = simulator.run(args.cycles, faults=set(args.fault), command=args.command)
         if args.report:
@@ -63,6 +65,7 @@ def selftest() -> int:
             report=None,
             fault=[],
             command=None,
+            expect_button=[],
         ),
         argparse.Namespace(
             pty=False,
@@ -75,6 +78,7 @@ def selftest() -> int:
             report=None,
             fault=["corrupt-crc", "truncated", "duplicate", "jitter", "garbage", "split"],
             command="open",
+            expect_button=["open"],
         ),
     ]
     for scenario in scenarios:

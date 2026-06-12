@@ -1,6 +1,6 @@
 #include "hcp2bridge.h"
+#include "hcp2_entity_mapping.h"
 
-#include <algorithm>
 #include <cstring>
 
 extern "C" {
@@ -76,6 +76,7 @@ void HCP2Bridge::dump_config() {
   LOG_PIN("  RX Pin: ", this->rx_pin_);
   LOG_PIN("  TX Pin: ", this->tx_pin_);
   LOG_PIN("  DE Pin: ", this->de_pin_);
+  LOG_PIN("  /RE Pin: ", this->re_pin_);
   ESP_LOGCONFIG(TAG, "  UART: %u", (unsigned int) this->uart_num_config_);
   ESP_LOGCONFIG(TAG, "  Baud Rate: %u 8E1", (unsigned int) HCP2BRIDGE_BAUD_RATE);
   ESP_LOGCONFIG(TAG, "  Slave ID: %u", (unsigned int) this->config_.slave_id);
@@ -93,25 +94,19 @@ void HCP2Bridge::set_signature_byte(uint8_t index, uint8_t value) {
 
 bool HCP2Bridge::has_valid_broadcast() const { return this->valid_broadcast_snapshot_(); }
 
-bool HCP2Bridge::is_light_on() const { return this->drive_status_snapshot_().light_on != 0; }
+bool HCP2Bridge::is_light_on() const { return hcp2_state_is_light_on(this->drive_status_snapshot_()); }
 
-bool HCP2Bridge::is_moving() const {
-  const hcp2_drive_status_t status = this->drive_status_snapshot_();
-  return status.state == HCP2_DRIVE_OPENING || status.state == HCP2_DRIVE_CLOSING ||
-         status.state == HCP2_DRIVE_HALF_OPENING;
-}
+bool HCP2Bridge::is_moving() const { return hcp2_state_is_moving(this->drive_status_snapshot_()); }
 
-bool HCP2Bridge::is_open() const { return this->drive_status_snapshot_().state == HCP2_DRIVE_OPEN; }
+bool HCP2Bridge::is_open() const { return hcp2_state_is_open(this->drive_status_snapshot_()); }
 
-bool HCP2Bridge::is_closed() const { return this->drive_status_snapshot_().state == HCP2_DRIVE_CLOSED; }
+bool HCP2Bridge::is_closed() const { return hcp2_state_is_closed(this->drive_status_snapshot_()); }
 
 hcp2_drive_state_code_t HCP2Bridge::get_drive_state() const {
   return (hcp2_drive_state_code_t) this->drive_status_snapshot_().state;
 }
 
-float HCP2Bridge::get_position() const {
-  return std::min(1.0f, (float) this->drive_status_snapshot_().current_position / 200.0f);
-}
+float HCP2Bridge::get_position() const { return hcp2_state_position(this->drive_status_snapshot_()); }
 
 std::string HCP2Bridge::get_state_string() const { return this->drive_state_name_(); }
 
@@ -159,24 +154,7 @@ uint32_t HCP2Bridge::counter_snapshot_(uint32_t HCP2Bridge::*field) const {
 }
 
 const char *HCP2Bridge::drive_state_name_() const {
-  switch (this->drive_status_snapshot_().state) {
-    case HCP2_DRIVE_STOPPED:
-      return "stopped";
-    case HCP2_DRIVE_OPENING:
-      return "opening";
-    case HCP2_DRIVE_CLOSING:
-      return "closing";
-    case HCP2_DRIVE_HALF_OPENING:
-      return "half_opening";
-    case HCP2_DRIVE_OPEN:
-      return "open";
-    case HCP2_DRIVE_CLOSED:
-      return "closed";
-    case HCP2_DRIVE_PART_OPEN:
-      return "part_open";
-    default:
-      return "unknown";
-  }
+  return hcp2_state_name(static_cast<hcp2_drive_state_code_t>(this->drive_status_snapshot_().state));
 }
 
 bool HCP2Bridge::queue_button_(hcp2_button_t button) {
@@ -218,6 +196,11 @@ bool HCP2Bridge::setup_uart_() {
   this->de_pin_->setup();
   this->de_pin_->pin_mode(gpio::Flags::FLAG_OUTPUT | gpio::Flags::FLAG_PULLDOWN);
   this->de_pin_->digital_write(false);
+  if (this->re_pin_ != nullptr) {
+    this->re_pin_->setup();
+    this->re_pin_->pin_mode(gpio::Flags::FLAG_OUTPUT | gpio::Flags::FLAG_PULLDOWN);
+    this->re_pin_->digital_write(false);
+  }
 
   if (uart_is_driver_installed(this->uart_num_)) {
     ESP_LOGW(TAG, "UART%u already has a driver; replacing it for hcp2bridge", (unsigned int) this->uart_num_config_);

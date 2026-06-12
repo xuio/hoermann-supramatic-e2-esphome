@@ -13,6 +13,7 @@ CONF_DE_PIN = "de_pin"
 CONF_DEVICE_SIGNATURE = "device_signature"
 CONF_HCP2BRIDGE_ID = "hcp2bridge_id"
 CONF_HP_FALLBACK = "hp_fallback"
+CONF_RE_PIN = "re_pin"
 CONF_RESPONSE_DELAY = "response_delay"
 CONF_SLAVE_ID = "slave_id"
 CONF_UART_NUM = "uart_num"
@@ -44,6 +45,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Required(CONF_RX_PIN): pins.internal_gpio_input_pin_schema,
             cv.Required(CONF_TX_PIN): pins.internal_gpio_output_pin_schema,
             cv.Required(CONF_DE_PIN): pins.gpio_output_pin_schema,
+            cv.Optional(CONF_RE_PIN): pins.gpio_output_pin_schema,
             cv.Optional(CONF_UART_NUM, default=1): cv.int_range(min=0, max=2),
             cv.Optional(CONF_SLAVE_ID, default=2): cv.int_range(min=1, max=247),
             cv.Optional(CONF_DEVICE_SIGNATURE, default="00000205043010FFA855"): validate_signature,
@@ -70,6 +72,9 @@ async def to_code(config):
     cg.add(var.set_rx_pin(rx_pin))
     cg.add(var.set_tx_pin(tx_pin))
     cg.add(var.set_de_pin(de_pin))
+    if CONF_RE_PIN in config:
+        re_pin = await cg.gpio_pin_expression(config[CONF_RE_PIN])
+        cg.add(var.set_re_pin(re_pin))
     cg.add(var.set_uart_num(config[CONF_UART_NUM]))
     cg.add(var.set_slave_id(config[CONF_SLAVE_ID]))
     for index, byte in enumerate(config[CONF_DEVICE_SIGNATURE]):

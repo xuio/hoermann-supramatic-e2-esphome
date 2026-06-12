@@ -8,14 +8,16 @@ from pathlib import Path
 from tools.supramatic_sim.simulator import DEFAULT_MISSED_POLL_THRESHOLD, SupraMaticSimulator
 
 from .emulator import LPEmuError, LPEmuTransport, rvc_smoke, write_report
+from .dual_iss import run_mailbox_suite
 
 
 FAULTS = {"corrupt-crc", "truncated", "duplicate", "jitter", "garbage", "split"}
+DEFAULT_LP_BLOB = Path(__file__).resolve().parents[2] / "firmware" / "hcp2-lp" / "build" / "hcp2_lp.bin"
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run the HCP2 LP-core blob in a Unicorn ISS harness")
-    parser.add_argument("--blob", type=Path, help="Path to hcp2_lp.bin or hcp2_lp.elf")
+    parser.add_argument("--blob", type=Path, default=DEFAULT_LP_BLOB, help="Path to hcp2_lp.bin or hcp2_lp.elf")
     parser.add_argument("--cycles", type=int, default=1000, help="Steady-state SupraMatic cycles to run")
     parser.add_argument("--speed-factor", type=float, default=1_000_000.0)
     parser.add_argument("--missed-poll-threshold", type=int, default=DEFAULT_MISSED_POLL_THRESHOLD)
@@ -24,12 +26,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fault", action="append", choices=sorted(FAULTS), default=[])
     parser.add_argument("--command", choices=["open", "close", "light"])
     parser.add_argument("--rvc-smoke", action="store_true", help="Run a compressed-instruction smoke test and exit")
+    parser.add_argument("--dual", action="store_true", help="Run the Phase 0d dual-ISS harness")
+    parser.add_argument("--interleave", type=int, default=64, help="Instruction slice for each dual-ISS engine")
+    parser.add_argument("--suite", choices=["mailbox"], default="mailbox", help="Dual-ISS suite to run")
     return parser
 
 
 def run_closed_loop(args: argparse.Namespace) -> dict[str, object]:
-    if args.blob is None:
-        raise LPEmuError("--blob is required unless --rvc-smoke is used")
     transport = LPEmuTransport(args.blob)
     try:
         simulator = SupraMaticSimulator(
@@ -66,6 +69,35 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print("rvc smoke ok" if ok else "rvc smoke failed")
         return 0 if ok else 1
+
+    if args.dual:
+        if args.interleave < 1:
+            parser.error("--interleave must be positive")
+        if args.trace:
+            parser.error("--trace is only valid for closed-loop LP emulation")
+        if args.fault:
+            parser.error("--fault is only valid for closed-loop LP emulation")
+        if args.command:
+            parser.error("--command is only valid for closed-loop LP emulation")
+        try:
+            result = run_mailbox_suite(args.blob, interleave=args.interleave)
+        except Exception as exc:
+            print(f"garage-hcp2-lp-emu dual ISS failed: {exc}", file=sys.stderr)
+            return 1
+        if args.report:
+            write_report(args.report, result)
+        print(
+            "dual_iss={verdict} suite={suite} interleave={interleave} checks={checks} "
+            "unmodeled_mmio={unmodeled}".format(
+                verdict=result["verdict"],
+                suite=result["suite"],
+                interleave=result["interleave"],
+                checks=",".join(result["checks"]),
+                unmodeled=len(result["lp_emu"]["unmodeled_mmio"]),
+            )
+        )
+        return 0
+
     if args.cycles < 1:
         parser.error("--cycles must be positive")
     if args.speed_factor <= 0:

@@ -100,6 +100,16 @@ jobs:
       - name: Run LP emulator mailbox tests
         run: uv run pytest tests/hcp2/test_lp_emu.py
 
+      - name: Run dual-ISS mailbox suite
+        run: |
+          for interleave in 1 2 8 64 256; do
+            uv run garage-hcp2-lp-emu \
+              --dual \
+              --interleave "$interleave" \
+              --suite mailbox \
+              --report "dual-iss-report-${interleave}.json"
+          done
+
       - name: Run LP ISS closed loop
         run: >
           uv run garage-hcp2-lp-emu
@@ -113,6 +123,7 @@ jobs:
           name: hcp2-lp-iss-report
           path: |
             lp-report.json
+            dual-iss-report-*.json
             firmware/hcp2-lp/build/hcp2_lp.bin
             firmware/hcp2-lp/build/hcp2_lp.elf
             firmware/hcp2-lp/build/hcp2_lp.map
@@ -228,6 +239,40 @@ jobs:
             --scenario supervisor.yaml \
             --timeout 10000 \
             --serial-log-file emulation/wokwi/lp-probe.serial.log | tee emulation/wokwi/lp-probe.full.log
+          restore
+          trap - EXIT
+
+      - name: Track Wokwi native LP-UART primary gate status
+        if: ${{ env.WOKWI_CLI_TOKEN != '' && vars.WOKWI_NATIVE_LP_UART_REQUIRED != 'true' }}
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          cp emulation/wokwi/wokwi.toml /tmp/hcp2-wokwi.toml
+          restore() { cp /tmp/hcp2-wokwi.toml emulation/wokwi/wokwi.toml; }
+          trap restore EXIT
+          cp emulation/wokwi/wokwi.lp-probe.toml emulation/wokwi/wokwi.toml
+          wokwi-cli emulation/wokwi \
+            --scenario lp-uart-steady-state.yaml \
+            --timeout 30000 \
+            --serial-log-file emulation/wokwi/lp-uart-steady-state.serial.log | tee emulation/wokwi/lp-uart-steady-state.full.log
+          grep -q "HCP2_WOKWI_VERDICT_OK reason=steady-state" emulation/wokwi/lp-uart-steady-state.full.log
+          restore
+          trap - EXIT
+
+      - name: Run Wokwi native LP-UART primary gate
+        if: ${{ env.WOKWI_CLI_TOKEN != '' && vars.WOKWI_NATIVE_LP_UART_REQUIRED == 'true' }}
+        run: |
+          set -o pipefail
+          cp emulation/wokwi/wokwi.toml /tmp/hcp2-wokwi.toml
+          restore() { cp /tmp/hcp2-wokwi.toml emulation/wokwi/wokwi.toml; }
+          trap restore EXIT
+          cp emulation/wokwi/wokwi.lp-probe.toml emulation/wokwi/wokwi.toml
+          wokwi-cli emulation/wokwi \
+            --scenario lp-uart-steady-state.yaml \
+            --timeout 30000 \
+            --fail-text HCP2_WOKWI_VERDICT_FAIL \
+            --serial-log-file emulation/wokwi/lp-uart-steady-state.serial.log | tee emulation/wokwi/lp-uart-steady-state.full.log
+          grep -q "HCP2_WOKWI_VERDICT_OK reason=steady-state" emulation/wokwi/lp-uart-steady-state.full.log
           restore
           trap - EXIT
 

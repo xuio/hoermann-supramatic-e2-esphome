@@ -12,7 +12,8 @@
 #include "lp_core_uart.h"
 #include "ulp_lp_core.h"
 
-#define HCP2_LP_DE_GPIO GPIO_NUM_6
+#define HCP2_LP_DE_GPIO GPIO_NUM_2
+#define HCP2_LP_RE_GPIO GPIO_NUM_3
 
 static const char *TAG = "hcp2-lp";
 
@@ -41,6 +42,10 @@ static esp_err_t init_bus_io_(void) {
   ESP_RETURN_ON_ERROR(rtc_gpio_set_direction(HCP2_LP_DE_GPIO, RTC_GPIO_MODE_OUTPUT_ONLY), TAG, "set DE output");
   ESP_RETURN_ON_ERROR(rtc_gpio_set_level(HCP2_LP_DE_GPIO, 0), TAG, "drive DE low");
   ESP_RETURN_ON_ERROR(rtc_gpio_pulldown_en(HCP2_LP_DE_GPIO), TAG, "enable DE pulldown");
+  ESP_RETURN_ON_ERROR(rtc_gpio_init(HCP2_LP_RE_GPIO), TAG, "init /RE GPIO");
+  ESP_RETURN_ON_ERROR(rtc_gpio_set_direction(HCP2_LP_RE_GPIO, RTC_GPIO_MODE_OUTPUT_ONLY), TAG, "set /RE output");
+  ESP_RETURN_ON_ERROR(rtc_gpio_set_level(HCP2_LP_RE_GPIO, 0), TAG, "drive /RE low");
+  ESP_RETURN_ON_ERROR(rtc_gpio_pulldown_en(HCP2_LP_RE_GPIO), TAG, "enable /RE pulldown");
   ESP_RETURN_ON_ERROR(lp_core_uart_init(&uart_cfg), TAG, "init LP UART");
   return ESP_OK;
 }

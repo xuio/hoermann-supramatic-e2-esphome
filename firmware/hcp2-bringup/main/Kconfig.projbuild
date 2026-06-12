@@ -23,6 +23,43 @@ config HCP2_BRINGUP_RESTART_INTERVAL_MS
         Set to 0 to disable restart-loop mode. Non-zero values create a
         low-priority test task that calls esp_restart() after the interval.
 
+config HCP2_BRINGUP_PANIC_INTERVAL_MS
+    int "panic reset test interval in milliseconds"
+    default 0
+    help
+        Set to 0 to disable panic-reset mode. Non-zero values create a
+        low-priority test task that aborts after the interval so the panic
+        handler resets the HP core.
+
+config HCP2_BRINGUP_TASK_WDT_INTERVAL_MS
+    int "task watchdog reset test interval in milliseconds"
+    default 0
+    help
+        Set to 0 to disable task-WDT reset mode. Non-zero values create a
+        test task that subscribes itself to the task watchdog after the
+        interval and then stops feeding it.
+
+config HCP2_BRINGUP_RTC_WDT_INTERVAL_MS
+    int "RTC watchdog reset test interval in milliseconds"
+    default 0
+    help
+        Set to 0 to disable RTC-WDT reset mode. Non-zero values create a
+        low-priority test task that arms the RTC watchdog after the interval.
+
+config HCP2_BRINGUP_SCRIPTED_COMMANDS
+    bool "Run scripted HP-to-LP command cycle"
+    default n
+    depends on HCP2_BRINGUP_LP_IN_LOOP
+    help
+        HIL diagnostic only. Periodically sends open, close, and light commands
+        through the real HP supervisor mailbox so the LP responder must encode
+        virtual button presses in status replies.
+
+config HCP2_BRINGUP_SCRIPTED_COMMAND_INTERVAL_MS
+    int "Scripted command interval in milliseconds"
+    default 1200
+    depends on HCP2_BRINGUP_SCRIPTED_COMMANDS
+
 config HCP2_BRINGUP_MAILBOX_TEST_DOUBLE
     bool "Run LP mailbox supervisor test double at boot"
     default y if HCP2_BRINGUP_HP_FALLBACK
@@ -32,14 +69,39 @@ config HCP2_BRINGUP_MAILBOX_TEST_DOUBLE
         synthetic healthy LP mailbox during Wokwi/HP integration tests. The
         LP-in-the-loop mode uses the real mailbox ABI instead.
 
-config HCP2_BRINGUP_WOKWI_LP_UART_BYPASS
-    bool "Bypass ESP-IDF LP-UART init wait for Wokwi"
+config HCP2_BRINGUP_WOKWI_UART_NO_PARITY
+    bool "Use no UART parity for Wokwi custom-chip UART"
     default n
     help
-        Wokwi's ESP32-C6 LP-UART model currently does not clear the UART
-        reg_update bit that ESP-IDF waits on during lp_core_uart_init(), which
-        deadlocks the HP core before the LP blob can start. Enable only for the
-        Wokwi build overlay; real hardware must use the normal ESP-IDF LP-UART
-        initialization path.
+        Wokwi's custom-chip UART API exposes baud rate but not parity. Enable
+        only in the Wokwi overlay so the custom master and the ESP UART model
+        agree on 8N1 framing. Real hardware must keep HCP2's 57600 8E1 framing.
+
+config HCP2_BRINGUP_WOKWI_LP_TX_PROBE
+    bool "Send a one-shot LP-UART frame for Wokwi diagnostics"
+    default n
+    depends on HCP2_BRINGUP_LP_IN_LOOP
+    help
+        Diagnostic only. Sends one valid HCP2 scan response directly from the
+        LP core after boot so Wokwi LP-UART TX pin routing can be tested without
+        waiting for a received master frame.
+
+config HCP2_BRINGUP_LP_UART_STATUS_LOG
+    bool "Log raw LP-UART registers"
+    default n
+    depends on HCP2_BRINGUP_LP_IN_LOOP
+    help
+        Diagnostic only. Periodically logs raw LP-UART registers from the HP
+        supervisor task. This is useful for simulator-fidelity probes but too
+        noisy for normal Wokwi and HIL runs.
+
+config HCP2_BRINGUP_FORCE_LP_RELOAD
+    bool "Force LP blob reload at boot"
+    default n
+    depends on HCP2_BRINGUP_LP_IN_LOOP
+    help
+        Diagnostic only. Stops and reloads the LP core even if the mailbox
+        heartbeat is healthy. This is useful for HIL probe images that need a
+        freshly loaded LP binary after an HP-only reset.
 
 endmenu

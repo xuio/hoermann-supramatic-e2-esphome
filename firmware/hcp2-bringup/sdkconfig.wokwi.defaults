@@ -1,1 +1,4 @@
-CONFIG_HCP2_BRINGUP_WOKWI_LP_UART_BYPASS=y
+CONFIG_HCP2_BRINGUP_WOKWI_UART_NO_PARITY=y
+
+# The former LP-UART reg_update bypass was removed after the 2026-06-11 Wokwi
+# backend fixed enough ESP32-C6 LP execution for the real LP mailbox probe.

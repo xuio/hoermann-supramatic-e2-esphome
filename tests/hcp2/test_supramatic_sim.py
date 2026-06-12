@@ -27,6 +27,7 @@ def scenario(**kwargs: object) -> Namespace:
         "report": None,
         "fault": [],
         "command": None,
+        "expect_button": [],
     }
     defaults.update(kwargs)
     return Namespace(**defaults)
@@ -59,6 +60,7 @@ def test_socketpair_fault_recovery_and_open_command() -> None:
             cycles=100,
             fault=["corrupt-crc", "truncated", "duplicate", "jitter", "garbage", "split"],
             command="open",
+            expect_button=["open"],
         )
     )
     assert result["verdict"] == "ok"
@@ -66,6 +68,7 @@ def test_socketpair_fault_recovery_and_open_command() -> None:
     assert result["fault_recoveries"] == 2
     assert result["fault_unexpected_responses"] == 0
     assert result["misses"] == 0
+    assert result["button_observations"].get("open", 0) > 0
 
 
 def test_socketpair_light_command() -> None:

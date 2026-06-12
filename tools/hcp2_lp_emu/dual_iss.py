@@ -54,6 +54,19 @@ OFF_RESULT3 = 32
 RELOAD_REQUIRED = 0
 RELOAD_SKIP = 1
 
+OFF_HEARTBEAT = 12
+OFF_STATE_SEQ = 16
+OFF_TARGET_POSITION = 20
+OFF_CURRENT_POSITION = 21
+OFF_STATE = 22
+OFF_LIGHT_ON = 23
+OFF_STATE_UPDATED_US = 24
+OFF_COMMAND_SEQUENCE = 32
+OFF_COMMAND_ACK_SEQUENCE = 36
+OFF_COMMAND_ID = 40
+
+COMMAND_OPEN = 1
+
 
 class HPIssToolchainMissing(LPEmuError):
     pass
@@ -318,3 +331,78 @@ class DualISSHarness:
         _write_u8(self.lp.uc, MAILBOX_ADDR + 40, command_id)
         _write_u8(self.lp.uc, MAILBOX_ADDR + 41, argument)
         _write_u32(self.lp.uc, MAILBOX_ADDR + 32, sequence)
+
+
+def _mailbox_u32(harness: DualISSHarness, offset: int) -> int:
+    return _read_u32(harness.lp.uc, MAILBOX_ADDR + offset)
+
+
+def _require(condition: bool, message: str) -> None:
+    if not condition:
+        raise LPEmuError(message)
+
+
+def run_mailbox_suite(lp_blob: Path, *, interleave: int = 64) -> dict[str, object]:
+    if interleave < 1:
+        raise LPEmuError("--interleave must be positive")
+
+    checks: list[str] = []
+
+    dual = DualISSHarness.from_blob(lp_blob)
+    dual.boot_lp()
+
+    before = _mailbox_u32(dual, OFF_HEARTBEAT)
+    dual.lp.run(100_000)
+    after = _mailbox_u32(dual, OFF_HEARTBEAT)
+    _require(after > before, "LP heartbeat did not advance")
+    _require(dual.probe_reload(before, after, slice_instructions=interleave) == RELOAD_SKIP, "healthy LP was not skipped")
+    _require(
+        dual.probe_reload(after, after, slice_instructions=interleave) == RELOAD_REQUIRED,
+        "stale heartbeat did not require reload",
+    )
+    checks.append("heartbeat_reload_decision")
+
+    _write_u32(dual.lp.uc, MAILBOX_ADDR + OFF_STATE_SEQ, 1)
+    _require(dual.read_state(slice_instructions=interleave, interleave_lp=False).result0 == 0, "torn state read succeeded")
+
+    _write_u8(dual.lp.uc, MAILBOX_ADDR + OFF_TARGET_POSITION, 200)
+    _write_u8(dual.lp.uc, MAILBOX_ADDR + OFF_CURRENT_POSITION, 100)
+    _write_u8(dual.lp.uc, MAILBOX_ADDR + OFF_STATE, 0x20)
+    _write_u8(dual.lp.uc, MAILBOX_ADDR + OFF_LIGHT_ON, 1)
+    _write_u32(dual.lp.uc, MAILBOX_ADDR + OFF_STATE_UPDATED_US, 123456)
+    _write_u32(dual.lp.uc, MAILBOX_ADDR + OFF_STATE_SEQ, 2)
+    state = dual.read_state(slice_instructions=interleave, interleave_lp=False)
+    _require(state.result0 == 1, "valid state read failed")
+    _require(state.result1 == 0x012064C8, f"state packing mismatch: 0x{state.result1:08x}")
+    _require(state.result2 == 123456, f"state timestamp mismatch: {state.result2}")
+    checks.append("state_seqlock")
+
+    old_epoch = dual.begin_session(0x12340000, slice_instructions=interleave)
+    dual.lp.run(50_000)
+    dual.inject_command(epoch=old_epoch, sequence=99, command_id=COMMAND_OPEN)
+
+    new_epoch = dual.begin_session(0x56780000, slice_instructions=interleave)
+    _require(new_epoch == 0x56780000, f"new epoch mismatch: 0x{new_epoch:08x}")
+    _require(_mailbox_u32(dual, OFF_COMMAND_SEQUENCE) == 0, "pending command sequence was not cleared")
+    _require(_mailbox_u32(dual, OFF_COMMAND_ACK_SEQUENCE) == 0, "pending command ack was not cleared")
+    _require(dual.lp.uc.mem_read(MAILBOX_ADDR + OFF_COMMAND_ID, 1) == b"\x00", "pending command id was not cleared")
+
+    dual.lp.run(250_000)
+    _require(_mailbox_u32(dual, OFF_COMMAND_ACK_SEQUENCE) == 0, "stale epoch command was acknowledged")
+
+    sequence = dual.send_command(COMMAND_OPEN, slice_instructions=interleave)
+    _require(sequence == 1, f"first command sequence mismatch: {sequence}")
+    _require(
+        dual.run_lp_until(lambda: _mailbox_u32(dual, OFF_COMMAND_ACK_SEQUENCE) == sequence),
+        "fresh command was not acknowledged by LP",
+    )
+    _require(dual.ack_received(sequence, slice_instructions=interleave), "HP did not observe fresh command ack")
+    checks.append("epoch_replay")
+
+    return {
+        "verdict": "ok",
+        "suite": "mailbox",
+        "interleave": interleave,
+        "checks": checks,
+        "lp_emu": dual.lp.report(),
+    }

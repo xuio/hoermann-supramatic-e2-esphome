@@ -3,7 +3,8 @@ substitutions:
   friendly_name: "Garage Door HCP2 Dev"
   hcp2_rx_pin: GPIO4
   hcp2_tx_pin: GPIO5
-  hcp2_de_pin: GPIO6
+  hcp2_de_pin: GPIO2
+  hcp2_re_pin: GPIO3
 
 esphome:
   name: "${name}"
@@ -51,6 +52,7 @@ hcp2bridge:
   rx_pin: ${hcp2_rx_pin}
   tx_pin: ${hcp2_tx_pin}
   de_pin: ${hcp2_de_pin}
+  re_pin: ${hcp2_re_pin}
   uart_num: 1
   slave_id: 2
   device_signature: "00000205043010FFA855"

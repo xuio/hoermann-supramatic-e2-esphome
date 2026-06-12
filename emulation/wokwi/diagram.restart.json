@@ -28,7 +28,7 @@
     ["esp:RX", "$serialMonitor:TX", "", []],
     ["sim:TX", "esp:4", "green", ["h26", "v-48"]],
     ["esp:5", "sim:RX", "blue", ["h-28", "v72"]],
-    ["esp:6", "sim:DE", "orange", ["h-16", "v56"]],
+    ["esp:2", "sim:DE", "orange", ["h-16", "v56"]],
     ["sim:GND", "esp:GND.1", "black", ["h42", "v24"]]
   ],
   "serialMonitor": {

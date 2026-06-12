@@ -166,15 +166,28 @@ class SerialTransport:
             import serial  # type: ignore[import-not-found]
         except ImportError as exc:
             raise RuntimeError("pyserial is required for --serial transport") from exc
+        self.low_latency_enabled = False
+        self.low_latency_error: str | None = None
         self.serial = serial.Serial(
             device,
             baudrate=baudrate,
             bytesize=serial.EIGHTBITS,
             parity=serial.PARITY_EVEN,
             stopbits=serial.STOPBITS_ONE,
+            xonxoff=False,
+            rtscts=False,
+            dsrdtr=False,
             timeout=0,
             write_timeout=1,
         )
+        if hasattr(self.serial, "set_low_latency_mode"):
+            try:
+                self.serial.set_low_latency_mode(True)
+                self.low_latency_enabled = True
+            except Exception as exc:
+                self.low_latency_error = f"{type(exc).__name__}: {exc}"
+        self.serial.reset_input_buffer()
+        self.serial.reset_output_buffer()
 
     def write(self, data: bytes) -> None:
         self.serial.write(data)
