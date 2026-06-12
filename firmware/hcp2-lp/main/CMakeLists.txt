@@ -33,7 +33,12 @@ add_custom_command(
   COMMAND ${CMAKE_COMMAND} -E copy_if_different "${hcp2_lp_artifact_dir}/hcp2_lp.elf" "${CMAKE_BINARY_DIR}/hcp2_lp.elf"
   COMMAND ${CMAKE_COMMAND} -E copy_if_different "${hcp2_lp_artifact_dir}/hcp2_lp.map" "${CMAKE_BINARY_DIR}/hcp2_lp.map"
   COMMAND ${CMAKE_COMMAND} -E copy_if_different "${hcp2_lp_artifact_dir}/hcp2_lp.sym" "${CMAKE_BINARY_DIR}/hcp2_lp.sym"
-  DEPENDS ${ulp_app_name}
+  DEPENDS
+    ${ulp_app_name}
+    "${hcp2_lp_artifact_dir}/hcp2_lp.bin"
+    "${hcp2_lp_artifact_dir}/hcp2_lp.elf"
+    "${hcp2_lp_artifact_dir}/hcp2_lp.map"
+    "${hcp2_lp_artifact_dir}/hcp2_lp.sym"
   VERBATIM
 )
 

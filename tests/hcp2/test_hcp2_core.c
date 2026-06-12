@@ -201,7 +201,9 @@ static void test_status_poll_idle_response(void) {
   hcp2_engine_init(&engine, &port, &config);
 
   feed_hex(&engine, "02179CB900089C410002043E030000EBCC");
+  assert(engine.status_polls_received == 1u);
   hcp2_engine_poll(&engine);
+  assert(engine.status_responses_sent == 1u);
   assert(test_port.tx_count == 1);
   expect_hex(test_port.tx[0], test_port.tx_len[0], "0217103E000301000000000000000000000000741B");
 }
@@ -334,6 +336,8 @@ static void test_rx_error_resets_partial_frame(void) {
 
 static void test_mailbox_layout_and_reload_decision(void) {
   hcp2_lp_mailbox_t mailbox;
+  hcp2_lp_health_sample_t before;
+  hcp2_lp_health_sample_t after;
 
   hcp2_lp_mailbox_init(&mailbox);
   assert(HCP2_LP_MAILBOX_ADDR == 0x50002000u);
@@ -342,15 +346,37 @@ static void test_mailbox_layout_and_reload_decision(void) {
   assert(mailbox.abi_version == HCP2_LP_MAILBOX_ABI_VERSION);
   assert(mailbox.struct_size == HCP2_LP_MAILBOX_SIZE);
   assert(mailbox.firmware_version == HCP2_LP_FIRMWARE_VERSION);
-  assert(hcp2_lp_mailbox_reload_decision(&mailbox, HCP2_LP_FIRMWARE_VERSION, 7u, 7u) ==
+
+  hcp2_lp_mailbox_sample_health(&mailbox, &before);
+  after = before;
+  assert(hcp2_lp_mailbox_reload_decision(&mailbox, HCP2_LP_FIRMWARE_VERSION, &before, &after) ==
          HCP2_LP_RELOAD_REQUIRED);
+
   mailbox.heartbeat = 8u;
-  assert(hcp2_lp_mailbox_reload_decision(&mailbox, HCP2_LP_FIRMWARE_VERSION, 7u, mailbox.heartbeat) ==
+  hcp2_lp_mailbox_sample_health(&mailbox, &after);
+  assert(hcp2_lp_mailbox_reload_decision(&mailbox, HCP2_LP_FIRMWARE_VERSION, &before, &after) ==
          HCP2_LP_RELOAD_SKIP);
-  assert(hcp2_lp_mailbox_reload_decision(&mailbox, HCP2_LP_FIRMWARE_VERSION + 1u, 7u, mailbox.heartbeat) ==
+  assert(hcp2_lp_mailbox_reload_decision(&mailbox, HCP2_LP_FIRMWARE_VERSION + 1u, &before, &after) ==
          HCP2_LP_RELOAD_REQUIRED);
+
+  mailbox.state = HCP2_DRIVE_OPENING;
+  hcp2_lp_mailbox_sample_health(&mailbox, &after);
+  assert(hcp2_lp_mailbox_reload_decision(&mailbox, HCP2_LP_FIRMWARE_VERSION + 1u, &before, &after) ==
+         HCP2_LP_RELOAD_DEFER);
+
+  mailbox.state = HCP2_DRIVE_STOPPED;
+  before = after;
+  mailbox.heartbeat = 9u;
+  mailbox.polls_seen = 4u;
+  mailbox.polls_answered = 4u;
+  hcp2_lp_mailbox_sample_health(&mailbox, &before);
+  mailbox.heartbeat = 10u;
+  hcp2_lp_mailbox_sample_health(&mailbox, &after);
+  assert(hcp2_lp_mailbox_reload_decision(&mailbox, HCP2_LP_FIRMWARE_VERSION, &before, &after) ==
+         HCP2_LP_RELOAD_REQUIRED);
+
   mailbox.magic = 0u;
-  assert(hcp2_lp_mailbox_reload_decision(&mailbox, HCP2_LP_FIRMWARE_VERSION, 7u, 8u) ==
+  assert(hcp2_lp_mailbox_reload_decision(&mailbox, HCP2_LP_FIRMWARE_VERSION, &before, &after) ==
          HCP2_LP_RELOAD_REQUIRED);
 }
 
@@ -366,6 +392,7 @@ static void test_mailbox_state_seqlock(void) {
   state.state = HCP2_DRIVE_OPENING;
   state.light_on = 1u;
   hcp2_lp_mailbox_publish_state(&mailbox, &state, 123456u);
+  hcp2_lp_mailbox_publish_counters(&mailbox, 123500u, 7u, 6u, 2u, 1u, 8000u);
 
   assert(hcp2_lp_mailbox_read_state(&mailbox, &snapshot));
   assert(snapshot.target_position == 200u);
@@ -373,6 +400,12 @@ static void test_mailbox_state_seqlock(void) {
   assert(snapshot.state == HCP2_DRIVE_OPENING);
   assert(snapshot.light_on == 1u);
   assert(snapshot.updated_us == 123456u);
+  assert(mailbox.lp_time_us == 123500u);
+  assert(mailbox.polls_seen == 7u);
+  assert(mailbox.polls_answered == 6u);
+  assert(mailbox.tx_abort_count == 2u);
+  assert(mailbox.collision_count == 1u);
+  assert(mailbox.max_de_hold_us == 8000u);
 
   mailbox.state_seq |= 1u;
   assert(!hcp2_lp_mailbox_read_state(&mailbox, &snapshot));
@@ -384,22 +417,32 @@ static void test_mailbox_command_epoch_and_ack(void) {
   uint32_t last_sequence = 0u;
 
   hcp2_lp_mailbox_init(&mailbox);
-  hcp2_lp_mailbox_send_command(&mailbox, 0xA5A5u, 1u, HCP2_LP_COMMAND_OPEN, 0u);
-  assert(!hcp2_lp_mailbox_take_command(&mailbox, 0x1111u, &last_sequence, &command));
+  hcp2_lp_mailbox_send_command(&mailbox, 0xA5A5u, 1u, HCP2_LP_COMMAND_OPEN, 0u, 1000u);
+  assert(!hcp2_lp_mailbox_take_command(&mailbox, 0x1111u, &last_sequence, 0u, &command));
   assert(last_sequence == 0u);
-  assert(hcp2_lp_mailbox_take_command(&mailbox, 0xA5A5u, &last_sequence, &command));
+  assert(hcp2_lp_mailbox_take_command(&mailbox, 0xA5A5u, &last_sequence, 999u, &command));
   assert(command.epoch == 0xA5A5u);
   assert(command.sequence == 1u);
   assert(command.command_id == HCP2_LP_COMMAND_OPEN);
+  assert(command.deadline_us == 1000u);
+  assert(mailbox.command_ack_sequence == 0u);
+  hcp2_lp_mailbox_ack_command(&mailbox, command.sequence, HCP2_LP_COMMAND_RESULT_EXECUTED);
   assert(mailbox.command_ack_sequence == 1u);
-  assert(!hcp2_lp_mailbox_take_command(&mailbox, 0xA5A5u, &last_sequence, &command));
+  assert(mailbox.command_ack_result == HCP2_LP_COMMAND_RESULT_EXECUTED);
+  assert(!hcp2_lp_mailbox_take_command(&mailbox, 0xA5A5u, &last_sequence, 999u, &command));
 
-  hcp2_lp_mailbox_send_command(&mailbox, 0xBEEFu, 2u, HCP2_LP_COMMAND_LIGHT, 1u);
-  assert(!hcp2_lp_mailbox_take_command(&mailbox, 0xA5A5u, &last_sequence, &command));
-  assert(hcp2_lp_mailbox_take_command(&mailbox, 0xBEEFu, &last_sequence, &command));
+  hcp2_lp_mailbox_send_command(&mailbox, 0xBEEFu, 2u, HCP2_LP_COMMAND_LIGHT, 1u, 2000u);
+  assert(!hcp2_lp_mailbox_take_command(&mailbox, 0xA5A5u, &last_sequence, 1000u, &command));
+  assert(hcp2_lp_mailbox_take_command(&mailbox, 0xBEEFu, &last_sequence, 1000u, &command));
   assert(command.command_id == HCP2_LP_COMMAND_LIGHT);
   assert(command.argument == 1u);
+  hcp2_lp_mailbox_ack_command(&mailbox, command.sequence, HCP2_LP_COMMAND_RESULT_EXECUTED);
   assert(mailbox.command_ack_sequence == 2u);
+
+  hcp2_lp_mailbox_send_command(&mailbox, 0xBEEFu, 3u, HCP2_LP_COMMAND_OPEN, 0u, 3000u);
+  assert(!hcp2_lp_mailbox_take_command(&mailbox, 0xBEEFu, &last_sequence, 3001u, &command));
+  assert(mailbox.command_ack_sequence == 3u);
+  assert(mailbox.command_ack_result == HCP2_LP_COMMAND_RESULT_EXPIRED);
 }
 
 int main(void) {

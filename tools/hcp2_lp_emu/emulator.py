@@ -25,6 +25,8 @@ from unicorn.riscv_const import (
     UC_RISCV_REG_A0,
     UC_RISCV_REG_CYCLE,
     UC_RISCV_REG_CYCLEH,
+    UC_RISCV_REG_MCYCLE,
+    UC_RISCV_REG_MCYCLEH,
     UC_RISCV_REG_PC,
     UC_RISCV_REG_RA,
 )
@@ -42,8 +44,8 @@ LP_SRAM_MAP_SIZE = 0x10000
 MAILBOX_ADDR = 0x50002000
 MAILBOX_SIZE = 512
 MAILBOX_MAGIC = 0x32435048
-MAILBOX_ABI_VERSION = 1
-MAILBOX_FIRMWARE_VERSION = 1
+MAILBOX_ABI_VERSION = 2
+MAILBOX_FIRMWARE_VERSION = 2
 
 LP_UART_BASE = 0x600B1400
 LP_UART_FIFO = LP_UART_BASE + 0x00
@@ -226,6 +228,10 @@ class LPEmulator:
         self.tx_next_due_cycle: int | None = None
         self.tx_output = bytearray()
         self.tx_first_cycle: int | None = None
+        self.echo_tx_to_rx = True
+        self.echo_mismatch_at: int | None = None
+        self.echo_count = 0
+        self.tx_fifo_wedged = False
         self.last_master_write_cycle: int | None = None
         self.reply_latencies_us: list[float] = []
 
@@ -365,6 +371,7 @@ class LPEmulator:
         delay_addrs = [
             self.symbols.get("ulp_lp_core_delay_us"),
             self.symbols.get("ulp_lp_core_delay_cycles"),
+            self.symbols.get("hcp2_lp_now_us"),
         ]
         delay_addrs = [addr for addr in delay_addrs if addr is not None]
         if delay_addrs:
@@ -375,6 +382,7 @@ class LPEmulator:
         approx_instructions = max(1, size // 2)
         self.instructions += approx_instructions
         self.cycles += approx_instructions
+        self._write_cycle_regs()
         if self.cycles - self.last_cycle_sync >= 128:
             self._service_serial()
             self.last_cycle_sync = self.cycles
@@ -386,6 +394,9 @@ class LPEmulator:
             uc.reg_write(UC_RISCV_REG_PC, uc.reg_read(UC_RISCV_REG_RA))
         elif address == self.symbols.get("ulp_lp_core_delay_cycles"):
             self._fast_forward(uc.reg_read(UC_RISCV_REG_A0))
+            uc.reg_write(UC_RISCV_REG_PC, uc.reg_read(UC_RISCV_REG_RA))
+        elif address == self.symbols.get("hcp2_lp_now_us"):
+            uc.reg_write(UC_RISCV_REG_A0, int(self.time_us) & 0xFFFFFFFF)
             uc.reg_write(UC_RISCV_REG_PC, uc.reg_read(UC_RISCV_REG_RA))
 
     def _fast_forward(self, cycles: int) -> None:
@@ -399,6 +410,8 @@ class LPEmulator:
     def _write_cycle_regs(self) -> None:
         self.uc.reg_write(UC_RISCV_REG_CYCLE, self.cycles & 0xFFFFFFFF)
         self.uc.reg_write(UC_RISCV_REG_CYCLEH, (self.cycles >> 32) & 0xFFFFFFFF)
+        self.uc.reg_write(UC_RISCV_REG_MCYCLE, self.cycles & 0xFFFFFFFF)
+        self.uc.reg_write(UC_RISCV_REG_MCYCLEH, (self.cycles >> 32) & 0xFFFFFFFF)
 
     def _service_serial(self) -> None:
         self._move_wire_to_rx()
@@ -415,6 +428,8 @@ class LPEmulator:
             self.rx_high_water = max(self.rx_high_water, len(self.rx_fifo))
 
     def _drain_tx(self) -> None:
+        if self.tx_fifo_wedged:
+            return
         while self.tx_fifo:
             if self.tx_next_due_cycle is None:
                 self.tx_next_due_cycle = self.cycles + UART_BYTE_CYCLES
@@ -430,6 +445,16 @@ class LPEmulator:
                     self.reply_latencies_us.append(latency_us)
                     self._trace("reply_latency", latency_us=round(latency_us))
             self.tx_output.append(byte)
+            if self.echo_tx_to_rx and self.de_enabled:
+                echo = byte
+                self.echo_count += 1
+                if self.echo_mismatch_at is not None and self.echo_count == self.echo_mismatch_at:
+                    echo ^= 0xFF
+                if len(self.rx_fifo) >= 16:
+                    self.rx_overflows += 1
+                else:
+                    self.rx_fifo.append(echo)
+                    self.rx_high_water = max(self.rx_high_water, len(self.rx_fifo))
             self.tx_next_due_cycle = self.tx_next_due_cycle + UART_BYTE_CYCLES if self.tx_fifo else None
 
     def _sync_uart_regs(self) -> None:
@@ -598,18 +623,24 @@ class LPEmulator:
         _write_u32(self.uc, MAILBOX_ADDR + 32, 0)
         _write_u32(self.uc, MAILBOX_ADDR + 36, 0)
         _write_u8(self.uc, MAILBOX_ADDR + 40, 0)
+        _write_u8(self.uc, MAILBOX_ADDR + 42, 0)
+        _write_u32(self.uc, MAILBOX_ADDR + 44, 0)
         self.run(50_000)
 
         self.command_sequence += 1
+        now_us = _read_u32(self.uc, MAILBOX_ADDR + 48)
         _write_u8(self.uc, MAILBOX_ADDR + 40, command_id)
         _write_u8(self.uc, MAILBOX_ADDR + 41, 0)
+        _write_u8(self.uc, MAILBOX_ADDR + 42, 0)
+        _write_u32(self.uc, MAILBOX_ADDR + 44, now_us + 250_000)
         _write_u32(self.uc, MAILBOX_ADDR + 32, self.command_sequence)
 
         ok = self.run_until(
             lambda: _read_u32(self.uc, MAILBOX_ADDR + 36) == self.command_sequence,
             instruction_budget=1_000_000,
         )
-        return f"OK ack={self.command_sequence}" if ok else "ERR command ack timeout"
+        result = int(self.uc.mem_read(MAILBOX_ADDR + 42, 1)[0]) if ok else 0
+        return f"OK ack={self.command_sequence} result={result}" if ok else "ERR command ack timeout"
 
     def hp_reboot(self) -> None:
         self.epoch += 1
@@ -618,6 +649,8 @@ class LPEmulator:
         _write_u32(self.uc, MAILBOX_ADDR + 32, 0)
         _write_u32(self.uc, MAILBOX_ADDR + 36, 0)
         _write_u8(self.uc, MAILBOX_ADDR + 40, 0)
+        _write_u8(self.uc, MAILBOX_ADDR + 42, 0)
+        _write_u32(self.uc, MAILBOX_ADDR + 44, 0)
         self.run(50_000)
 
     def reload_decision(self, heartbeat_before: int, heartbeat_after: int) -> str:
@@ -630,6 +663,15 @@ class LPEmulator:
         if version != MAILBOX_FIRMWARE_VERSION:
             return "reload"
         return "skip" if heartbeat_after != heartbeat_before else "reload"
+
+    def tx_abort_count(self) -> int:
+        return _read_u32(self.uc, MAILBOX_ADDR + 60)
+
+    def collision_count(self) -> int:
+        return _read_u32(self.uc, MAILBOX_ADDR + 64)
+
+    def max_de_hold_us(self) -> int:
+        return _read_u32(self.uc, MAILBOX_ADDR + 68)
 
     def report(self) -> dict[str, object]:
         latencies = sorted(self.reply_latencies_us)
@@ -653,6 +695,11 @@ class LPEmulator:
             "rx_overflows": self.rx_overflows,
             "tx_overflows": self.tx_overflows,
             "tx_when_de_low": self.tx_when_de_low,
+            "mailbox_polls_seen": _read_u32(self.uc, MAILBOX_ADDR + 52),
+            "mailbox_polls_answered": _read_u32(self.uc, MAILBOX_ADDR + 56),
+            "mailbox_tx_abort_count": self.tx_abort_count(),
+            "mailbox_collision_count": self.collision_count(),
+            "mailbox_max_de_hold_us": self.max_de_hold_us(),
             "de_events": self.de_events[:20],
             "trace_event_count": len(self.trace_events),
             "trace": self.trace_events,

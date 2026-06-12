@@ -22,12 +22,18 @@ static void rx_drop_(hcp2_engine_t *engine, uint8_t count) {
   engine->rx_len = (uint8_t) (engine->rx_len - count);
 }
 
-static void schedule_tx_(hcp2_engine_t *engine, const uint8_t *data, uint8_t len) {
+enum {
+  HCP2_PENDING_TX_OTHER = 0,
+  HCP2_PENDING_TX_STATUS = 1,
+};
+
+static void schedule_tx_(hcp2_engine_t *engine, const uint8_t *data, uint8_t len, uint8_t kind) {
   if (len == 0u || len > HCP2_MAX_FRAME_LEN) {
     return;
   }
   memcpy(engine->pending_tx, data, len);
   engine->pending_tx_len = len;
+  engine->pending_tx_kind = kind;
   engine->pending_tx_due_us = now_us_(engine) + engine->config.response_delay_us;
   engine->pending_tx_ready = 1u;
 }
@@ -66,17 +72,18 @@ static void handle_decoded_(hcp2_engine_t *engine, const hcp2_decoded_frame_t *f
       break;
     case HCP2_FRAME_BUS_SCAN:
       tx_len = hcp2_frame_build_scan_response(engine->config.slave_id, engine->config.signature, tx);
-      schedule_tx_(engine, tx, tx_len);
+      schedule_tx_(engine, tx, tx_len, HCP2_PENDING_TX_OTHER);
       break;
     case HCP2_FRAME_STATUS_POLL:
+      engine->status_polls_received++;
       button = current_button_phase_(engine, &release_phase);
       tx_len = hcp2_frame_build_status_response(engine->config.slave_id, frame->counter, frame->command, button,
                                                 release_phase, tx);
-      schedule_tx_(engine, tx, tx_len);
+      schedule_tx_(engine, tx, tx_len, HCP2_PENDING_TX_STATUS);
       break;
     case HCP2_FRAME_COMMAND_ARG:
       tx_len = hcp2_frame_build_command_response(engine->config.slave_id, frame->counter, frame->command, tx);
-      schedule_tx_(engine, tx, tx_len);
+      schedule_tx_(engine, tx, tx_len, HCP2_PENDING_TX_OTHER);
       break;
     case HCP2_FRAME_OTHER_VALID:
     case HCP2_FRAME_NONE:
@@ -182,8 +189,12 @@ void hcp2_engine_poll(hcp2_engine_t *engine) {
   }
 
   engine->responses_sent++;
+  if (engine->pending_tx_kind == HCP2_PENDING_TX_STATUS) {
+    engine->status_responses_sent++;
+  }
   engine->pending_tx_ready = 0u;
   engine->pending_tx_len = 0u;
+  engine->pending_tx_kind = HCP2_PENDING_TX_OTHER;
 }
 
 uint8_t hcp2_engine_press_button(hcp2_engine_t *engine, hcp2_button_t button) {

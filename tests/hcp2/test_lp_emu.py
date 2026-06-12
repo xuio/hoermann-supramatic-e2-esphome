@@ -41,8 +41,18 @@ OFF_COMMAND_SEQUENCE = 32
 OFF_COMMAND_ACK_SEQUENCE = 36
 OFF_COMMAND_ID = 40
 OFF_COMMAND_ARGUMENT = 41
+OFF_COMMAND_ACK_RESULT = 42
+OFF_COMMAND_DEADLINE_US = 44
+OFF_LP_TIME_US = 48
+OFF_POLLS_SEEN = 52
+OFF_POLLS_ANSWERED = 56
+OFF_TX_ABORT_COUNT = 60
+OFF_COLLISION_COUNT = 64
+OFF_MAX_DE_HOLD_US = 68
 
 COMMAND_OPEN = 1
+COMMAND_RESULT_EXECUTED = 1
+COMMAND_RESULT_EXPIRED = 2
 
 
 def require_emulator() -> LPEmulator:
@@ -80,6 +90,8 @@ def inject_command(emu: LPEmulator, *, epoch: int, sequence: int, command_id: in
     write_u32(emu, OFF_COMMAND_EPOCH, epoch)
     write_u8(emu, OFF_COMMAND_ID, command_id)
     write_u8(emu, OFF_COMMAND_ARGUMENT, 0)
+    write_u8(emu, OFF_COMMAND_ACK_RESULT, 0)
+    write_u32(emu, OFF_COMMAND_DEADLINE_US, read_u32(emu, OFF_LP_TIME_US) + 250_000)
     write_u32(emu, OFF_COMMAND_SEQUENCE, sequence)
 
 
@@ -145,8 +157,9 @@ def test_lp_emulator_rejects_stale_epoch_command_after_hp_reboot() -> None:
     assert read_u32(emu, OFF_COMMAND_ACK_SEQUENCE) == 0
 
     command_result = emu.command("open")
-    assert command_result == "OK ack=1"
+    assert command_result == "OK ack=1 result=1"
     assert read_u32(emu, OFF_COMMAND_ACK_SEQUENCE) == 1
+    assert emu.uc.mem_read(MAILBOX_ADDR + OFF_COMMAND_ACK_RESULT, 1) == bytes([COMMAND_RESULT_EXECUTED])
 
 
 def test_lp_emulator_repeated_hp_reboots_clear_pending_commands() -> None:
@@ -162,8 +175,46 @@ def test_lp_emulator_repeated_hp_reboots_clear_pending_commands() -> None:
         assert read_u32(emu, OFF_COMMAND_ACK_SEQUENCE) == 0
         assert emu.uc.mem_read(MAILBOX_ADDR + OFF_COMMAND_ID, 1) == b"\x00"
 
-        command_result = emu.command("light")
-        assert command_result == "OK ack=1"
+    command_result = emu.command("light")
+    assert command_result == "OK ack=1 result=1"
+
+
+def test_lp_emulator_expires_stale_command() -> None:
+    emu = require_emulator()
+    emu.boot()
+    emu.hp_reboot()
+    write_u8(emu, OFF_COMMAND_ID, COMMAND_OPEN)
+    write_u8(emu, OFF_COMMAND_ARGUMENT, 0)
+    write_u8(emu, OFF_COMMAND_ACK_RESULT, 0)
+    write_u32(emu, OFF_COMMAND_DEADLINE_US, max(1, read_u32(emu, OFF_LP_TIME_US) - 1))
+    write_u32(emu, OFF_COMMAND_SEQUENCE, 1)
+
+    assert emu.run_until(lambda: read_u32(emu, OFF_COMMAND_ACK_SEQUENCE) == 1, instruction_budget=1_000_000)
+    assert emu.uc.mem_read(MAILBOX_ADDR + OFF_COMMAND_ACK_RESULT, 1) == bytes([COMMAND_RESULT_EXPIRED])
+
+
+def test_lp_emulator_tx_deadman_releases_de_when_fifo_wedged() -> None:
+    emu = require_emulator()
+    emu.boot()
+    emu.tx_fifo_wedged = True
+    emu.write_uart(bytes.fromhex("02179CB900089C410002043E030000EBCC"))
+    emu.run_until(lambda: read_u32(emu, OFF_TX_ABORT_COUNT) > 0, instruction_budget=4_000_000)
+
+    assert read_u32(emu, OFF_TX_ABORT_COUNT) > 0
+    assert read_u32(emu, OFF_MAX_DE_HOLD_US) <= 9000
+    assert emu.de_events[-1]["enabled"] is False
+
+
+def test_lp_emulator_echo_mismatch_aborts_tx() -> None:
+    emu = require_emulator()
+    emu.boot()
+    emu.echo_mismatch_at = 3
+    emu.write_uart(bytes.fromhex("02179CB900089C410002043E030000EBCC"))
+    emu.run_until(lambda: read_u32(emu, OFF_COLLISION_COUNT) > 0, instruction_budget=4_000_000)
+
+    assert read_u32(emu, OFF_COLLISION_COUNT) > 0
+    assert read_u32(emu, OFF_TX_ABORT_COUNT) > 0
+    assert emu.de_events[-1]["enabled"] is False
 
 
 def test_dual_iss_shared_mailbox_health_and_torn_state_reads() -> None:
@@ -206,6 +257,7 @@ def test_dual_iss_hp_reboot_clears_pending_command_before_new_epoch(slice_instru
     assert read_u32(dual.lp, OFF_COMMAND_SEQUENCE) == 0
     assert read_u32(dual.lp, OFF_COMMAND_ACK_SEQUENCE) == 0
     assert dual.lp.uc.mem_read(MAILBOX_ADDR + OFF_COMMAND_ID, 1) == b"\x00"
+    assert dual.lp.uc.mem_read(MAILBOX_ADDR + OFF_COMMAND_ACK_RESULT, 1) == b"\x00"
 
     dual.lp.run(250_000)
     assert read_u32(dual.lp, OFF_COMMAND_ACK_SEQUENCE) == 0
@@ -214,3 +266,4 @@ def test_dual_iss_hp_reboot_clears_pending_command_before_new_epoch(slice_instru
     assert sequence == 1
     assert dual.run_lp_until(lambda: read_u32(dual.lp, OFF_COMMAND_ACK_SEQUENCE) == sequence)
     assert dual.ack_received(sequence, slice_instructions=slice_instructions)
+    assert dual.ack_result(sequence, slice_instructions=slice_instructions) == COMMAND_RESULT_EXECUTED

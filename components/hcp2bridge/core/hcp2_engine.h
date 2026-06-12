@@ -26,6 +26,7 @@ typedef struct {
   uint8_t rx_len;
   uint8_t pending_tx[HCP2_MAX_FRAME_LEN];
   uint8_t pending_tx_len;
+  uint8_t pending_tx_kind;
   uint32_t pending_tx_due_us;
   uint8_t pending_tx_ready;
   hcp2_button_t active_button;
@@ -34,6 +35,8 @@ typedef struct {
   hcp2_drive_status_t drive_status;
   uint32_t valid_frames;
   uint32_t broadcasts_received;
+  uint32_t status_polls_received;
+  uint32_t status_responses_sent;
   uint32_t crc_errors;
   uint32_t rx_errors;
   uint32_t responses_sent;

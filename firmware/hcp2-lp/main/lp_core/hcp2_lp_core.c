@@ -7,6 +7,7 @@
 #include "hcp2_mailbox.h"
 #include "sdkconfig.h"
 #include "soc/lp_uart_reg.h"
+#include "ulp_lp_core_cpu_freq_shared.h"
 #include "ulp_lp_core_gpio.h"
 #include "ulp_lp_core_uart.h"
 #include "ulp_lp_core_utils.h"
@@ -18,13 +19,18 @@
 #define HCP2_LP_UART_FIFO_LEN 16u
 #define HCP2_LP_LOOP_US 100u
 #define HCP2_LP_RX_CHUNK 16u
-#define HCP2_LP_TX_FLUSH_LIMIT 20000u
+#define HCP2_LP_TX_DEADMAN_US 8000u
 
 static hcp2_engine_t engine;
-static uint32_t now_us;
 static uint32_t active_epoch;
 static uint32_t last_command_sequence;
 static uint8_t last_rx_gpio_level = 0xFFu;
+static uint32_t tx_abort_count;
+static uint32_t collision_count;
+static uint32_t max_de_hold_us;
+
+uint32_t hcp2_lp_now_us(void);
+static uint32_t port_now_us_(void *user);
 
 #if CONFIG_HCP2_BRINGUP_WOKWI_LP_TX_PROBE
 static uint8_t tx_probe_sent;
@@ -41,7 +47,7 @@ static void trace_(uint16_t event, uint16_t value) {
   volatile hcp2_lp_mailbox_t *mailbox = mailbox_();
   const uint32_t index = mailbox->trace_head % HCP2_LP_TRACE_CAPACITY;
 
-  mailbox->trace[index].at_us = now_us;
+  mailbox->trace[index].at_us = port_now_us_(NULL);
   mailbox->trace[index].event = event;
   mailbox->trace[index].value = value;
   mailbox->trace_head++;
@@ -50,9 +56,13 @@ static void trace_(uint16_t event, uint16_t value) {
   }
 }
 
+__attribute__((noinline)) uint32_t hcp2_lp_now_us(void) {
+  return ulp_lp_core_get_cpu_cycles() / (LP_CORE_CYCLES_PER_US_NUM / LP_CORE_CYCLES_PER_US_DENOM);
+}
+
 static uint32_t port_now_us_(void *user) {
   (void) user;
-  return now_us;
+  return hcp2_lp_now_us();
 }
 
 static uint32_t reg_read_(uint32_t addr) {
@@ -65,7 +75,6 @@ static void reg_write_(uint32_t addr, uint32_t value) {
 
 static void delay_us_(uint32_t us) {
   ulp_lp_core_delay_us(us);
-  now_us += us;
 }
 
 static uint8_t lp_uart_txfifo_count_(void) {
@@ -94,7 +103,11 @@ static uint8_t lp_uart_tx_idle_(void) {
   return lp_uart_txfifo_count_() == 0u && fsm == 0u;
 }
 
-static void drain_uart_echo_(const uint8_t *expected, uint8_t len, uint8_t *offset) {
+static uint8_t time_reached_(uint32_t now, uint32_t due) {
+  return ((int32_t) (now - due)) >= 0 ? 1u : 0u;
+}
+
+static uint8_t drain_uart_echo_(const uint8_t *expected, uint8_t len, uint8_t *offset) {
   uint8_t rx[HCP2_LP_RX_CHUNK];
   int received;
   int i;
@@ -108,13 +121,17 @@ static void drain_uart_echo_(const uint8_t *expected, uint8_t len, uint8_t *offs
           *offset = (uint8_t) (*offset + 1u);
           trace_(HCP2_LP_TRACE_RX_ECHO, byte);
         } else {
+          collision_count++;
+          trace_(HCP2_LP_TRACE_COLLISION, byte);
           trace_(HCP2_LP_TRACE_RX_ERROR, (uint16_t) (0xE000u | byte));
+          return 0u;
         }
       }
     } else if (received < 0) {
       trace_(HCP2_LP_TRACE_RX_ERROR, (uint16_t) (reg_read_(LP_UART_INT_RAW_REG) & 0xFFFFu));
     }
   } while (received > 0);
+  return 1u;
 }
 
 static void flush_stale_uart_rx_(void) {
@@ -140,27 +157,60 @@ static void port_de_set_(void *user, uint8_t enabled) {
 static void port_tx_(void *user, const uint8_t *data, uint8_t len) {
   uint8_t offset = 0u;
   uint8_t echo_offset = 0u;
-  uint32_t flush_wait = 0u;
+  const uint32_t start_us = port_now_us_(NULL);
+  const uint32_t deadline_us = start_us + HCP2_LP_TX_DEADMAN_US;
+  uint8_t aborted = 0u;
 
   (void) user;
   while (offset < len) {
+    if (time_reached_(port_now_us_(NULL), deadline_us)) {
+      aborted = 1u;
+      break;
+    }
     const uint8_t accepted = lp_uart_tx_some_(data + offset, (uint8_t) (len - offset));
     if (accepted > 0) {
       offset = (uint8_t) (offset + accepted);
     } else {
-      drain_uart_echo_(data, len, &echo_offset);
+      if (!drain_uart_echo_(data, len, &echo_offset)) {
+        aborted = 1u;
+        break;
+      }
       ulp_lp_core_delay_cycles(20u);
     }
-    drain_uart_echo_(data, len, &echo_offset);
+    if (!drain_uart_echo_(data, len, &echo_offset)) {
+      aborted = 1u;
+      break;
+    }
   }
-  while (!lp_uart_tx_idle_() && flush_wait < HCP2_LP_TX_FLUSH_LIMIT) {
-    drain_uart_echo_(data, len, &echo_offset);
-    flush_wait++;
+  while (!aborted && !lp_uart_tx_idle_()) {
+    if (time_reached_(port_now_us_(NULL), deadline_us)) {
+      aborted = 1u;
+      break;
+    }
+    if (!drain_uart_echo_(data, len, &echo_offset)) {
+      aborted = 1u;
+      break;
+    }
     ulp_lp_core_delay_cycles(20u);
   }
-  drain_uart_echo_(data, len, &echo_offset);
-  delay_us_(100u);
-  drain_uart_echo_(data, len, &echo_offset);
+  if (!aborted && !drain_uart_echo_(data, len, &echo_offset)) {
+    aborted = 1u;
+  }
+  if (!aborted) {
+    delay_us_(100u);
+    if (!drain_uart_echo_(data, len, &echo_offset)) {
+      aborted = 1u;
+    }
+  }
+  if (aborted) {
+    tx_abort_count++;
+    trace_(HCP2_LP_TRACE_TX_ABORT, len);
+    port_de_set_(NULL, 0u);
+  }
+  const uint32_t held_us = port_now_us_(NULL) - start_us;
+  if (held_us > max_de_hold_us) {
+    max_de_hold_us = held_us;
+  }
   reg_write_(LP_UART_INT_CLR_REG, LP_UART_TX_DONE_INT_RAW | LP_UART_PARITY_ERR_INT_RAW | LP_UART_FRM_ERR_INT_RAW);
   trace_(HCP2_LP_TRACE_TX, len);
 }
@@ -194,14 +244,20 @@ static void handle_mailbox_command_(void) {
     last_command_sequence = 0u;
     return;
   }
-  if (!hcp2_lp_mailbox_take_command(mailbox, active_epoch, &last_command_sequence, &command)) {
+  if (!hcp2_lp_mailbox_take_command(mailbox, active_epoch, &last_command_sequence, port_now_us_(NULL), &command)) {
     return;
   }
 
   button = button_for_command_(command.command_id);
   if (button != HCP2_BUTTON_NONE) {
-    (void) hcp2_engine_press_button(&engine, button);
-    trace_(HCP2_LP_TRACE_COMMAND, (uint16_t) command.command_id);
+    if (hcp2_engine_press_button(&engine, button)) {
+      hcp2_lp_mailbox_ack_command(mailbox, command.sequence, HCP2_LP_COMMAND_RESULT_EXECUTED);
+      trace_(HCP2_LP_TRACE_COMMAND, (uint16_t) command.command_id);
+    } else {
+      hcp2_lp_mailbox_ack_command(mailbox, command.sequence, HCP2_LP_COMMAND_RESULT_BUSY);
+    }
+  } else {
+    hcp2_lp_mailbox_ack_command(mailbox, command.sequence, HCP2_LP_COMMAND_RESULT_UNKNOWN);
   }
 }
 
@@ -217,7 +273,7 @@ static void trace_rx_gpio_(void) {
 
 #if CONFIG_HCP2_BRINGUP_WOKWI_LP_TX_PROBE
 static void run_tx_probe_(void) {
-  if (tx_probe_sent || now_us < 500000u) {
+  if (tx_probe_sent || port_now_us_(NULL) < 500000u) {
     return;
   }
   tx_probe_sent = 1u;
@@ -266,6 +322,7 @@ static void init_(void) {
   flush_stale_uart_rx_();
   active_epoch = mailbox->command_epoch;
   last_command_sequence = mailbox->command_ack_sequence;
+  mailbox->lp_reset_count++;
   trace_(HCP2_LP_TRACE_BOOT, 1u);
 }
 
@@ -282,7 +339,9 @@ int main(void) {
 #endif
     handle_mailbox_command_();
     hcp2_engine_poll(&engine);
-    hcp2_lp_mailbox_publish_state(mailbox, hcp2_engine_drive_status(&engine), now_us);
+    hcp2_lp_mailbox_publish_state(mailbox, hcp2_engine_drive_status(&engine), port_now_us_(NULL));
+    hcp2_lp_mailbox_publish_counters(mailbox, port_now_us_(NULL), engine.status_polls_received,
+                                     engine.status_responses_sent, tx_abort_count, collision_count, max_de_hold_us);
     delay_us_(HCP2_LP_LOOP_US);
   }
 

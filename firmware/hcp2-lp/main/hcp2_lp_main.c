@@ -52,11 +52,14 @@ static esp_err_t init_bus_io_(void) {
 
 static bool healthy_lp_running_(void) {
   volatile hcp2_lp_mailbox_t *mailbox = mailbox_();
-  const uint32_t heartbeat_before = mailbox->heartbeat;
-  vTaskDelay(pdMS_TO_TICKS(20));
-  const uint32_t heartbeat_after = mailbox->heartbeat;
+  hcp2_lp_health_sample_t before;
+  hcp2_lp_health_sample_t after;
 
-  return hcp2_lp_mailbox_reload_decision(mailbox, HCP2_LP_FIRMWARE_VERSION, heartbeat_before, heartbeat_after) ==
+  hcp2_lp_mailbox_sample_health(mailbox, &before);
+  vTaskDelay(pdMS_TO_TICKS(20));
+  hcp2_lp_mailbox_sample_health(mailbox, &after);
+
+  return hcp2_lp_mailbox_reload_decision(mailbox, HCP2_LP_FIRMWARE_VERSION, &before, &after) ==
          HCP2_LP_RELOAD_SKIP;
 }
 

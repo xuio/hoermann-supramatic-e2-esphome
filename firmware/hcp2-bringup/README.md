@@ -71,29 +71,62 @@ In LP-in-the-loop mode the boot log contains:
   heartbeat is live across an HP restart.
 - `HCP2_SUPERVISOR_REAL_MAILBOX_OK` after the HP supervisor verifies skip-reload
   health and command epoch/ack behavior against the real mailbox.
+- `polls_seen`, `polls_answered`, `tx_abort_count`, `collision_count`, and
+  `max_de_hold_us` counters in the mailbox/trace logs. These are the Phase 0f
+  safety counters used by the HP supervisor and HIL tooling.
 
 In HP-fallback mode, `CONFIG_HCP2_BRINGUP_MAILBOX_TEST_DOUBLE` can exercise the
 same supervisor helper functions against a synthetic mailbox. That fallback does
 not replace the LP-in-the-loop scenario or silicon validation.
 
+## Logic Analyzer Tooling
+
+The logic analyzer is optional until it is physically connected, but the tooling
+is ready:
+
+```sh
+uv run garage-hcp2-hil-la capture \
+  --driver fx2lafw \
+  --samplerate 2m \
+  --duration 10s \
+  --channels de=D0,re=D1,tx=D2,rx=D3 \
+  --output captures/hcp2/hil-reset.sr \
+  --dry-run
+```
+
+The analyzer accepts CSV or JSON samples with `time_s`, `de`, `re`, `tx`, and
+`rx` columns/fields. It checks that DE starts low, TX starts idle-high, DE pulses
+stay below the configured deadman limit, TX transitions happen only while DE is
+high, and `/RE` stays low:
+
+```sh
+uv run garage-hcp2-hil-la analyze \
+  --input captures/hcp2/hil-reset.csv \
+  --max-de-high-us 9000 \
+  --output captures/hcp2/hil-reset-la-report.json
+```
+
 ## Phase 1 HIL Results
 
-The 2026-06-12 bench run proved the LP responder over the real C6 LP-UART,
-GPIO2/GPIO3 RS-485 direction control, and the USB-RS485 master path:
+The 2026-06-12 bench run, rerun after the Phase 0f mailbox/DE hardening, proved
+the LP responder over the real C6 LP-UART, GPIO2/GPIO3 RS-485 direction control,
+and the USB-RS485 master path:
 
-- Stable responder: 1000 HIL cycles, zero misses, zero error-04 verdicts.
+- Stable responder: 500 HIL cycles, zero misses, zero error-04 verdicts
+  (`latency_p99_ms ~= 16.7`).
 - Fault injection: corrupt CRC, truncation, duplicate poll, jitter, garbage, and
-  split writes recovered with zero missed valid polls.
+  split writes recovered with zero missed valid polls over 121 polls.
 - Modbus light command: command reply observed and steady-state polling stayed
   healthy.
 - HP mailbox command path: scripted open, close, and light commands were acked by
-  the LP firmware and observed by the simulator as button press/release responses.
+  the LP firmware and observed by the simulator as button press/release responses
+  over 260 polls.
 
 Reset matrix:
 
-- `esp_restart`: LP stayed alive, HP logged `HCP2_LP_SKIP_RELOAD`, 500/500 replies.
-- Panic reset: LP stayed alive, HP logged `HCP2_LP_SKIP_RELOAD`, 500/500 replies.
-- Task-WDT reset: LP stayed alive, HP logged `HCP2_LP_SKIP_RELOAD`, 250/250 replies.
+- `esp_restart`: LP stayed alive, 500/500 replies, zero misses.
+- Panic reset: LP stayed alive, 500/500 replies, zero misses.
+- Task-WDT reset: LP stayed alive, 500/500 replies, zero misses.
 - RTC-WDT system reset: LP did not stay continuously healthy. The boot log showed
   `rst:0x10 (LP_WDT_SYS)`, HP performed `HCP2_LP_LOAD_RELOAD`, and the simulator
   saw 16 missed polls over 250 cycles with a maximum run of 4 consecutive misses.
@@ -102,3 +135,7 @@ Design consequence: treat CPU-only resets as the continuity path, but do not rel
 on RTC-WDT for safety-continuity. The production supervisor still reloads on stale
 heartbeat or ABI/version mismatch; a live, advancing heartbeat is the health
 signal, not the mailbox magic word alone.
+
+The logic-analyzer checks have not been run on hardware yet because the LA is not
+connected. The `garage-hcp2-hil-la` capture/analyze tooling is covered by host
+tests and is ready for the first reset-glitch capture.

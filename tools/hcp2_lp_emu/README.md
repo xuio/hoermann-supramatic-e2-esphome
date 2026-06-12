@@ -29,6 +29,11 @@ The HP ISS build needs a RISC-V bare-metal GCC (`riscv32-esp-elf-gcc` or
 `riscv64-unknown-elf-gcc`); without one, local tests skip the dual-ISS cases.
 CI installs the compiler in the LP emulation job.
 
+The LP-UART model includes the Phase 0f safety faults: a wedged TX FIFO for DE
+deadman coverage and a corrupted local echo byte for collision/abort coverage.
+The mailbox suites also assert the ABI v2 command deadline/result fields and the
+polls-seen/polls-answered health checks used by the HP supervisor.
+
 This is instruction-set emulation, not a full C6 SoC timing model. Wokwi is the
 primary cloud full-firmware gate once its native LP-UART pin path is fixed; this
 ISS remains the deterministic local gate for mailbox interleavings, FIFO

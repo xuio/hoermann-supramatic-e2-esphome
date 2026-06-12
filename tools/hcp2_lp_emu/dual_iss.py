@@ -64,8 +64,17 @@ OFF_STATE_UPDATED_US = 24
 OFF_COMMAND_SEQUENCE = 32
 OFF_COMMAND_ACK_SEQUENCE = 36
 OFF_COMMAND_ID = 40
+OFF_COMMAND_ARGUMENT = 41
+OFF_COMMAND_ACK_RESULT = 42
+OFF_COMMAND_DEADLINE_US = 44
+OFF_LP_TIME_US = 48
+OFF_POLLS_SEEN = 52
+OFF_POLLS_ANSWERED = 56
+OFF_TX_ABORT_COUNT = 60
+OFF_COLLISION_COUNT = 64
 
 COMMAND_OPEN = 1
+COMMAND_RESULT_EXECUTED = 1
 
 
 class HPIssToolchainMissing(LPEmuError):
@@ -286,12 +295,22 @@ class DualISSHarness:
             slice_instructions=slice_instructions,
         ).result0
 
-    def probe_reload(self, heartbeat_before: int, heartbeat_after: int, *, slice_instructions: int = 64) -> int:
+    def probe_reload(
+        self,
+        heartbeat_before: int,
+        heartbeat_after: int,
+        *,
+        before_polls: int = 0,
+        slice_instructions: int = 64,
+        lp_slice_instructions: int | None = None,
+    ) -> int:
         return self.run_interleaved_until_response(
             REQ_PROBE_RELOAD,
             heartbeat_before,
             heartbeat_after,
+            before_polls,
             slice_instructions=slice_instructions,
+            lp_slice_instructions=lp_slice_instructions,
         ).result0
 
     def send_command(self, command_id: int, argument: int = 0, *, slice_instructions: int = 64) -> int:
@@ -312,6 +331,13 @@ class DualISSHarness:
             == 1
         )
 
+    def ack_result(self, sequence: int, *, slice_instructions: int = 64) -> int:
+        return self.run_interleaved_until_response(
+            REQ_ACK_RECEIVED,
+            sequence,
+            slice_instructions=slice_instructions,
+        ).result1
+
     def read_state(self, *, slice_instructions: int = 64, interleave_lp: bool = True) -> HPRequestResult:
         return self.run_interleaved_until_response(
             REQ_READ_STATE,
@@ -330,6 +356,8 @@ class DualISSHarness:
         _write_u32(self.lp.uc, MAILBOX_ADDR + 28, epoch)
         _write_u8(self.lp.uc, MAILBOX_ADDR + 40, command_id)
         _write_u8(self.lp.uc, MAILBOX_ADDR + 41, argument)
+        _write_u8(self.lp.uc, MAILBOX_ADDR + OFF_COMMAND_ACK_RESULT, 0)
+        _write_u32(self.lp.uc, MAILBOX_ADDR + OFF_COMMAND_DEADLINE_US, _read_u32(self.lp.uc, MAILBOX_ADDR + OFF_LP_TIME_US) + 250_000)
         _write_u32(self.lp.uc, MAILBOX_ADDR + 32, sequence)
 
 
@@ -362,6 +390,24 @@ def run_mailbox_suite(lp_blob: Path, *, interleave: int = 64) -> dict[str, objec
     )
     checks.append("heartbeat_reload_decision")
 
+    _write_u32(dual.lp.uc, MAILBOX_ADDR + OFF_HEARTBEAT, 20)
+    _write_u32(dual.lp.uc, MAILBOX_ADDR + OFF_POLLS_SEEN, 4)
+    _write_u32(dual.lp.uc, MAILBOX_ADDR + OFF_POLLS_ANSWERED, 4)
+    _require(
+        dual.probe_reload(19, 20, before_polls=4, slice_instructions=interleave, lp_slice_instructions=0) ==
+        RELOAD_REQUIRED,
+        "stalled poll counter did not require reload",
+    )
+    _write_u32(dual.lp.uc, MAILBOX_ADDR + OFF_HEARTBEAT, 21)
+    _write_u32(dual.lp.uc, MAILBOX_ADDR + OFF_POLLS_SEEN, 5)
+    _write_u32(dual.lp.uc, MAILBOX_ADDR + OFF_POLLS_ANSWERED, 5)
+    _require(
+        dual.probe_reload(20, 21, before_polls=4, slice_instructions=interleave, lp_slice_instructions=0) ==
+        RELOAD_SKIP,
+        "advancing poll counters did not stay healthy",
+    )
+    checks.append("poll_progress_health")
+
     _write_u32(dual.lp.uc, MAILBOX_ADDR + OFF_STATE_SEQ, 1)
     _require(dual.read_state(slice_instructions=interleave, interleave_lp=False).result0 == 0, "torn state read succeeded")
 
@@ -386,6 +432,7 @@ def run_mailbox_suite(lp_blob: Path, *, interleave: int = 64) -> dict[str, objec
     _require(_mailbox_u32(dual, OFF_COMMAND_SEQUENCE) == 0, "pending command sequence was not cleared")
     _require(_mailbox_u32(dual, OFF_COMMAND_ACK_SEQUENCE) == 0, "pending command ack was not cleared")
     _require(dual.lp.uc.mem_read(MAILBOX_ADDR + OFF_COMMAND_ID, 1) == b"\x00", "pending command id was not cleared")
+    _require(dual.lp.uc.mem_read(MAILBOX_ADDR + OFF_COMMAND_ACK_RESULT, 1) == b"\x00", "ack result was not cleared")
 
     dual.lp.run(250_000)
     _require(_mailbox_u32(dual, OFF_COMMAND_ACK_SEQUENCE) == 0, "stale epoch command was acknowledged")
@@ -397,6 +444,10 @@ def run_mailbox_suite(lp_blob: Path, *, interleave: int = 64) -> dict[str, objec
         "fresh command was not acknowledged by LP",
     )
     _require(dual.ack_received(sequence, slice_instructions=interleave), "HP did not observe fresh command ack")
+    _require(
+        dual.ack_result(sequence, slice_instructions=interleave) == COMMAND_RESULT_EXECUTED,
+        "fresh command ack result was not executed",
+    )
     checks.append("epoch_replay")
 
     return {

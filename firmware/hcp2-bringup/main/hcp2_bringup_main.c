@@ -133,8 +133,8 @@ static void init_uart(void) {
 
 #if CONFIG_HCP2_BRINGUP_MAILBOX_TEST_DOUBLE && CONFIG_HCP2_BRINGUP_HP_FALLBACK
 static bool run_mailbox_test_double(void) {
-  uint32_t heartbeat_before;
-  uint32_t heartbeat_after;
+  hcp2_lp_health_sample_t health_before;
+  hcp2_lp_health_sample_t health_after;
   uint32_t last_sequence = 0;
   hcp2_lp_command_t command;
   hcp2_hp_supervisor_t supervisor;
@@ -142,18 +142,18 @@ static bool run_mailbox_test_double(void) {
 
   hcp2_lp_mailbox_init(&s_mailbox_double);
   hcp2_hp_supervisor_init(&supervisor, &s_mailbox_double, HCP2_LP_FIRMWARE_VERSION);
-  heartbeat_before = s_mailbox_double.heartbeat;
-  s_mailbox_double.heartbeat = heartbeat_before + 1u;
-  heartbeat_after = s_mailbox_double.heartbeat;
+  hcp2_hp_supervisor_sample_health(&supervisor, &health_before);
+  s_mailbox_double.heartbeat = health_before.heartbeat + 1u;
+  hcp2_hp_supervisor_sample_health(&supervisor, &health_after);
 
-  if (!hcp2_hp_supervisor_is_healthy(&supervisor, heartbeat_before, heartbeat_after)) {
+  if (!hcp2_hp_supervisor_is_healthy(&supervisor, &health_before, &health_after)) {
     ESP_LOGE(TAG, "HCP2_SUPERVISOR_SKIP_RELOAD_FAIL");
     return false;
   }
   ESP_LOGI(TAG, "HCP2_SUPERVISOR_SKIP_RELOAD_OK heartbeat_before=%" PRIu32 " heartbeat_after=%" PRIu32,
-           heartbeat_before, heartbeat_after);
+           health_before.heartbeat, health_after.heartbeat);
 
-  if (hcp2_hp_supervisor_reload_decision(&supervisor, heartbeat_after, heartbeat_after) !=
+  if (hcp2_hp_supervisor_reload_decision(&supervisor, &health_after, &health_after) !=
       HCP2_LP_RELOAD_REQUIRED) {
     ESP_LOGE(TAG, "HCP2_SUPERVISOR_STALE_HEARTBEAT_FAIL");
     return false;
@@ -161,16 +161,21 @@ static bool run_mailbox_test_double(void) {
   ESP_LOGI(TAG, "HCP2_SUPERVISOR_STALE_HEARTBEAT_OK");
 
   hcp2_hp_supervisor_begin_session(&supervisor, 0x22220000u);
-  hcp2_lp_mailbox_send_command(&s_mailbox_double, 0x11110000u, 1u, HCP2_LP_COMMAND_OPEN, 0u);
-  if (hcp2_lp_mailbox_take_command(&s_mailbox_double, 0x22220000u, &last_sequence, &command)) {
+  hcp2_lp_mailbox_send_command(&s_mailbox_double, 0x11110000u, 1u, HCP2_LP_COMMAND_OPEN, 0u, 0u);
+  if (hcp2_lp_mailbox_take_command(&s_mailbox_double, 0x22220000u, &last_sequence, 0u, &command)) {
     ESP_LOGE(TAG, "HCP2_SUPERVISOR_EPOCH_REPLAY_FAIL");
     return false;
   }
 
-  sequence = hcp2_hp_supervisor_send_command(&supervisor, HCP2_LP_COMMAND_CLOSE, 0u);
-  if (!hcp2_lp_mailbox_take_command(&s_mailbox_double, 0x22220000u, &last_sequence, &command) ||
-      command.command_id != HCP2_LP_COMMAND_CLOSE || !hcp2_hp_supervisor_ack_received(&supervisor, sequence)) {
+  sequence = hcp2_hp_supervisor_send_command_at(&supervisor, HCP2_LP_COMMAND_CLOSE, 0u, 0u, 1000u);
+  if (!hcp2_lp_mailbox_take_command(&s_mailbox_double, 0x22220000u, &last_sequence, 1u, &command) ||
+      command.command_id != HCP2_LP_COMMAND_CLOSE) {
     ESP_LOGE(TAG, "HCP2_SUPERVISOR_EPOCH_ACK_FAIL");
+    return false;
+  }
+  hcp2_lp_mailbox_ack_command(&s_mailbox_double, sequence, HCP2_LP_COMMAND_RESULT_EXECUTED);
+  if (hcp2_hp_supervisor_ack_result(&supervisor, sequence) != HCP2_LP_COMMAND_RESULT_EXECUTED) {
+    ESP_LOGE(TAG, "HCP2_SUPERVISOR_EPOCH_ACK_RESULT_FAIL");
     return false;
   }
   ESP_LOGI(TAG, "HCP2_SUPERVISOR_EPOCH_OK epoch=%" PRIu32 " sequence=%" PRIu32, command.epoch,
@@ -246,20 +251,25 @@ static esp_err_t init_lp_bus_io_(void) {
   return ESP_OK;
 }
 
-static bool healthy_lp_running_(uint32_t *heartbeat_before, uint32_t *heartbeat_after) {
-  volatile hcp2_lp_mailbox_t *mailbox = lp_mailbox_();
-  const uint32_t before = mailbox->heartbeat;
-  uint32_t after;
+static hcp2_lp_reload_decision_t probe_lp_health_(hcp2_lp_health_sample_t *before,
+                                                  hcp2_lp_health_sample_t *after) {
+  hcp2_lp_health_sample_t before_local;
+  hcp2_lp_health_sample_t after_local;
 
+  hcp2_hp_supervisor_sample_health(&s_lp_supervisor, &before_local);
   vTaskDelay(pdMS_TO_TICKS(HCP2_BRINGUP_HEARTBEAT_PROBE_MS));
-  after = mailbox->heartbeat;
-  if (heartbeat_before != NULL) {
-    *heartbeat_before = before;
+  hcp2_hp_supervisor_sample_health(&s_lp_supervisor, &after_local);
+  if (before != NULL) {
+    *before = before_local;
   }
-  if (heartbeat_after != NULL) {
-    *heartbeat_after = after;
+  if (after != NULL) {
+    *after = after_local;
   }
-  return hcp2_hp_supervisor_is_healthy(&s_lp_supervisor, before, after);
+  return hcp2_hp_supervisor_reload_decision(&s_lp_supervisor, &before_local, &after_local);
+}
+
+static bool healthy_lp_running_(hcp2_lp_health_sample_t *before, hcp2_lp_health_sample_t *after) {
+  return probe_lp_health_(before, after) == HCP2_LP_RELOAD_SKIP;
 }
 
 static esp_err_t load_and_start_lp_(void) {
@@ -282,22 +292,34 @@ static esp_err_t load_and_start_lp_(void) {
 }
 
 static esp_err_t start_or_skip_lp_(void) {
-  uint32_t heartbeat_before = 0;
-  uint32_t heartbeat_after = 0;
+  hcp2_lp_health_sample_t before;
+  hcp2_lp_health_sample_t after;
+  hcp2_lp_reload_decision_t decision;
 
 #if CONFIG_HCP2_BRINGUP_FORCE_LP_RELOAD
   ESP_LOGW(TAG, "HCP2_LP_FORCE_RELOAD");
   return load_and_start_lp_();
 #endif
 
-  if (healthy_lp_running_(&heartbeat_before, &heartbeat_after)) {
-    ESP_LOGI(TAG, "HCP2_LP_SKIP_RELOAD heartbeat_before=%" PRIu32 " heartbeat_after=%" PRIu32,
-             heartbeat_before, heartbeat_after);
+  decision = probe_lp_health_(&before, &after);
+  if (decision == HCP2_LP_RELOAD_SKIP) {
+    ESP_LOGI(TAG,
+             "HCP2_LP_SKIP_RELOAD heartbeat_before=%" PRIu32 " heartbeat_after=%" PRIu32
+             " polls_seen=%" PRIu32 " polls_answered=%" PRIu32,
+             before.heartbeat, after.heartbeat, after.polls_seen, after.polls_answered);
+    return ESP_OK;
+  }
+  if (decision == HCP2_LP_RELOAD_DEFER) {
+    ESP_LOGW(TAG,
+             "HCP2_LP_RELOAD_DEFER heartbeat_before=%" PRIu32 " heartbeat_after=%" PRIu32
+             " state=0x%02" PRIx8 " command=%" PRIu32 "/%" PRIu32,
+             before.heartbeat, after.heartbeat, after.drive_state, after.command_ack_sequence,
+             after.command_sequence);
     return ESP_OK;
   }
 
   ESP_LOGI(TAG, "HCP2_LP_RELOAD_REQUIRED heartbeat_before=%" PRIu32 " heartbeat_after=%" PRIu32,
-           heartbeat_before, heartbeat_after);
+           before.heartbeat, after.heartbeat);
   return load_and_start_lp_();
 }
 
@@ -313,6 +335,7 @@ static bool wait_for_ack_(uint32_t sequence) {
   return hcp2_hp_supervisor_ack_received(&s_lp_supervisor, sequence);
 }
 
+#if CONFIG_HCP2_BRINGUP_SCRIPTED_COMMANDS
 static const char *command_name_(hcp2_lp_command_id_t command_id) {
   switch (command_id) {
     case HCP2_LP_COMMAND_OPEN:
@@ -332,6 +355,7 @@ static const char *command_name_(hcp2_lp_command_id_t command_id) {
       return "none";
   }
 }
+#endif
 
 static const char *trace_event_name_(uint16_t event) {
   switch (event) {
@@ -351,6 +375,10 @@ static const char *trace_event_name_(uint16_t event) {
       return "gpio-rx";
     case HCP2_LP_TRACE_RX_ECHO:
       return "rx-echo";
+    case HCP2_LP_TRACE_TX_ABORT:
+      return "tx-abort";
+    case HCP2_LP_TRACE_COLLISION:
+      return "collision";
     default:
       return "unknown";
   }
@@ -405,15 +433,15 @@ static void log_lp_uart_status_(void) {
 
 static bool verify_real_mailbox_(void) {
   volatile hcp2_lp_mailbox_t *mailbox = lp_mailbox_();
-  uint32_t heartbeat_before = 0;
-  uint32_t heartbeat_after = 0;
+  hcp2_lp_health_sample_t health_before;
+  hcp2_lp_health_sample_t health_after;
   const uint32_t epoch = fresh_epoch_();
   const uint32_t stale_epoch = epoch ^ 0xA5A55A5Au;
   const int health_attempts = HCP2_BRINGUP_MAILBOX_TIMEOUT_MS / HCP2_BRINGUP_HEARTBEAT_PROBE_MS;
   bool healthy = false;
 
   for (int i = 0; i < health_attempts; i++) {
-    if (healthy_lp_running_(&heartbeat_before, &heartbeat_after)) {
+    if (healthy_lp_running_(&health_before, &health_after)) {
       healthy = true;
       break;
     }
@@ -422,17 +450,17 @@ static bool verify_real_mailbox_(void) {
   if (!healthy) {
     ESP_LOGE(TAG, "HCP2_SUPERVISOR_REAL_SKIP_RELOAD_FAIL heartbeat_before=%" PRIu32
                   " heartbeat_after=%" PRIu32,
-             heartbeat_before, heartbeat_after);
+             health_before.heartbeat, health_after.heartbeat);
     return false;
   }
   ESP_LOGI(TAG, "HCP2_SUPERVISOR_REAL_SKIP_RELOAD_OK heartbeat_before=%" PRIu32
-                " heartbeat_after=%" PRIu32,
-           heartbeat_before, heartbeat_after);
+                " heartbeat_after=%" PRIu32 " polls_seen=%" PRIu32 " polls_answered=%" PRIu32,
+           health_before.heartbeat, health_after.heartbeat, health_after.polls_seen, health_after.polls_answered);
 
   hcp2_hp_supervisor_begin_session(&s_lp_supervisor, epoch);
   vTaskDelay(pdMS_TO_TICKS(HCP2_BRINGUP_HEARTBEAT_PROBE_MS * 2));
 
-  hcp2_lp_mailbox_send_command(mailbox, stale_epoch, 1u, HCP2_LP_COMMAND_OPEN, 0u);
+  hcp2_lp_mailbox_send_command(mailbox, stale_epoch, 1u, HCP2_LP_COMMAND_OPEN, 0u, mailbox->lp_time_us + 100000u);
   vTaskDelay(pdMS_TO_TICKS(HCP2_BRINGUP_HEARTBEAT_PROBE_MS * 2));
   if (mailbox->command_ack_sequence != 0u) {
     ESP_LOGE(TAG, "HCP2_SUPERVISOR_REAL_EPOCH_REPLAY_FAIL ack=%" PRIu32, mailbox->command_ack_sequence);
@@ -442,6 +470,11 @@ static bool verify_real_mailbox_(void) {
   const uint32_t sequence = hcp2_hp_supervisor_send_command(&s_lp_supervisor, HCP2_LP_COMMAND_STOP, 0u);
   if (!wait_for_ack_(sequence)) {
     ESP_LOGE(TAG, "HCP2_SUPERVISOR_REAL_EPOCH_ACK_FAIL ack=%" PRIu32, mailbox->command_ack_sequence);
+    return false;
+  }
+  if (hcp2_hp_supervisor_ack_result(&s_lp_supervisor, sequence) != HCP2_LP_COMMAND_RESULT_EXECUTED) {
+    ESP_LOGE(TAG, "HCP2_SUPERVISOR_REAL_EPOCH_ACK_RESULT_FAIL result=%u",
+             (unsigned) hcp2_hp_supervisor_ack_result(&s_lp_supervisor, sequence));
     return false;
   }
 
@@ -458,15 +491,22 @@ static void lp_supervisor_task(void *arg) {
   log_lp_trace_();
 
   for (;;) {
-    uint32_t heartbeat_before = 0;
-    uint32_t heartbeat_after = 0;
+    hcp2_lp_health_sample_t health_before;
+    hcp2_lp_health_sample_t health_after;
+    const hcp2_lp_reload_decision_t decision = probe_lp_health_(&health_before, &health_after);
     log_lp_trace_();
 #if CONFIG_HCP2_BRINGUP_LP_UART_STATUS_LOG
     log_lp_uart_status_();
 #endif
-    if (!healthy_lp_running_(&heartbeat_before, &heartbeat_after)) {
-      ESP_LOGE(TAG, "HCP2_LP_HEARTBEAT_STALE heartbeat_before=%" PRIu32 " heartbeat_after=%" PRIu32,
-               heartbeat_before, heartbeat_after);
+    if (decision != HCP2_LP_RELOAD_SKIP) {
+      ESP_LOGE(TAG,
+               "HCP2_LP_HEALTH_FAIL decision=%u heartbeat_before=%" PRIu32
+               " heartbeat_after=%" PRIu32 " polls_seen_before=%" PRIu32
+               " polls_seen_after=%" PRIu32 " polls_answered_before=%" PRIu32
+               " polls_answered_after=%" PRIu32,
+               (unsigned) decision, health_before.heartbeat, health_after.heartbeat,
+               health_before.polls_seen, health_after.polls_seen, health_before.polls_answered,
+               health_after.polls_answered);
     }
     vTaskDelay(pdMS_TO_TICKS(1000));
   }
@@ -499,9 +539,10 @@ static void scripted_command_task(void *arg) {
     const hcp2_lp_command_id_t command_id = commands[index % (sizeof(commands) / sizeof(commands[0]))];
     const uint32_t sequence = hcp2_hp_supervisor_send_command(&s_lp_supervisor, command_id, 0u);
     const bool ack = wait_for_ack_(sequence);
+    const hcp2_lp_command_result_t result = hcp2_hp_supervisor_ack_result(&s_lp_supervisor, sequence);
 
-    ESP_LOGI(TAG, "HCP2_SCRIPTED_COMMAND name=%s sequence=%" PRIu32 " ack=%d", command_name_(command_id),
-             sequence, ack ? 1 : 0);
+    ESP_LOGI(TAG, "HCP2_SCRIPTED_COMMAND name=%s sequence=%" PRIu32 " ack=%d result=%u",
+             command_name_(command_id), sequence, ack ? 1 : 0, (unsigned) result);
     index++;
     vTaskDelay(pdMS_TO_TICKS(CONFIG_HCP2_BRINGUP_SCRIPTED_COMMAND_INTERVAL_MS));
   }

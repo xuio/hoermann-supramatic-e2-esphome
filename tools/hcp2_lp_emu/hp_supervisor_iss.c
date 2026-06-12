@@ -34,6 +34,15 @@ void *memset(void *dest, int value, size_t len) {
   return dest;
 }
 
+void *memcpy(void *dest, const void *src, size_t len) {
+  unsigned char *out = (unsigned char *) dest;
+  const unsigned char *in = (const unsigned char *) src;
+  while (len-- > 0u) {
+    *out++ = *in++;
+  }
+  return dest;
+}
+
 static void barrier_(void) {
 #if defined(__GNUC__) || defined(__clang__)
   __sync_synchronize();
@@ -69,8 +78,18 @@ __attribute__((section(".text.start"))) void _start(void) {
         break;
 
       case HCP2_HP_ISS_REQ_PROBE_RELOAD: {
+        hcp2_lp_health_sample_t before;
+        hcp2_lp_health_sample_t after;
+        hcp2_hp_supervisor_sample_health(&supervisor, &after);
+        before = after;
+        before.heartbeat = control->arg0;
+        after.heartbeat = control->arg1;
+        if (control->arg2 != 0u) {
+          before.polls_seen = control->arg2;
+          before.polls_answered = control->arg2;
+        }
         const hcp2_lp_reload_decision_t decision =
-            hcp2_hp_supervisor_reload_decision(&supervisor, control->arg0, control->arg1);
+            hcp2_hp_supervisor_reload_decision(&supervisor, &before, &after);
         control->result0 = (uint32_t) decision;
         control->result1 = decision == HCP2_LP_RELOAD_SKIP ? 1u : 0u;
         break;
@@ -83,6 +102,7 @@ __attribute__((section(".text.start"))) void _start(void) {
 
       case HCP2_HP_ISS_REQ_ACK_RECEIVED:
         control->result0 = hcp2_hp_supervisor_ack_received(&supervisor, control->arg0);
+        control->result1 = (uint32_t) hcp2_hp_supervisor_ack_result(&supervisor, control->arg0);
         break;
 
       case HCP2_HP_ISS_REQ_READ_STATE: {
