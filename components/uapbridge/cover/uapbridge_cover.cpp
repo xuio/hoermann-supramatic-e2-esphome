@@ -14,6 +14,8 @@ static constexpr uint32_t UAPBRIDGE_TRAVEL_DURATION_MAGIC = 0x55415031;  // "UAP
 static constexpr uint32_t UAPBRIDGE_MIN_TRAVEL_DURATION_MS = 3000;
 static constexpr uint32_t UAPBRIDGE_MAX_TRAVEL_DURATION_MS = 120000;
 static constexpr uint32_t UAPBRIDGE_MAX_TIMING_DELAY_MS = 30000;
+static constexpr uint32_t UAPBRIDGE_REVERSE_AFTER_STOP_SETTLE_MS = 1200;
+static constexpr uint32_t UAPBRIDGE_REVERSE_AFTER_STOP_TIMEOUT_MS = 8000;
 static constexpr uint8_t UAPBRIDGE_CURVE_POINTS = 21;
 static constexpr float UAPBRIDGE_OPEN_CURVE_POSITIONS[UAPBRIDGE_CURVE_POINTS] = {
     0.000f, 0.050f, 0.100f, 0.150f, 0.200f, 0.250f, 0.300f, 0.350f, 0.400f, 0.450f, 0.500f,
@@ -173,6 +175,10 @@ void UAPBridgeCover::loop() {
     return;
   }
 
+  if (this->reverse_after_stop_pending_) {
+    this->service_reverse_after_stop_();
+  }
+
   if (this->pending_movement_) {
     this->service_pending_movement_();
   }
@@ -229,6 +235,7 @@ cover::CoverTraits UAPBridgeCover::get_traits() {
 void UAPBridgeCover::control(const cover::CoverCall& call) {
   if (call.get_stop()) {
     if (this->time_based_position_) {
+      this->clear_reverse_after_stop_("explicit stop command");
       this->recompute_position_();
     }
     if (parent_->action_stop()) {
@@ -325,6 +332,9 @@ void UAPBridgeCover::on_event_triggered() {
 }
 
 void UAPBridgeCover::control_time_based_position_(float target) {
+  if (this->reverse_after_stop_pending_) {
+    this->service_reverse_after_stop_();
+  }
   if (this->pending_movement_) {
     this->service_pending_movement_();
   }
@@ -339,6 +349,25 @@ void UAPBridgeCover::control_time_based_position_(float target) {
   }
 
   const auto operation = target < this->position ? cover::COVER_OPERATION_CLOSING : cover::COVER_OPERATION_OPENING;
+
+  if (this->reverse_after_stop_pending_) {
+    if (std::fabs(target - this->position) <= this->position_deadband_) {
+      this->clear_reverse_after_stop_("new target reached before deferred reverse");
+      this->target_position_ = this->position;
+      this->publish_if_changed_(true, false);
+      return;
+    }
+
+    if (operation == this->reverse_after_stop_operation_) {
+      this->reverse_after_stop_target_position_ = target;
+      this->target_position_ = target;
+      ESP_LOGI(TAG, "Retargeted deferred reverse movement to %.0f%%", target * 100.0f);
+      this->publish_if_changed_(true, false);
+      return;
+    }
+
+    this->clear_reverse_after_stop_("superseded by new opposite target");
+  }
 
   if (this->pending_movement_) {
     if (std::fabs(target - this->position) <= this->position_deadband_) {
@@ -446,7 +475,7 @@ void UAPBridgeCover::control_time_based_position_(float target) {
 
     if (this->parent_->action_stop()) {
       this->stop_estimated_movement_("opposite direction Home Assistant position request");
-      ESP_LOGW(TAG, "Stopped active movement before reversing direction; send the position request again after the door stops");
+      this->defer_reverse_after_stop_(operation, target, "opposite direction Home Assistant position request");
     } else {
       ESP_LOGW(TAG, "Rejected reverse position request %.0f%% because stop command was not accepted", target * 100.0f);
       this->publish_if_changed_(true, false);
@@ -534,6 +563,10 @@ void UAPBridgeCover::handle_time_based_event_() {
       }
       break;
     case UAPBridge::hoermann_state_t::hoermann_state_stopped:
+      if (this->reverse_after_stop_pending_ && this->current_operation != cover::COVER_OPERATION_IDLE) {
+        this->stop_estimated_movement_("HCP stopped before deferred reverse");
+        break;
+      }
       if (this->pending_movement_ || this->current_operation != cover::COVER_OPERATION_IDLE) {
         ESP_LOGD(TAG, "Ignoring ambiguous HCP stopped state while estimated movement is active");
         break;
@@ -679,6 +712,104 @@ bool UAPBridgeCover::should_wait_for_departure_(cover::CoverOperation operation,
           state == UAPBridge::hoermann_state_t::hoermann_state_closed) ||
          (operation == cover::COVER_OPERATION_CLOSING &&
           state == UAPBridge::hoermann_state_t::hoermann_state_open);
+}
+
+void UAPBridgeCover::defer_reverse_after_stop_(cover::CoverOperation operation, float target, const char *reason) {
+  this->reverse_after_stop_pending_ = true;
+  this->reverse_after_stop_operation_ = operation;
+  this->reverse_after_stop_target_position_ = clamp(target, 0.0f, 1.0f);
+  this->reverse_after_stop_requested_ms_ = millis();
+  this->reverse_after_stop_sequence_ = this->parent_->get_command_sequence();
+  this->reverse_after_stop_sent_ms_ = 0;
+  this->target_position_ = this->reverse_after_stop_target_position_;
+  this->clear_stop_trigger_position_();
+  ESP_LOGI(TAG, "Deferred %s toward %.0f%% until stop command settles: %s",
+           operation == cover::COVER_OPERATION_OPENING ? "opening" : "closing",
+           this->reverse_after_stop_target_position_ * 100.0f, reason);
+  this->publish_if_changed_(true, false);
+}
+
+void UAPBridgeCover::service_reverse_after_stop_() {
+  if (!this->reverse_after_stop_pending_) {
+    return;
+  }
+
+  const uint32_t now = millis();
+  if (this->reverse_after_stop_sent_ms_ == 0) {
+    if (this->parent_->get_command_sequence() == this->reverse_after_stop_sequence_) {
+      const uint32_t command_timeout = this->parent_->get_command_timeout();
+      if (command_timeout != 0 && now - this->reverse_after_stop_requested_ms_ > command_timeout + 1000) {
+        ESP_LOGW(TAG, "Cancelling deferred reverse because the stop command was not fetched");
+        this->clear_reverse_after_stop_("stop command was not fetched");
+        this->publish_if_changed_(true, false);
+      }
+      return;
+    }
+    this->reverse_after_stop_sent_ms_ = now;
+    ESP_LOGD(TAG, "Stop command was fetched; waiting before deferred reverse");
+    return;
+  }
+
+  const auto state = this->parent_->get_state();
+  const bool still_moving = state == UAPBridge::hoermann_state_t::hoermann_state_opening ||
+                            state == UAPBridge::hoermann_state_t::hoermann_state_closing;
+  if (still_moving && now - this->reverse_after_stop_sent_ms_ <= UAPBRIDGE_REVERSE_AFTER_STOP_TIMEOUT_MS) {
+    return;
+  }
+  if (now - this->reverse_after_stop_sent_ms_ < UAPBRIDGE_REVERSE_AFTER_STOP_SETTLE_MS) {
+    return;
+  }
+  if (this->pending_movement_ || this->waiting_for_departure_) {
+    return;
+  }
+  if (this->current_operation != cover::COVER_OPERATION_IDLE) {
+    if (still_moving && now - this->reverse_after_stop_sent_ms_ <= UAPBRIDGE_REVERSE_AFTER_STOP_TIMEOUT_MS) {
+      return;
+    }
+    this->stop_estimated_movement_("deferred reverse stop settle elapsed");
+  }
+
+  const auto operation = this->reverse_after_stop_operation_;
+  const float target = this->reverse_after_stop_target_position_;
+  if (std::fabs(target - this->position) <= this->position_deadband_) {
+    this->target_position_ = this->position;
+    this->clear_reverse_after_stop_("target reached while waiting to reverse");
+    this->publish_if_changed_(true, false);
+    return;
+  }
+
+  const bool from_estimated_intermediate =
+      !this->is_closed_target_(this->position) && !this->is_open_target_(this->position);
+  const bool accepted = operation == cover::COVER_OPERATION_OPENING
+                            ? (from_estimated_intermediate ? this->parent_->action_open_from_estimated_position()
+                                                           : this->parent_->action_open())
+                            : (from_estimated_intermediate ? this->parent_->action_close_from_estimated_position()
+                                                           : this->parent_->action_close());
+  if (!accepted) {
+    ESP_LOGW(TAG, "Deferred reverse toward %.0f%% was rejected by UAP bridge safety gates", target * 100.0f);
+    this->clear_reverse_after_stop_("deferred reverse command rejected");
+    this->publish_if_changed_(true, false);
+    return;
+  }
+
+  this->clear_reverse_after_stop_("deferred reverse command queued");
+  if (operation == cover::COVER_OPERATION_OPENING) {
+    this->parent_->set_obstruction_state(false);
+  }
+  this->arm_pending_movement_(operation, target, "deferred reverse after stop");
+}
+
+void UAPBridgeCover::clear_reverse_after_stop_(const char *reason) {
+  if (!this->reverse_after_stop_pending_) {
+    return;
+  }
+  ESP_LOGD(TAG, "Cleared deferred reverse after stop: %s", reason);
+  this->reverse_after_stop_pending_ = false;
+  this->reverse_after_stop_operation_ = cover::COVER_OPERATION_IDLE;
+  this->reverse_after_stop_target_position_ = this->position;
+  this->reverse_after_stop_requested_ms_ = 0;
+  this->reverse_after_stop_sequence_ = 0;
+  this->reverse_after_stop_sent_ms_ = 0;
 }
 
 void UAPBridgeCover::start_estimated_movement_(cover::CoverOperation operation, float target, const char *reason,

@@ -81,6 +81,12 @@ class UAPBridgeCover : public cover::Cover, public Component {
     float departure_target_position_ = 1.0f;
     UAPBridge::hoermann_state_t departure_old_state_ = UAPBridge::hoermann_state_t::hoermann_state_unknown;
     uint32_t departure_wait_started_ms_ = 0;
+    bool reverse_after_stop_pending_ = false;
+    cover::CoverOperation reverse_after_stop_operation_ = cover::COVER_OPERATION_IDLE;
+    float reverse_after_stop_target_position_ = 1.0f;
+    uint32_t reverse_after_stop_requested_ms_ = 0;
+    uint32_t reverse_after_stop_sequence_ = 0;
+    uint32_t reverse_after_stop_sent_ms_ = 0;
     bool waiting_for_end_state_ = false;
     uint32_t end_state_wait_started_ms_ = 0;
     uint32_t movement_start_grace_until_ms_ = 0;
@@ -100,6 +106,9 @@ class UAPBridgeCover : public cover::Cover, public Component {
     void service_departure_wait_();
     void clear_departure_wait_(const char *reason);
     bool should_wait_for_departure_(cover::CoverOperation operation, UAPBridge::hoermann_state_t state) const;
+    void defer_reverse_after_stop_(cover::CoverOperation operation, float target, const char *reason);
+    void service_reverse_after_stop_();
+    void clear_reverse_after_stop_(const char *reason);
     void start_estimated_movement_(cover::CoverOperation operation, float target, const char *reason,
                                    bool movement_confirmed = false);
     bool should_ignore_old_end_state_(UAPBridge::hoermann_state_t state) const;
