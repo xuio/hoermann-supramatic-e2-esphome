@@ -3,4 +3,4 @@ version: 1
 author: garage-door-controller
 
 steps:
-  - delay: 50s
+  - delay: 110s

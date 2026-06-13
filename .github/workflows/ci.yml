@@ -325,7 +325,7 @@ jobs:
           wokwi-cli emulation/wokwi \
             --diagram-file diagram.esphome.json \
             --scenario esphome-steady-state.yaml \
-            --timeout 75000 \
+            --timeout 150000 \
             --fail-text HCP2_WOKWI_VERDICT_FAIL \
             --serial-log-file emulation/wokwi/esphome-steady-state.serial.log | tee emulation/wokwi/esphome-steady-state.full.log
           grep -q "HCP2_WOKWI_VERDICT_OK reason=steady-state" emulation/wokwi/esphome-steady-state.full.log

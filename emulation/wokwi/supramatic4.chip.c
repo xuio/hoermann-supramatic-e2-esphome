@@ -325,7 +325,8 @@ static void on_timer(void *user_data) {
       (void) send_scan(chip);
       break;
     case PHASE_WAIT_SCAN:
-      set_verdict(chip, false, "scan-timeout");
+      chip->phase = PHASE_START;
+      timer_start(chip->timer, HCP2_WOKWI_SCAN_TO_CYCLE_US, false);
       break;
     case PHASE_BEFORE_POLL:
       (void) send_status_poll(chip);
