@@ -11,6 +11,7 @@ Use `configs/supramatic-e2.yaml` for the normal Waveshare ESP32-S3-ETH PoE garag
 - `supramatic-e2-monitor-idle-tx.yaml`: monitor that holds adapter TTL RX idle-high
 - `supramatic-e2-proxy.yaml`: TCP RS-485 proxy
 - `supramatic-4-dev.yaml`: ESP32-C6 HCP2 development firmware for simulation and bench bring-up
+- `supramatic-4-wokwi.yaml`: minimal ESP32-C6 HCP2 firmware for the Wokwi ESPHome gate
 - `secrets.example.yaml`: template used by `uv run garage-init-secrets`
 
 ## Build
@@ -26,4 +27,6 @@ For the Series 4 / HCP2 development target:
 ```bash
 uv run esphome config configs/supramatic-4-dev.yaml
 uv run esphome compile configs/supramatic-4-dev.yaml
+uv run esphome config configs/supramatic-4-wokwi.yaml
+uv run esphome compile configs/supramatic-4-wokwi.yaml
 ```

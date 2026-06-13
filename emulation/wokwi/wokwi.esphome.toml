@@ -1,7 +1,7 @@
 [wokwi]
 version = 1
-firmware = "../../configs/.esphome/build/supramatic-4-dev/.pioenvs/supramatic-4-dev/flasher_args.json"
-elf = "../../configs/.esphome/build/supramatic-4-dev/.pioenvs/supramatic-4-dev/firmware.elf"
+firmware = "../../configs/.esphome/build/supramatic-4-wokwi/.pioenvs/supramatic-4-wokwi/flasher_args.json"
+elf = "../../configs/.esphome/build/supramatic-4-wokwi/.pioenvs/supramatic-4-wokwi/firmware.elf"
 
 [[chip]]
 name = "supramatic4"

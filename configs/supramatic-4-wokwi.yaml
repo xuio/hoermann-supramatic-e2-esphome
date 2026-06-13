@@ -1,0 +1,47 @@
+substitutions:
+  name: "supramatic-4-wokwi"
+  friendly_name: "Garage Door HCP2 Wokwi"
+  hcp2_rx_pin: GPIO4
+  hcp2_tx_pin: GPIO5
+  hcp2_de_pin: GPIO0
+  hcp2_re_pin: GPIO1
+
+esphome:
+  name: "${name}"
+  friendly_name: "${friendly_name}"
+
+esp32:
+  board: esp32-c6-devkitc-1
+  variant: ESP32C6
+  framework:
+    type: esp-idf
+    version: 5.5.4
+    sdkconfig_options:
+      CONFIG_UART_ISR_IN_IRAM: "y"
+      CONFIG_ESP_SYSTEM_PANIC_PRINT_REBOOT: "n"
+      CONFIG_ESP_SYSTEM_PANIC_PRINT_HALT: "y"
+      CONFIG_ESP_TASK_WDT_EN: "y"
+      CONFIG_ESP_TASK_WDT_INIT: "y"
+      CONFIG_ESP_TASK_WDT_PANIC: "n"
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+
+logger:
+  level: INFO
+  hardware_uart: UART0
+
+hcp2bridge:
+  id: hcp2_wokwi
+  rx_pin: ${hcp2_rx_pin}
+  tx_pin: ${hcp2_tx_pin}
+  de_pin: ${hcp2_de_pin}
+  re_pin: ${hcp2_re_pin}
+  uart_num: 1
+  slave_id: 2
+  device_signature: "00000205043010FFA855"
+  response_delay: 4500us
+  button_press_duration: 100ms
+  hp_fallback: false

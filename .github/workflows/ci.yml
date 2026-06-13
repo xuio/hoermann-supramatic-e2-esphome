@@ -40,6 +40,7 @@ jobs:
           uv run esphome config configs/supramatic-e2-monitor-idle-tx.yaml
           uv run esphome config configs/supramatic-e2-proxy.yaml
           uv run esphome config configs/supramatic-4-dev.yaml
+          uv run esphome config configs/supramatic-4-wokwi.yaml
 
       - name: Compile main firmware
         run: uv run esphome compile configs/supramatic-e2.yaml
@@ -225,22 +226,24 @@ jobs:
 
       - name: Build HCP2 ESPHome Wokwi firmware
         if: ${{ env.WOKWI_CLI_TOKEN != '' }}
-        run: uv run esphome compile configs/supramatic-4-dev.yaml
+        run: uv run esphome compile configs/supramatic-4-wokwi.yaml
 
       - name: Generate HCP2 ESPHome Wokwi flash layout
         if: ${{ env.WOKWI_CLI_TOKEN != '' }}
         run: |
-          python - <<'PY'
+          uv run python - <<'PY'
           import json
           from pathlib import Path
 
-          build = Path("configs/.esphome/build/supramatic-4-dev/.pioenvs/supramatic-4-dev")
+          build = Path("configs/.esphome/build/supramatic-4-wokwi/.pioenvs/supramatic-4-wokwi")
           files = {
               "0x0": "bootloader.bin",
               "0x8000": "partitions.bin",
-              "0x9000": "ota_data_initial.bin",
               "0x10000": "firmware.bin",
           }
+          if (build / "ota_data_initial.bin").is_file():
+              files["0x9000"] = "ota_data_initial.bin"
+
           missing = [name for name in files.values() if not (build / name).is_file()]
           if missing:
               raise SystemExit(f"missing ESPHome Wokwi flash files: {', '.join(missing)}")
@@ -251,7 +254,6 @@ jobs:
               "flash_files": files,
               "bootloader": {"offset": "0x0", "file": files["0x0"], "encrypted": "false"},
               "partition-table": {"offset": "0x8000", "file": files["0x8000"], "encrypted": "false"},
-              "otadata": {"offset": "0x9000", "file": files["0x9000"], "encrypted": "false"},
               "app": {"offset": "0x10000", "file": files["0x10000"], "encrypted": "false"},
               "extra_esptool_args": {
                   "after": "hard_reset",
@@ -260,6 +262,8 @@ jobs:
                   "chip": "esp32c6",
               },
           }
+          if "0x9000" in files:
+              layout["otadata"] = {"offset": "0x9000", "file": files["0x9000"], "encrypted": "false"}
           (build / "flasher_args.json").write_text(json.dumps(layout, indent=2) + "\n")
           PY
 

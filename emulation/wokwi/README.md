@@ -87,7 +87,7 @@ idf.py -C firmware/hcp2-bringup -B firmware/hcp2-bringup/build-wokwi-hp-fallback
 idf.py -C firmware/hcp2-bringup -B firmware/hcp2-bringup/build-wokwi-hp-fallback-restart \
   -D SDKCONFIG=/tmp/hcp2-bringup-wokwi-hp-fallback-restart-sdkconfig \
   -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.hp-fallback.defaults;sdkconfig.restart.defaults" build
-uv run esphome compile configs/supramatic-4-dev.yaml
+uv run esphome compile configs/supramatic-4-wokwi.yaml
 garage-generate-wokwi-hcp2-constants --check
 cd emulation/wokwi
 wokwi-cli chip compile supramatic4.chip.c -o chips/supramatic4.chip.wasm
@@ -160,7 +160,7 @@ wokwi-cli emulation/wokwi --diagram-file diagram.restart.json \
 cp /tmp/hcp2-wokwi.toml emulation/wokwi/wokwi.toml
 ```
 
-Run the ESPHome-built HP-fallback firmware against the same custom chip:
+Run the minimal ESPHome-built LP firmware against the same custom chip:
 
 ```sh
 cp emulation/wokwi/wokwi.toml /tmp/hcp2-wokwi.toml
