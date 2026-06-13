@@ -5,10 +5,10 @@
 #include "hal/uart_types.h"
 #include "hcp2_engine.h"
 #include "hcp2_mailbox.h"
+#include "riscv/csr.h"
 #include "sdkconfig.h"
 #include "soc/lp_uart_reg.h"
 #include "soc/lp_wdt_reg.h"
-#include "ulp_lp_core_cpu_freq_shared.h"
 #include "ulp_lp_core_gpio.h"
 #include "ulp_lp_core_uart.h"
 #include "ulp_lp_core_utils.h"
@@ -20,6 +20,7 @@
 #define HCP2_LP_UART_FIFO_LEN 16u
 #define HCP2_LP_UART_BAUD 57600u
 #define HCP2_LP_UART_BITS_PER_BYTE 11u
+#define HCP2_LP_CPU_CYCLES_PER_US 20u
 #define HCP2_LP_LOOP_US 100u
 #define HCP2_LP_RX_CHUNK 16u
 #define HCP2_LP_TX_DEADMAN_US 8000u
@@ -71,7 +72,7 @@ static void trace_(uint16_t event, uint16_t value) {
 }
 
 __attribute__((noinline)) uint32_t hcp2_lp_now_us(void) {
-  return ulp_lp_core_get_cpu_cycles() / (LP_CORE_CYCLES_PER_US_NUM / LP_CORE_CYCLES_PER_US_DENOM);
+  return RV_READ_CSR(mcycle) / HCP2_LP_CPU_CYCLES_PER_US;
 }
 
 static uint32_t port_now_us_(void *user) {

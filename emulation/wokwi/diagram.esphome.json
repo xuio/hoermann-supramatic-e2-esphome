@@ -20,7 +20,7 @@
         "mode": "0",
         "missedThreshold": "5",
         "requireRecovery": "0",
-        "startDelayUs": "8000000"
+        "startDelayUs": "30000000"
       }
     }
   ],
