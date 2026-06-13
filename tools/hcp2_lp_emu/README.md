@@ -6,9 +6,9 @@ SupraMatic simulator.
 
 The harness models the pieces the LP blob actually touches: LP SRAM at
 `0x50000000`, the fixed mailbox at `0x50002000`, LP-UART RX/TX FIFOs with a
-16-byte depth, DE on LP GPIO2, and benign PMU/clock/wake-cause stubs. Any MMIO
-outside the modeled pages fails the run; every modeled register access is
-reported in the manifest.
+16-byte depth, DE on LP GPIO0, /RE on LP GPIO1, and benign PMU/clock/wake-cause
+stubs. Any MMIO outside the modeled pages fails the run; every modeled register
+access is reported in the manifest.
 
 Useful commands:
 
@@ -31,8 +31,8 @@ CI installs the compiler in the LP emulation job.
 
 The LP-UART model includes the Phase 0f safety faults: a wedged TX FIFO for DE
 deadman coverage and a corrupted local echo byte for collision/abort coverage.
-The mailbox suites also assert the ABI v2 command deadline/result fields and the
-polls-seen/polls-answered health checks used by the HP supervisor.
+The mailbox suites also assert the ABI v3 command deadline/result fields, stop-trigger
+fields, and poll counter diagnostics used by the HP supervisor.
 
 This is instruction-set emulation, not a full C6 SoC timing model. Wokwi is the
 primary cloud full-firmware gate once its native LP-UART pin path is fixed; this

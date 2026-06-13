@@ -8,6 +8,7 @@ import random
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TextIO
 from typing import Callable
 
 from . import protocol
@@ -93,6 +94,7 @@ class SupraMaticSimulator:
         response_timeout_s: float = DEFAULT_RESPONSE_TIMEOUT_S,
         rng_seed: int = 0x5A17,
         expected_buttons: set[str] | None = None,
+        trace_path: Path | None = None,
     ) -> None:
         self.transport = transport
         self.slave_id = slave_id
@@ -103,6 +105,27 @@ class SupraMaticSimulator:
         self.expected_buttons = expected_buttons or set()
         self.rx_buffer = bytearray()
         self.report = SimulationReport()
+        self.trace_start_s = time.monotonic()
+        self.trace_file: TextIO | None = None
+        if trace_path is not None:
+            trace_path.parent.mkdir(parents=True, exist_ok=True)
+            self.trace_file = trace_path.open("w", encoding="utf-8")
+
+    def close(self) -> None:
+        if self.trace_file is not None:
+            self.trace_file.close()
+            self.trace_file = None
+
+    def trace(self, event: str, **fields: object) -> None:
+        if self.trace_file is None:
+            return
+        record = {
+            "t_s": time.monotonic() - self.trace_start_s,
+            "event": event,
+            **fields,
+        }
+        self.trace_file.write(json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n")
+        self.trace_file.flush()
 
     def scaled_sleep(self, gap_us: int, jitter: bool = False) -> None:
         factor = self.rng.uniform(0.25, 1.75) if jitter else 1.0
@@ -146,6 +169,7 @@ class SupraMaticSimulator:
                     if match is None or match(frame):
                         return frame
                     self.report.ignored_responses += 1
+                    self.trace("ignored_response", context=context, frame=frame.hex())
                     if self.report.ignored_responses <= 8:
                         self.report.notes.append(f"{context} ignored unexpected response {frame.hex()}")
                     continue
@@ -193,7 +217,9 @@ class SupraMaticSimulator:
 
     def run_bus_scan(self) -> None:
         start = time.monotonic()
-        self.write_frame(protocol.bus_scan_request(self.slave_id))
+        request = protocol.bus_scan_request(self.slave_id)
+        self.trace("bus_scan_tx", request=request.hex())
+        self.write_frame(request)
         frame = self.read_response(
             match=lambda response: response == protocol.SCAN_RESPONSE,
             context="bus scan",
@@ -201,8 +227,10 @@ class SupraMaticSimulator:
         if frame == protocol.SCAN_RESPONSE:
             self.report.scan_ok = True
             self.report.latencies_ms.append((time.monotonic() - start) * 1000.0)
+            self.trace("bus_scan_rx", response=frame.hex(), latency_ms=(time.monotonic() - start) * 1000.0)
         else:
             self.report.notes.append(f"bus scan failed: {frame.hex() if frame else 'timeout'}")
+            self.trace("bus_scan_miss", response=frame.hex() if frame else None)
 
     def run_cycle(self, cycle: int, *, faults: set[str], command: str | None) -> None:
         state = self.broadcast_for_cycle(cycle, command)
@@ -242,6 +270,7 @@ class SupraMaticSimulator:
         frame = protocol.status_poll(counter, self.slave_id)
         self.report.polls_sent += 1
         start = time.monotonic()
+        self.trace("poll_tx", counter=counter, request=frame.hex(), poll_index=self.report.polls_sent)
         self.write_frame(frame, split=split)
         response = self.read_response(
             match=lambda reply: protocol.decode_response_kind(reply) == "status"
@@ -256,15 +285,31 @@ class SupraMaticSimulator:
             self.report.latencies_ms.append(latency_ms)
             self.report.replies += 1
             self.report.consecutive_misses = 0
+            self.trace(
+                "poll_rx",
+                counter=counter,
+                response=response.hex(),
+                latency_ms=latency_ms,
+                poll_index=self.report.polls_sent,
+                button=button,
+            )
         else:
             self.report.misses += 1
             self.report.consecutive_misses += 1
             self.report.max_consecutive_misses = max(
                 self.report.max_consecutive_misses, self.report.consecutive_misses
             )
+            self.trace(
+                "poll_miss",
+                counter=counter,
+                poll_index=self.report.polls_sent,
+                consecutive_misses=self.report.consecutive_misses,
+            )
 
     def run_light_command(self, counter: int, *, enabled: bool) -> None:
-        self.write_frame(protocol.light_command(counter, enabled, self.slave_id))
+        request = protocol.light_command(counter, enabled, self.slave_id)
+        self.trace("command_tx", counter=counter, request=request.hex(), command="light", enabled=enabled)
+        self.write_frame(request)
         expected = protocol.COMMAND_RESPONSE_BY_COUNTER.get(counter)
         response = self.read_response(
             match=lambda reply: expected is not None and reply == expected,
@@ -272,8 +317,10 @@ class SupraMaticSimulator:
         )
         if response == expected:
             self.report.command_replies += 1
+            self.trace("command_rx", counter=counter, response=response.hex(), command="light")
         else:
             self.report.notes.append(f"light command failed: {response.hex() if response else 'timeout'}")
+            self.trace("command_miss", counter=counter, response=response.hex() if response else None, command="light")
 
     def inject_faults(self, faults: set[str], counter: int) -> None:
         valid = protocol.status_poll(counter, self.slave_id)

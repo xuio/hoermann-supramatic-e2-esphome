@@ -40,6 +40,7 @@ REQ_PROBE_RELOAD = 2
 REQ_SEND_COMMAND = 3
 REQ_ACK_RECEIVED = 4
 REQ_READ_STATE = 5
+REQ_ARM_STOP_TRIGGER = 6
 
 OFF_REQUEST = 0
 OFF_RESPONSE = 4
@@ -72,6 +73,14 @@ OFF_POLLS_SEEN = 52
 OFF_POLLS_ANSWERED = 56
 OFF_TX_ABORT_COUNT = 60
 OFF_COLLISION_COUNT = 64
+OFF_LAST_POLL_US = 76
+OFF_CRC_ERROR_COUNT = 80
+OFF_RX_ERROR_COUNT = 84
+OFF_STOP_TRIGGER_EPOCH = 88
+OFF_STOP_TRIGGER_DEADLINE_US = 92
+OFF_STOP_TRIGGER_TARGET_POSITION = 96
+OFF_STOP_TRIGGER_ARMED = 97
+OFF_STOP_TRIGGER_FIRE_COUNT = 98
 
 COMMAND_OPEN = 1
 COMMAND_RESULT_EXECUTED = 1
@@ -345,6 +354,25 @@ class DualISSHarness:
             lp_slice_instructions=slice_instructions if interleave_lp else 0,
         )
 
+    def arm_stop_trigger(
+        self,
+        target_position: int,
+        now_us: int,
+        ttl_us: int,
+        *,
+        slice_instructions: int = 64,
+    ) -> bool:
+        return (
+            self.run_interleaved_until_response(
+                REQ_ARM_STOP_TRIGGER,
+                target_position,
+                now_us,
+                ttl_us,
+                slice_instructions=slice_instructions,
+            ).result0
+            == 1
+        )
+
     def run_lp_until(self, condition, *, slice_instructions: int = 4096, rounds: int = 1000) -> bool:
         for _ in range(rounds):
             if condition():
@@ -395,8 +423,8 @@ def run_mailbox_suite(lp_blob: Path, *, interleave: int = 64) -> dict[str, objec
     _write_u32(dual.lp.uc, MAILBOX_ADDR + OFF_POLLS_ANSWERED, 4)
     _require(
         dual.probe_reload(19, 20, before_polls=4, slice_instructions=interleave, lp_slice_instructions=0) ==
-        RELOAD_REQUIRED,
-        "stalled poll counter did not require reload",
+        RELOAD_SKIP,
+        "stalled poll counter incorrectly required reload",
     )
     _write_u32(dual.lp.uc, MAILBOX_ADDR + OFF_HEARTBEAT, 21)
     _write_u32(dual.lp.uc, MAILBOX_ADDR + OFF_POLLS_SEEN, 5)
@@ -406,7 +434,7 @@ def run_mailbox_suite(lp_blob: Path, *, interleave: int = 64) -> dict[str, objec
         RELOAD_SKIP,
         "advancing poll counters did not stay healthy",
     )
-    checks.append("poll_progress_health")
+    checks.append("poll_counters_are_diagnostic")
 
     _write_u32(dual.lp.uc, MAILBOX_ADDR + OFF_STATE_SEQ, 1)
     _require(dual.read_state(slice_instructions=interleave, interleave_lp=False).result0 == 0, "torn state read succeeded")
@@ -433,6 +461,7 @@ def run_mailbox_suite(lp_blob: Path, *, interleave: int = 64) -> dict[str, objec
     _require(_mailbox_u32(dual, OFF_COMMAND_ACK_SEQUENCE) == 0, "pending command ack was not cleared")
     _require(dual.lp.uc.mem_read(MAILBOX_ADDR + OFF_COMMAND_ID, 1) == b"\x00", "pending command id was not cleared")
     _require(dual.lp.uc.mem_read(MAILBOX_ADDR + OFF_COMMAND_ACK_RESULT, 1) == b"\x00", "ack result was not cleared")
+    _require(dual.lp.uc.mem_read(MAILBOX_ADDR + OFF_STOP_TRIGGER_ARMED, 1) == b"\x00", "stop trigger was not cleared")
 
     dual.lp.run(250_000)
     _require(_mailbox_u32(dual, OFF_COMMAND_ACK_SEQUENCE) == 0, "stale epoch command was acknowledged")
@@ -449,6 +478,16 @@ def run_mailbox_suite(lp_blob: Path, *, interleave: int = 64) -> dict[str, objec
         "fresh command ack result was not executed",
     )
     checks.append("epoch_replay")
+
+    _write_u32(dual.lp.uc, MAILBOX_ADDR + OFF_LP_TIME_US, 1000)
+    _require(dual.arm_stop_trigger(120, 1000, 30000000, slice_instructions=interleave), "stop trigger arm failed")
+    _require(dual.lp.uc.mem_read(MAILBOX_ADDR + OFF_STOP_TRIGGER_ARMED, 1) == b"\x01", "stop trigger not armed")
+    _require(dual.begin_session(0x9ABC0000, slice_instructions=interleave) == 0x9ABC0000, "epoch change failed")
+    _require(
+        dual.lp.uc.mem_read(MAILBOX_ADDR + OFF_STOP_TRIGGER_ARMED, 1) == b"\x00",
+        "epoch change did not clear stop trigger",
+    )
+    checks.append("stop_trigger_epoch_clear")
 
     return {
         "verdict": "ok",

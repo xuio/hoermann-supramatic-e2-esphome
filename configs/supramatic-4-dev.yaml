@@ -3,8 +3,8 @@ substitutions:
   friendly_name: "Garage Door HCP2 Dev"
   hcp2_rx_pin: GPIO4
   hcp2_tx_pin: GPIO5
-  hcp2_de_pin: GPIO2
-  hcp2_re_pin: GPIO3
+  hcp2_de_pin: GPIO0
+  hcp2_re_pin: GPIO1
 
 esphome:
   name: "${name}"
@@ -18,6 +18,14 @@ esp32:
     version: 5.5.4
     sdkconfig_options:
       CONFIG_UART_ISR_IN_IRAM: "y"
+      # HCP2 continuity policy: planned OTA/restart uses esp_restart, but HP
+      # crash/task-WDT recovery must not reset the bus pins while the LP core is
+      # answering the motor.
+      CONFIG_ESP_SYSTEM_PANIC_PRINT_REBOOT: "n"
+      CONFIG_ESP_SYSTEM_PANIC_PRINT_HALT: "y"
+      CONFIG_ESP_TASK_WDT_EN: "y"
+      CONFIG_ESP_TASK_WDT_INIT: "y"
+      CONFIG_ESP_TASK_WDT_PANIC: "n"
 
 external_components:
   - source:
@@ -31,6 +39,7 @@ logger:
 wifi:
   ssid: !secret wifi_ssid_supramatic_4_dev
   password: !secret wifi_password_supramatic_4_dev
+  reboot_timeout: 0s
 
 api:
   reboot_timeout: 0s
@@ -58,7 +67,7 @@ hcp2bridge:
   device_signature: "00000205043010FFA855"
   response_delay: 4500us
   button_press_duration: 100ms
-  hp_fallback: true
+  hp_fallback: false
 
 cover:
   - platform: hcp2bridge
@@ -70,6 +79,46 @@ light:
   - platform: hcp2bridge
     hcp2bridge_id: hcp2_dev
     name: "${friendly_name} Light"
+
+button:
+  - platform: restart
+    name: "${friendly_name} Restart"
+
+sensor:
+  - platform: hcp2bridge
+    hcp2bridge_id: hcp2_dev
+    lp_heartbeat:
+      name: "${friendly_name} LP Heartbeat"
+    lp_resets:
+      name: "${friendly_name} LP Resets"
+    polls_seen:
+      name: "${friendly_name} Polls Seen"
+    polls_answered:
+      name: "${friendly_name} Polls Answered"
+    missed_polls:
+      name: "${friendly_name} Missed Polls"
+    tx_aborts:
+      name: "${friendly_name} TX Aborts"
+    collisions:
+      name: "${friendly_name} Collisions"
+    crc_errors:
+      name: "${friendly_name} CRC Errors"
+    rx_errors:
+      name: "${friendly_name} RX Errors"
+    stop_trigger_fires:
+      name: "${friendly_name} Stop Trigger Fires"
+    hp_resets:
+      name: "${friendly_name} HP Resets"
+    hp_panic_resets:
+      name: "${friendly_name} HP Panic Resets"
+    hp_wdt_resets:
+      name: "${friendly_name} HP WDT Resets"
+    hp_brownout_resets:
+      name: "${friendly_name} HP Brownout Resets"
+    max_de_hold:
+      name: "${friendly_name} Max DE Hold"
+    last_poll_age:
+      name: "${friendly_name} Last Poll Age"
 
 binary_sensor:
   - platform: status
@@ -88,3 +137,5 @@ binary_sensor:
       name: "${friendly_name} Light Feedback"
     obstruction:
       name: "${friendly_name} Obstruction"
+    bus_online:
+      name: "${friendly_name} HCP2 Bus Online"

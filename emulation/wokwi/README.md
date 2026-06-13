@@ -6,8 +6,8 @@ SupraMatic 4 HCP2 master chip:
 
 - GPIO4: LP-UART RX from the master chip
 - GPIO5: LP-UART TX to the master chip
-- GPIO2: LP GPIO DE, watched by the master chip for canonical trace events
-- GPIO3: /RE, held low by firmware/hardware so RX echo remains visible
+- GPIO0: LP GPIO DE, watched by the master chip for canonical trace events
+- GPIO1: /RE, asserted only while DE is high so local echo is suppressed during TX
 
 Wokwi status changed during the 2026-06-11 and 2026-06-12 retests. The earlier
 Simulation API `1.0.0-20260608-g56f5da7e` could not run basic ESP32-C6 LP
@@ -69,8 +69,8 @@ Entry spike status:
   UARTs do not model parity, so HIL remains the parity authority.
 - FIFO partial-TX fidelity: Wokwi behavior is intentionally judged by comparison
   to the ISS trace; any divergence is recorded as a simulator-fidelity finding.
-- DE via LP GPIO: GPIO2 is wired to the custom chip and emitted as `de` trace
-  events.
+- DE via LP GPIO: GPIO0 is wired to the custom chip and emitted as `de` trace
+  events; GPIO1 carries the /RE guard signal.
 - `esp_restart()` LP survival: not proven in Wokwi. The restart scenario uses
   HP fallback only; Phase 1 HIL remains the authority.
 

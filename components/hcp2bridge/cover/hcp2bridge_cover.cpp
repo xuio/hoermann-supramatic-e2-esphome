@@ -37,18 +37,22 @@ void HCP2BridgeCover::control(const cover::CoverCall &call) {
   switch (hcp2_cover_button_for_control(call.get_stop(), has_position, target)) {
     case HCP2_BUTTON_STOP:
       this->goto_active_ = false;
+      this->parent_->disarm_stop_trigger();
       this->parent_->action_stop();
       break;
     case HCP2_BUTTON_CLOSE:
       this->goto_active_ = false;
+      this->parent_->disarm_stop_trigger();
       this->parent_->action_close();
       break;
     case HCP2_BUTTON_OPEN:
       this->goto_active_ = false;
+      this->parent_->disarm_stop_trigger();
       this->parent_->action_open();
       break;
     case HCP2_BUTTON_HALF:
       this->goto_active_ = false;
+      this->parent_->disarm_stop_trigger();
       this->parent_->action_half();
       break;
     default:
@@ -106,6 +110,9 @@ void HCP2BridgeCover::start_goto_(float target) {
   if (!this->send_direction_(button)) {
     ESP_LOGW(TAG, "Failed to queue HCP2 goto command");
     return;
+  }
+  if (!this->parent_->arm_stop_trigger(target, HCP2_GOTO_TIMEOUT_MS)) {
+    ESP_LOGW(TAG, "Failed to arm LP stop trigger for HCP2 goto");
   }
   this->goto_active_ = true;
   this->goto_target_ = target;

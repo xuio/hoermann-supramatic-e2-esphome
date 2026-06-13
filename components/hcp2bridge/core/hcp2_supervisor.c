@@ -42,6 +42,7 @@ void hcp2_hp_supervisor_begin_session(hcp2_hp_supervisor_t *supervisor, uint32_t
   mailbox->command_ack_sequence = 0u;
   mailbox->command_ack_result = (uint8_t) HCP2_LP_COMMAND_RESULT_NONE;
   mailbox->command_deadline_us = 0u;
+  hcp2_lp_mailbox_disarm_stop_trigger(mailbox);
   mailbox->command_epoch = supervisor->epoch;
   memory_barrier_();
 }
@@ -123,4 +124,34 @@ uint8_t hcp2_hp_supervisor_read_state(const hcp2_hp_supervisor_t *supervisor,
     return 0u;
   }
   return hcp2_lp_mailbox_read_state(supervisor->mailbox, out);
+}
+
+uint8_t hcp2_hp_supervisor_arm_stop_trigger(hcp2_hp_supervisor_t *supervisor, uint8_t target_position,
+                                            uint32_t ttl_us) {
+  uint32_t now_us;
+
+  if (supervisor == 0 || supervisor->mailbox == 0 || supervisor->epoch == 0u) {
+    return 0u;
+  }
+  now_us = supervisor->mailbox->lp_time_us;
+  return hcp2_hp_supervisor_arm_stop_trigger_at(supervisor, target_position, now_us, ttl_us);
+}
+
+uint8_t hcp2_hp_supervisor_arm_stop_trigger_at(hcp2_hp_supervisor_t *supervisor, uint8_t target_position,
+                                               uint32_t now_us, uint32_t ttl_us) {
+  uint32_t deadline_us;
+
+  if (supervisor == 0 || supervisor->mailbox == 0 || supervisor->epoch == 0u) {
+    return 0u;
+  }
+  deadline_us = ttl_us == 0u ? 0u : now_us + ttl_us;
+  hcp2_lp_mailbox_arm_stop_trigger(supervisor->mailbox, supervisor->epoch, target_position, deadline_us);
+  return 1u;
+}
+
+void hcp2_hp_supervisor_disarm_stop_trigger(hcp2_hp_supervisor_t *supervisor) {
+  if (supervisor == 0) {
+    return;
+  }
+  hcp2_lp_mailbox_disarm_stop_trigger(supervisor->mailbox);
 }

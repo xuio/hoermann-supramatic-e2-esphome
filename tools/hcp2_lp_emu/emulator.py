@@ -44,8 +44,8 @@ LP_SRAM_MAP_SIZE = 0x10000
 MAILBOX_ADDR = 0x50002000
 MAILBOX_SIZE = 512
 MAILBOX_MAGIC = 0x32435048
-MAILBOX_ABI_VERSION = 2
-MAILBOX_FIRMWARE_VERSION = 2
+MAILBOX_ABI_VERSION = 3
+MAILBOX_FIRMWARE_VERSION = 9
 
 LP_UART_BASE = 0x600B1400
 LP_UART_FIFO = LP_UART_BASE + 0x00
@@ -74,7 +74,8 @@ LP_IO_OUT_DATA_W1TS = LP_IO_BASE + 0x04
 LP_IO_OUT_DATA_W1TC = LP_IO_BASE + 0x08
 LP_IO_OUT_ENABLE_W1TS = LP_IO_BASE + 0x10
 LP_IO_STATUS_W1TC = LP_IO_BASE + 0x20
-LP_IO_DE_MASK = 1 << 2
+LP_IO_DE_MASK = 1 << 0
+LP_IO_RE_MASK = 1 << 1
 
 LPPERI_BASE = 0x600B2800
 LPPERI_CLK_EN = LPPERI_BASE + 0x00
@@ -236,7 +237,10 @@ class LPEmulator:
         self.reply_latencies_us: list[float] = []
 
         self.de_enabled = False
+        self.re_disabled = False
         self.de_events: list[dict[str, int | bool]] = []
+        self.re_events: list[dict[str, int | bool]] = []
+        self.gpio_writes: list[dict[str, int | str]] = []
         self.trace_events: list[dict[str, object]] = []
         self.tx_when_de_low = 0
         self.rx_overflows = 0
@@ -445,7 +449,7 @@ class LPEmulator:
                     self.reply_latencies_us.append(latency_us)
                     self._trace("reply_latency", latency_us=round(latency_us))
             self.tx_output.append(byte)
-            if self.echo_tx_to_rx and self.de_enabled:
+            if self.echo_tx_to_rx and self.de_enabled and not self.re_disabled:
                 echo = byte
                 self.echo_count += 1
                 if self.echo_mismatch_at is not None and self.echo_count == self.echo_mismatch_at:
@@ -522,12 +526,18 @@ class LPEmulator:
         elif address == LP_UART_REG_UPDATE:
             _write_u32(uc, LP_UART_REG_UPDATE, 0)
         elif address == LP_IO_OUT_DATA_W1TS:
+            self.gpio_writes.append({"cycle": self.cycles, "op": "set", "value": value})
             if value & LP_IO_DE_MASK:
                 self._set_de(True)
+            if value & LP_IO_RE_MASK:
+                self._set_re_disabled(True)
             _write_u32(uc, LP_IO_OUT_DATA, _read_u32_mem(uc, LP_IO_OUT_DATA) | value)
         elif address == LP_IO_OUT_DATA_W1TC:
+            self.gpio_writes.append({"cycle": self.cycles, "op": "clear", "value": value})
             if value & LP_IO_DE_MASK:
                 self._set_de(False)
+            if value & LP_IO_RE_MASK:
+                self._set_re_disabled(False)
             _write_u32(uc, LP_IO_OUT_DATA, _read_u32_mem(uc, LP_IO_OUT_DATA) & ~value)
         elif address == LP_IO_OUT_ENABLE_W1TS:
             pass
@@ -539,6 +549,13 @@ class LPEmulator:
         self.de_enabled = enabled
         self.de_events.append({"cycle": self.cycles, "time_us": round(self.time_us), "enabled": enabled})
         self._trace("de", enabled=enabled)
+
+    def _set_re_disabled(self, disabled: bool) -> None:
+        if self.re_disabled == disabled:
+            return
+        self.re_disabled = disabled
+        self.re_events.append({"cycle": self.cycles, "time_us": round(self.time_us), "disabled": disabled})
+        self._trace("re", disabled=disabled)
 
     def _hook_invalid_mem(self, uc: Uc, access: int, address: int, size: int, value: int, user_data: object | None) -> bool:
         page = address & ~0xFFF
@@ -625,6 +642,7 @@ class LPEmulator:
         _write_u8(self.uc, MAILBOX_ADDR + 40, 0)
         _write_u8(self.uc, MAILBOX_ADDR + 42, 0)
         _write_u32(self.uc, MAILBOX_ADDR + 44, 0)
+        _write_u8(self.uc, MAILBOX_ADDR + 97, 0)
         self.run(50_000)
 
         self.command_sequence += 1
@@ -651,6 +669,7 @@ class LPEmulator:
         _write_u8(self.uc, MAILBOX_ADDR + 40, 0)
         _write_u8(self.uc, MAILBOX_ADDR + 42, 0)
         _write_u32(self.uc, MAILBOX_ADDR + 44, 0)
+        _write_u8(self.uc, MAILBOX_ADDR + 97, 0)
         self.run(50_000)
 
     def lp_reset(self) -> None:
@@ -716,7 +735,13 @@ class LPEmulator:
             "mailbox_tx_abort_count": self.tx_abort_count(),
             "mailbox_collision_count": self.collision_count(),
             "mailbox_max_de_hold_us": self.max_de_hold_us(),
+            "mailbox_last_poll_us": _read_u32(self.uc, MAILBOX_ADDR + 76),
+            "mailbox_crc_error_count": _read_u32(self.uc, MAILBOX_ADDR + 80),
+            "mailbox_rx_error_count": _read_u32(self.uc, MAILBOX_ADDR + 84),
+            "mailbox_stop_trigger_fire_count": struct.unpack("<H", self.uc.mem_read(MAILBOX_ADDR + 98, 2))[0],
             "de_events": self.de_events[:20],
+            "re_events": self.re_events[:20],
+            "gpio_writes": self.gpio_writes[:40],
             "trace_event_count": len(self.trace_events),
             "trace": self.trace_events,
             "reply_latency_min_us": latencies[0] if latencies else None,

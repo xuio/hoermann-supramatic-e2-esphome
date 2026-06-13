@@ -32,6 +32,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Shell command to keep running during the HIL scenario; terminated after the simulator exits",
     )
     parser.add_argument("--post-command", action="append", default=[], help="Shell command to run after the HIL scenario")
+    parser.add_argument("--trace", type=Path, help="Write simulator per-poll JSONL trace")
     parser.add_argument("--output", type=Path, help="Write machine-readable JSON report")
     return parser
 
@@ -116,11 +117,14 @@ def run_session(args: argparse.Namespace) -> dict[str, Any]:
             speed_factor=args.speed_factor,
             missed_poll_threshold=args.missed_poll_threshold,
             expected_buttons=set(args.expect_button),
+            trace_path=args.trace,
         )
         simulation = simulator.run(args.cycles, faults=set(args.fault), command=args.command).as_dict()
         report["simulation"] = simulation
         report["verdict"] = str(simulation["verdict"])
     finally:
+        if "simulator" in locals():
+            simulator.close()
         if transport is not None:
             transport.close()
         for proc, record in loads:

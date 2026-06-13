@@ -22,6 +22,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dut-response-delay-us", type=int, default=4500)
     parser.add_argument("--missed-poll-threshold", type=int, default=DEFAULT_MISSED_POLL_THRESHOLD)
     parser.add_argument("--report", type=Path)
+    parser.add_argument("--trace", type=Path, help="Write per-poll JSONL trace for correlation with LA captures")
     parser.add_argument("--fault", action="append", choices=sorted(FAULTS), default=[])
     parser.add_argument("--command", choices=["open", "close", "light"])
     parser.add_argument("--expect-button", action="append", choices=["open", "close", "stop", "vent", "half", "light"], default=[])
@@ -43,12 +44,15 @@ def run_once(args: argparse.Namespace) -> dict[str, object]:
             speed_factor=args.speed_factor,
             missed_poll_threshold=args.missed_poll_threshold,
             expected_buttons=set(args.expect_button),
+            trace_path=args.trace,
         )
         report = simulator.run(args.cycles, faults=set(args.fault), command=args.command)
         if args.report:
             report.write(args.report)
         return report.as_dict()
     finally:
+        if "simulator" in locals():
+            simulator.close()
         transport.close()
 
 
@@ -63,6 +67,7 @@ def selftest() -> int:
             dut_response_delay_us=4500,
             missed_poll_threshold=DEFAULT_MISSED_POLL_THRESHOLD,
             report=None,
+            trace=None,
             fault=[],
             command=None,
             expect_button=[],
@@ -76,6 +81,7 @@ def selftest() -> int:
             dut_response_delay_us=4500,
             missed_poll_threshold=DEFAULT_MISSED_POLL_THRESHOLD,
             report=None,
+            trace=None,
             fault=["corrupt-crc", "truncated", "duplicate", "jitter", "garbage", "split"],
             command="open",
             expect_button=["open"],

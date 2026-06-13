@@ -22,7 +22,11 @@ HCP2BridgeLightSensor = hcp2bridge_ns.class_("HCP2BridgeLightSensor", binary_sen
 HCP2BridgeObstructionSensor = hcp2bridge_ns.class_(
     "HCP2BridgeObstructionSensor", binary_sensor.BinarySensor, cg.Component
 )
+HCP2BridgeBusOnlineSensor = hcp2bridge_ns.class_(
+    "HCP2BridgeBusOnlineSensor", binary_sensor.BinarySensor, cg.Component
+)
 
+CONF_BUS_ONLINE = "bus_online"
 CONF_CLOSED = "closed"
 CONF_GOT_VALID_BROADCAST = "got_valid_broadcast"
 CONF_LIGHT = "light"
@@ -52,6 +56,11 @@ CONFIG_SCHEMA = cv.Schema(
             HCP2BridgeObstructionSensor,
             device_class=DEVICE_CLASS_PROBLEM,
         ),
+        cv.Optional(CONF_BUS_ONLINE): binary_sensor.binary_sensor_schema(
+            HCP2BridgeBusOnlineSensor,
+            device_class=DEVICE_CLASS_CONNECTIVITY,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
     }
 )
 
@@ -71,3 +80,4 @@ async def to_code(config):
     await _new_sensor(config, CONF_CLOSED, parent)
     await _new_sensor(config, CONF_LIGHT, parent)
     await _new_sensor(config, CONF_OBSTRUCTION, parent)
+    await _new_sensor(config, CONF_BUS_ONLINE, parent)

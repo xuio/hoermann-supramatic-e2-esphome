@@ -39,6 +39,15 @@ config HCP2_BRINGUP_TASK_WDT_INTERVAL_MS
         test task that subscribes itself to the task watchdog after the
         interval and then stops feeding it.
 
+config HCP2_BRINGUP_TASK_WDT_TRIGGER_PANIC
+    bool "Trigger panic on task watchdog timeout"
+    default y
+    depends on HCP2_BRINGUP_TASK_WDT_INTERVAL_MS > 0
+    help
+        Keep enabled for reset-chaos characterization. Disable for the
+        continuity-safe watchdog mode: the HP core logs the timeout instead of
+        resetting, so the LP core keeps owning the HCP2 bus pins.
+
 config HCP2_BRINGUP_RTC_WDT_INTERVAL_MS
     int "RTC watchdog reset test interval in milliseconds"
     default 0
@@ -103,5 +112,32 @@ config HCP2_BRINGUP_FORCE_LP_RELOAD
         Diagnostic only. Stops and reloads the LP core even if the mailbox
         heartbeat is healthy. This is useful for HIL probe images that need a
         freshly loaded LP binary after an HP-only reset.
+
+config HCP2_BRINGUP_LP_WDT_ENABLE
+    bool "Enable diagnostic LP watchdog feed path"
+    default n
+    depends on HCP2_BRINGUP_LP_IN_LOOP
+    help
+        Diagnostic only. The ESP32-C6 LP-WDT block exposes CPU/system reset
+        actions but the reset scope must be proven on real silicon before this
+        can become a production safety mechanism. When disabled, production
+        recovery is HP-supervisor stale-heartbeat reload only. The first HIL
+        probe showed that the targetless RESET_CPU setup does not reset the LP
+        core after feeding stops; keep this off unless testing a new,
+        explicitly documented LP-only reset path.
+
+config HCP2_BRINGUP_LP_WDT_TIMEOUT_TICKS
+    int "Diagnostic LP watchdog timeout in LP-WDT ticks"
+    default 200000
+    depends on HCP2_BRINGUP_LP_WDT_ENABLE
+
+config HCP2_BRINGUP_LP_WDT_STALL_AFTER_MS
+    int "Diagnostic LP watchdog stall-after interval in milliseconds"
+    default 0
+    depends on HCP2_BRINGUP_LP_WDT_ENABLE
+    help
+        Set to 0 for normal feeding. Non-zero values make the LP core stop
+        feeding the LP-WDT after the interval so HIL can identify whether the
+        watchdog resets only the LP core or also disrupts HP/bus ownership.
 
 endmenu

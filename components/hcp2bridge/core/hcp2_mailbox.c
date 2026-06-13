@@ -49,7 +49,9 @@ void hcp2_lp_mailbox_publish_state(volatile hcp2_lp_mailbox_t *mailbox, const hc
 
 void hcp2_lp_mailbox_publish_counters(volatile hcp2_lp_mailbox_t *mailbox, uint32_t now_us, uint32_t polls_seen,
                                       uint32_t polls_answered, uint32_t tx_abort_count,
-                                      uint32_t collision_count, uint32_t max_de_hold_us) {
+                                      uint32_t collision_count, uint32_t max_de_hold_us,
+                                      uint32_t last_poll_us, uint32_t crc_error_count,
+                                      uint32_t rx_error_count) {
   if (mailbox == 0) {
     return;
   }
@@ -62,6 +64,9 @@ void hcp2_lp_mailbox_publish_counters(volatile hcp2_lp_mailbox_t *mailbox, uint3
   if (max_de_hold_us > mailbox->max_de_hold_us) {
     mailbox->max_de_hold_us = max_de_hold_us;
   }
+  mailbox->last_poll_us = last_poll_us;
+  mailbox->crc_error_count = crc_error_count;
+  mailbox->rx_error_count = rx_error_count;
   memory_barrier_();
 }
 
@@ -103,6 +108,7 @@ void hcp2_lp_mailbox_send_command(volatile hcp2_lp_mailbox_t *mailbox, uint32_t 
     return;
   }
 
+  hcp2_lp_mailbox_disarm_stop_trigger(mailbox);
   mailbox->command_epoch = epoch;
   mailbox->command_id = (uint8_t) command_id;
   mailbox->command_argument = argument;
@@ -162,6 +168,62 @@ void hcp2_lp_mailbox_ack_command(volatile hcp2_lp_mailbox_t *mailbox, uint32_t s
   mailbox->command_ack_sequence = sequence;
 }
 
+void hcp2_lp_mailbox_arm_stop_trigger(volatile hcp2_lp_mailbox_t *mailbox, uint32_t epoch,
+                                      uint8_t target_position, uint32_t deadline_us) {
+  if (mailbox == 0 || epoch == 0u) {
+    return;
+  }
+
+  mailbox->stop_trigger_armed = 0u;
+  memory_barrier_();
+  mailbox->stop_trigger_epoch = epoch;
+  mailbox->stop_trigger_target_position = target_position;
+  mailbox->stop_trigger_deadline_us = deadline_us;
+  memory_barrier_();
+  mailbox->stop_trigger_armed = 1u;
+}
+
+void hcp2_lp_mailbox_disarm_stop_trigger(volatile hcp2_lp_mailbox_t *mailbox) {
+  if (mailbox == 0) {
+    return;
+  }
+
+  mailbox->stop_trigger_armed = 0u;
+  memory_barrier_();
+}
+
+uint8_t hcp2_lp_mailbox_read_stop_trigger(const volatile hcp2_lp_mailbox_t *mailbox,
+                                          hcp2_lp_stop_trigger_t *out) {
+  hcp2_lp_stop_trigger_t snapshot;
+
+  if (mailbox == 0 || out == 0) {
+    return 0u;
+  }
+  if (mailbox->stop_trigger_armed == 0u) {
+    return 0u;
+  }
+
+  snapshot.epoch = mailbox->stop_trigger_epoch;
+  snapshot.deadline_us = mailbox->stop_trigger_deadline_us;
+  snapshot.target_position = mailbox->stop_trigger_target_position;
+  memory_barrier_();
+  if (mailbox->stop_trigger_armed == 0u) {
+    return 0u;
+  }
+
+  *out = snapshot;
+  return 1u;
+}
+
+void hcp2_lp_mailbox_mark_stop_trigger_fired(volatile hcp2_lp_mailbox_t *mailbox) {
+  if (mailbox == 0) {
+    return;
+  }
+
+  mailbox->stop_trigger_fire_count++;
+  hcp2_lp_mailbox_disarm_stop_trigger(mailbox);
+}
+
 void hcp2_lp_mailbox_sample_health(const volatile hcp2_lp_mailbox_t *mailbox, hcp2_lp_health_sample_t *out) {
   if (out == 0) {
     return;
@@ -174,6 +236,7 @@ void hcp2_lp_mailbox_sample_health(const volatile hcp2_lp_mailbox_t *mailbox, hc
   out->heartbeat = mailbox->heartbeat;
   out->polls_seen = mailbox->polls_seen;
   out->polls_answered = mailbox->polls_answered;
+  out->last_poll_us = mailbox->last_poll_us;
   out->command_sequence = mailbox->command_sequence;
   out->command_ack_sequence = mailbox->command_ack_sequence;
   out->drive_state = mailbox->state;
@@ -214,12 +277,6 @@ hcp2_lp_reload_decision_t hcp2_lp_mailbox_reload_decision(const volatile hcp2_lp
   }
   if (mailbox->firmware_version != expected_firmware_version) {
     return reload_or_defer_(after);
-  }
-  if (before->polls_seen != 0u && after->polls_seen == before->polls_seen) {
-    return HCP2_LP_RELOAD_REQUIRED;
-  }
-  if (after->polls_seen > before->polls_seen && after->polls_answered == before->polls_answered) {
-    return HCP2_LP_RELOAD_REQUIRED;
   }
   return HCP2_LP_RELOAD_SKIP;
 }

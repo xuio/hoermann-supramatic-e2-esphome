@@ -64,8 +64,12 @@ Wokwi full-firmware harness, dual-ISS mailbox harness, and ESPHome component ske
 in-tree. The path is still simulation-first and bench-only: Wokwi is the primary
 no-hardware full-firmware gate on the fixed ESP32-C6 native LP-UART backend, the local
 ISS covers deterministic mailbox/FIFO/MMIO checks, and the first ESP32-C6 plus USB-RS485
-HIL bench now passes polling, fault, command, and CPU-only reset scenarios. It still must
-not be connected to a real motor.
+HIL bench now passes polling, fault, command, CPU-only reset, OTA, API restart, and
+Wi-Fi disruption scenarios. Intermediate position moves now arm an LP-core stop trigger
+so the LP can press stop if the HP side dies mid-move. The remaining known unsafe case
+is USB serial flashing / download-mode reset while attached to the bus; real-motor
+testing must use OTA-only operation or physically isolate the transceiver during serial
+flashing.
 
 ## Safety First
 

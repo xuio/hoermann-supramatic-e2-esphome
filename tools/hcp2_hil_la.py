@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 import argparse
+from bisect import bisect_right
 import csv
+from itertools import chain
 import json
+import re
 import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from tools.supramatic_sim import protocol
 
 
 DEFAULT_CHANNELS = {
@@ -18,6 +23,8 @@ DEFAULT_CHANNELS = {
     "rx": "D3",
 }
 DEFAULT_MAX_DE_HIGH_US = 9000.0
+DEFAULT_HCP2_BAUD = 57600
+MIN_UART_SAMPLES_PER_BIT = 8.0
 
 
 @dataclass(frozen=True)
@@ -87,15 +94,103 @@ def parse_time_s(value: object) -> float:
     return float(text)
 
 
+def parse_sample_rate_hz(text: str) -> float:
+    match = re.fullmatch(r"\s*([0-9]+(?:\.[0-9]+)?)\s*([kmg]?hz)\s*", text, re.IGNORECASE)
+    if not match:
+        raise ValueError(f"invalid sigrok samplerate {text!r}")
+    value = float(match.group(1))
+    unit = match.group(2).lower()
+    multiplier = {
+        "hz": 1.0,
+        "khz": 1_000.0,
+        "mhz": 1_000_000.0,
+        "ghz": 1_000_000_000.0,
+    }[unit]
+    return value * multiplier
+
+
+def sigrok_metadata(comments: list[str]) -> tuple[list[str], float] | None:
+    raw_channels: list[str] | None = None
+    sample_rate_hz: float | None = None
+    for line in comments:
+        text = line.strip()
+        normalized = text.lower()
+        if normalized.startswith("; channels"):
+            _, payload = text.split(":", 1)
+            raw_channels = [item.strip() for item in payload.split(",") if item.strip()]
+        elif normalized.startswith("; samplerate"):
+            _, payload = text.split(":", 1)
+            sample_rate_hz = parse_sample_rate_hz(payload)
+    if raw_channels is None and sample_rate_hz is None:
+        return None
+    if not raw_channels:
+        raise ValueError("sigrok CSV is missing channel metadata")
+    if sample_rate_hz is None or sample_rate_hz <= 0:
+        raise ValueError("sigrok CSV is missing samplerate metadata")
+    return raw_channels, sample_rate_hz
+
+
+def load_sigrok_csv_samples(
+    first_line: str,
+    handle: Any,
+    comments: list[str],
+    channels: dict[str, str],
+) -> list[Sample]:
+    metadata = sigrok_metadata(comments)
+    if metadata is None:
+        raise ValueError("CSV has no time column and no sigrok samplerate metadata")
+    raw_channels, sample_rate_hz = metadata
+    channel_index = {normalize_channel_name(name): index for index, name in enumerate(raw_channels)}
+    source_index_by_logic = {
+        logical: channel_index[normalize_channel_name(source)]
+        for logical, source in channels.items()
+        if normalize_channel_name(source) in channel_index
+    }
+    if not source_index_by_logic:
+        raise ValueError("sigrok CSV channel metadata does not match requested channel map")
+
+    reader = csv.reader(chain([first_line], handle))
+    samples: list[Sample] = []
+    sample_index = 0
+    for row in reader:
+        if not row:
+            continue
+        if len(row) == 1 and row[0].strip().upper() == "FRAME-END":
+            continue
+        if all(cell.strip().lower() == "logic" for cell in row):
+            continue
+        values: dict[str, int] = {}
+        for logical, source_index in source_index_by_logic.items():
+            if source_index >= len(row):
+                raise ValueError("sigrok CSV row has fewer columns than channel metadata")
+            values[logical] = parse_logic_value(row[source_index])
+        samples.append(Sample(sample_index / sample_rate_hz, values))
+        sample_index += 1
+    return samples
+
+
 def load_samples_csv(path: Path, channels: dict[str, str]) -> list[Sample]:
     with path.open(newline="", encoding="utf-8") as handle:
-        reader = csv.DictReader(handle)
+        comments: list[str] = []
+        first_line = ""
+        for line in handle:
+            if line.startswith(";"):
+                comments.append(line.strip())
+                continue
+            if not line.strip():
+                continue
+            first_line = line
+            break
+        if not first_line:
+            raise ValueError(f"{path} has no CSV header")
+
+        reader = csv.DictReader(chain([first_line], handle))
         if reader.fieldnames is None:
             raise ValueError(f"{path} has no CSV header")
         normalized_fields = {normalize_channel_name(field): field for field in reader.fieldnames}
         time_field = normalized_fields.get("time_s")
         if time_field is None:
-            raise ValueError(f"{path} must contain a time_s/time column")
+            return load_sigrok_csv_samples(first_line, handle, comments, channels)
 
         source_by_logic = {}
         for logical, source in channels.items():
@@ -152,6 +247,53 @@ def load_samples(path: Path, channels: dict[str, str]) -> list[Sample]:
     return samples
 
 
+def estimate_uniform_sample_rate_hz(samples: list[Sample], *, max_deltas: int = 4096) -> float | None:
+    deltas: list[float] = []
+    previous = samples[0].time_s
+    for sample in samples[1:]:
+        delta = sample.time_s - previous
+        previous = sample.time_s
+        if delta <= 0.0:
+            continue
+        deltas.append(delta)
+        if len(deltas) >= max_deltas:
+            break
+    if not deltas:
+        return None
+
+    nominal = min(deltas)
+    tolerance = max(nominal * 0.05, 1e-12)
+    uniform = sum(1 for delta in deltas if abs(delta - nominal) <= tolerance)
+    if uniform / len(deltas) < 0.80:
+        return None
+    return 1.0 / nominal
+
+
+def uart_sampling_report(samples: list[Sample], baud: int) -> dict[str, Any]:
+    sample_rate_hz = estimate_uniform_sample_rate_hz(samples)
+    samples_per_bit = sample_rate_hz / float(baud) if sample_rate_hz is not None else None
+    failures: list[str] = []
+    if samples_per_bit is not None and samples_per_bit < MIN_UART_SAMPLES_PER_BIT:
+        failures.append(
+            f"uniform capture sample rate is too low for UART decode: {samples_per_bit:.2f} "
+            f"samples/bit at {baud} baud, need at least {MIN_UART_SAMPLES_PER_BIT:.1f}"
+        )
+    return {
+        "sample_rate_hz": sample_rate_hz,
+        "samples_per_bit": samples_per_bit,
+        "min_samples_per_bit": MIN_UART_SAMPLES_PER_BIT,
+        "failures": failures,
+    }
+
+
+def apply_uart_sampling_check(report: dict[str, Any], samples: list[Sample], baud: int) -> None:
+    sampling = uart_sampling_report(samples, baud)
+    report["sampling"] = sampling
+    if sampling["failures"]:
+        report["failures"] = sampling["failures"] + list(report["failures"])
+        report["verdict"] = "fail"
+
+
 def require_channel(samples: list[Sample], channel: str) -> None:
     if not any(channel in sample.values for sample in samples):
         raise ValueError(f"capture does not contain channel {channel!r}")
@@ -204,16 +346,222 @@ def contains_time(window: Window, time_s: float) -> bool:
     return window.start_s <= time_s <= window.end_s
 
 
+def high_sample_counts(samples: list[Sample], channel: str, allowed_windows: list[Window]) -> tuple[int, int]:
+    starts = [window.start_s for window in allowed_windows]
+    high_count = 0
+    outside_count = 0
+    for sample in samples:
+        if sample.values.get(channel) != 1:
+            continue
+        high_count += 1
+        index = bisect_right(starts, sample.time_s) - 1
+        if index < 0 or sample.time_s > allowed_windows[index].end_s:
+            outside_count += 1
+    return high_count, outside_count
+
+
+def crop_samples(samples: list[Sample], ignore_before_us: float) -> list[Sample]:
+    if ignore_before_us < 0:
+        raise ValueError("ignore_before_us must be non-negative")
+    if not ignore_before_us:
+        return samples
+    start_time_s = samples[0].time_s + (ignore_before_us / 1_000_000.0)
+    cropped = [sample for sample in samples if sample.time_s >= start_time_s]
+    if not cropped:
+        raise ValueError("ignore_before_us removed every sample")
+    return cropped
+
+
+def level_at_time(samples: list[Sample], times: list[float], channel: str, time_s: float) -> int | None:
+    index = bisect_right(times, time_s) - 1
+    while index >= 0:
+        value = value_at(samples[index], channel)
+        if value is not None:
+            return value
+        index -= 1
+    return None
+
+
+def transition_edges(samples: list[Sample], channel: str) -> list[tuple[float, int, int]]:
+    require_channel(samples, channel)
+    edges: list[tuple[float, int, int]] = []
+    last = value_at(samples[0], channel)
+    for sample in samples[1:]:
+        current = value_at(sample, channel)
+        if current is None:
+            continue
+        if last is not None and current != last:
+            edges.append((sample.time_s, last, current))
+        last = current
+    return edges
+
+
+def decode_uart_windows(
+    samples: list[Sample],
+    *,
+    signal: str = "tx",
+    gate: str = "de",
+    baud: int = DEFAULT_HCP2_BAUD,
+    ignore_before_us: float = 0.0,
+) -> list[dict[str, Any]]:
+    samples = crop_samples(samples, ignore_before_us)
+    times = [sample.time_s for sample in samples]
+    bit_s = 1.0 / float(baud)
+    frame_bits = 1 + 8 + 1 + 1
+    windows = high_windows(samples, gate)
+    tx_edges = transition_edges(samples, signal)
+    decoded_windows: list[dict[str, Any]] = []
+
+    for window in windows:
+        bytes_out: list[int] = []
+        byte_reports: list[dict[str, Any]] = []
+        cursor_s = window.start_s
+
+        while True:
+            start_edge_s: float | None = None
+            for edge_s, before, after in tx_edges:
+                if edge_s < cursor_s:
+                    continue
+                if edge_s > window.end_s:
+                    break
+                if before == 1 and after == 0:
+                    start_edge_s = edge_s
+                    break
+            if start_edge_s is None:
+                break
+
+            errors: list[str] = []
+            if level_at_time(samples, times, signal, start_edge_s + 0.5 * bit_s) != 0:
+                errors.append("start")
+
+            value = 0
+            ones = 0
+            for bit in range(8):
+                bit_value = level_at_time(samples, times, signal, start_edge_s + (1.5 + bit) * bit_s)
+                if bit_value not in {0, 1}:
+                    errors.append(f"data{bit}")
+                    bit_value = 0
+                if bit_value:
+                    value |= 1 << bit
+                    ones += 1
+
+            parity_value = level_at_time(samples, times, signal, start_edge_s + 9.5 * bit_s)
+            if parity_value not in {0, 1}:
+                errors.append("parity-missing")
+                parity_value = 0
+            elif (ones + parity_value) % 2 != 0:
+                errors.append("parity")
+
+            stop_value = level_at_time(samples, times, signal, start_edge_s + 10.5 * bit_s)
+            if stop_value != 1:
+                errors.append("stop")
+
+            bytes_out.append(value)
+            byte_reports.append(
+                {
+                    "start_us": (start_edge_s - samples[0].time_s) * 1_000_000.0,
+                    "byte": value,
+                    "errors": errors,
+                }
+            )
+            cursor_s = start_edge_s + (frame_bits - 0.25) * bit_s
+
+        frame = bytes(bytes_out)
+        kind = protocol.decode_response_kind(frame) if frame else "none"
+        decoded_windows.append(
+            {
+                "start_us": (window.start_s - samples[0].time_s) * 1_000_000.0,
+                "end_us": (window.end_s - samples[0].time_s) * 1_000_000.0,
+                "duration_us": window.duration_us,
+                "byte_count": len(frame),
+                "frame": frame.hex(),
+                "crc_ok": protocol.crc_ok(frame) if frame else False,
+                "kind": kind,
+                "counter": protocol.response_counter(frame),
+                "bytes": byte_reports,
+                "errors": [error for byte in byte_reports for error in byte["errors"]],
+            }
+        )
+    return decoded_windows
+
+
+def status_counter_gaps(counters: list[int]) -> list[dict[str, Any]]:
+    gaps: list[dict[str, Any]] = []
+    for index, (previous, current) in enumerate(zip(counters, counters[1:]), start=1):
+        expected = (previous + 1) & 0xFF
+        if current == expected:
+            continue
+        missing: list[int] = []
+        value = expected
+        while value != current and len(missing) < 256:
+            missing.append(value)
+            value = (value + 1) & 0xFF
+        gaps.append(
+            {
+                "index": index,
+                "previous": previous,
+                "current": current,
+                "expected": expected,
+                "missing": missing,
+            }
+        )
+    return gaps
+
+
+def summarize_decoded_uart(
+    windows: list[dict[str, Any]],
+    *,
+    ignore_before_us: float,
+    baud: int,
+    allow_status_gaps: bool = False,
+    min_status_frames: int = 0,
+) -> dict[str, Any]:
+    decoded = [window for window in windows if window["byte_count"]]
+    crc_ok = [window for window in decoded if window["crc_ok"]]
+    status = [window for window in crc_ok if window["kind"] == "status"]
+    counters = [window["counter"] for window in status if window["counter"] is not None]
+    gaps = status_counter_gaps(counters)
+    byte_error_windows = [window for window in decoded if window["errors"]]
+    failures: list[str] = []
+    if len(crc_ok) != len(decoded):
+        failures.append(f"{len(decoded) - len(crc_ok)} decoded UART frame(s) failed Modbus CRC")
+    if byte_error_windows:
+        failures.append(f"{len(byte_error_windows)} decoded UART frame(s) had 8E1 parity/framing errors")
+    if gaps and not allow_status_gaps:
+        failures.append(f"{len(gaps)} status counter gap(s) detected")
+    if len(status) < min_status_frames:
+        failures.append(f"only {len(status)} status frame(s) decoded, expected at least {min_status_frames}")
+    return {
+        "verdict": "fail" if failures else "ok",
+        "failures": failures,
+        "ignored_before_us": ignore_before_us,
+        "baud": baud,
+        "windows": len(windows),
+        "decoded_windows": len(decoded),
+        "crc_ok_frames": len(crc_ok),
+        "status_frames": len(status),
+        "status_counters": counters,
+        "status_counter_gaps": gaps,
+        "status_counter_gap_count": len(gaps),
+        "windows_detail": windows,
+    }
+
+
 def analyze_samples(
     samples: list[Sample],
     *,
     max_de_high_us: float = DEFAULT_MAX_DE_HIGH_US,
+    ignore_before_us: float = 0.0,
     require_initial_de_low: bool = True,
     require_initial_tx_high: bool = True,
     require_re_low: bool = True,
+    allow_re_high_during_de: bool = False,
+    require_tx_only_during_de: bool = True,
     require_tx_during_de: bool = True,
 ) -> dict[str, Any]:
     failures: list[str] = []
+    samples = crop_samples(samples, ignore_before_us)
+
     duration_us = (samples[-1].time_s - samples[0].time_s) * 1_000_000.0
     de_windows = high_windows(samples, "de")
     tx_transitions = transition_times(samples, "tx") if any("tx" in sample.values for sample in samples) else []
@@ -233,7 +581,7 @@ def analyze_samples(
         failures.append(f"DE high window {window.duration_us:.1f} us exceeds {max_de_high_us:.1f} us")
 
     tx_outside_de = [time_s for time_s in tx_transitions if not any(contains_time(window, time_s) for window in de_windows)]
-    if tx_outside_de:
+    if require_tx_only_during_de and tx_outside_de:
         failures.append(f"{len(tx_outside_de)} TX transitions occurred while DE was low")
 
     de_without_tx = []
@@ -245,9 +593,12 @@ def analyze_samples(
             failures.append(f"{len(de_without_tx)} DE high windows had no TX activity")
 
     re_high_samples = 0
+    re_high_outside_de_samples = 0
     if require_re_low and any("re" in sample.values for sample in samples):
-        re_high_samples = sum(1 for sample in samples if sample.values.get("re") == 1)
-        if re_high_samples:
+        re_high_samples, re_high_outside_de_samples = high_sample_counts(samples, "re", de_windows)
+        if allow_re_high_during_de and re_high_outside_de_samples:
+            failures.append(f"/RE was high outside DE in {re_high_outside_de_samples} samples")
+        elif not allow_re_high_during_de and re_high_samples:
             failures.append(f"/RE was high in {re_high_samples} samples")
 
     max_de_high = max((window.duration_us for window in de_windows), default=0.0)
@@ -256,6 +607,8 @@ def analyze_samples(
         "failures": failures,
         "samples": len(samples),
         "duration_us": duration_us,
+        "ignored_before_us": ignore_before_us,
+        "analysis_start_time_s": samples[0].time_s,
         "initial": {
             "de": initial_de,
             "tx": initial_tx,
@@ -268,6 +621,8 @@ def analyze_samples(
         "tx_transitions_outside_de": len(tx_outside_de),
         "de_windows_without_tx_activity": len(de_without_tx),
         "re_high_samples": re_high_samples,
+        "re_high_outside_de_samples": re_high_outside_de_samples,
+        "allow_re_high_during_de": allow_re_high_during_de,
         "windows": [
             {
                 "start_us": (window.start_s - samples[0].time_s) * 1_000_000.0,
@@ -278,6 +633,54 @@ def analyze_samples(
         ],
     }
     return report
+
+
+def verify_samples(
+    samples: list[Sample],
+    *,
+    max_de_high_us: float = DEFAULT_MAX_DE_HIGH_US,
+    ignore_before_us: float = 0.0,
+    require_initial_de_low: bool = True,
+    require_initial_tx_high: bool = True,
+    require_re_low: bool = True,
+    allow_re_high_during_de: bool = False,
+    require_tx_only_during_de: bool = True,
+    require_tx_during_de: bool = True,
+    signal: str = "tx",
+    gate: str = "de",
+    baud: int = DEFAULT_HCP2_BAUD,
+    allow_status_gaps: bool = False,
+    min_status_frames: int = 0,
+) -> dict[str, Any]:
+    cropped_samples = crop_samples(samples, ignore_before_us)
+    electrical = analyze_samples(
+        samples,
+        max_de_high_us=max_de_high_us,
+        ignore_before_us=ignore_before_us,
+        require_initial_de_low=require_initial_de_low,
+        require_initial_tx_high=require_initial_tx_high,
+        require_re_low=require_re_low,
+        allow_re_high_during_de=allow_re_high_during_de,
+        require_tx_only_during_de=require_tx_only_during_de,
+        require_tx_during_de=require_tx_during_de,
+    )
+    uart = summarize_decoded_uart(
+        decode_uart_windows(samples, signal=signal, gate=gate, baud=baud, ignore_before_us=ignore_before_us),
+        ignore_before_us=ignore_before_us,
+        baud=baud,
+        allow_status_gaps=allow_status_gaps,
+        min_status_frames=min_status_frames,
+    )
+    apply_uart_sampling_check(uart, cropped_samples, baud)
+    failures: list[str] = []
+    failures.extend(f"electrical: {failure}" for failure in electrical["failures"])
+    failures.extend(f"uart: {failure}" for failure in uart["failures"])
+    return {
+        "verdict": "fail" if failures else "ok",
+        "failures": failures,
+        "electrical": electrical,
+        "uart": uart,
+    }
 
 
 def build_sigrok_capture_command(args: argparse.Namespace) -> list[str]:
@@ -319,9 +722,12 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         report = analyze_samples(
             samples,
             max_de_high_us=args.max_de_high_us,
+            ignore_before_us=args.ignore_before_us,
             require_initial_de_low=not args.allow_initial_de_high,
             require_initial_tx_high=not args.allow_initial_tx_low,
             require_re_low=not args.allow_re_high,
+            allow_re_high_during_de=args.allow_re_high_during_de,
+            require_tx_only_during_de=not args.allow_tx_outside_de,
             require_tx_during_de=not args.allow_de_without_tx,
         )
     except Exception as exc:
@@ -334,6 +740,84 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     print(
         "verdict={verdict} samples={samples} de_windows={de_windows} "
         "max_de_high_us={max_de_high_us:.1f} tx_outside_de={tx_transitions_outside_de}".format(**report)
+    )
+    for failure in report["failures"]:
+        print(f"failure: {failure}", file=sys.stderr)
+    return 0 if report["verdict"] == "ok" else 1
+
+
+def cmd_decode_uart(args: argparse.Namespace) -> int:
+    channels = parse_channel_map(args.channels)
+    try:
+        samples = load_samples(args.input, channels)
+        cropped_samples = crop_samples(samples, args.ignore_before_us)
+        windows = decode_uart_windows(
+            samples,
+            signal=args.signal,
+            gate=args.gate,
+            baud=args.baud,
+            ignore_before_us=args.ignore_before_us,
+        )
+        report = summarize_decoded_uart(
+            windows,
+            ignore_before_us=args.ignore_before_us,
+            baud=args.baud,
+            allow_status_gaps=args.allow_status_gaps,
+            min_status_frames=args.min_status_frames,
+        )
+        apply_uart_sampling_check(report, cropped_samples, args.baud)
+    except Exception as exc:
+        print(f"garage-hcp2-hil-la decode-uart failed: {exc}", file=sys.stderr)
+        return 1
+
+    text = json.dumps(report, indent=2, sort_keys=True) + "\n"
+    if args.output:
+        args.output.write_text(text, encoding="utf-8")
+    print(
+        "verdict={verdict} windows={windows} decoded={decoded_windows} "
+        "crc_ok={crc_ok_frames} status={status_frames} gaps={status_counter_gap_count}".format(**report)
+    )
+    for failure in report["failures"]:
+        print(f"failure: {failure}", file=sys.stderr)
+    return 0 if report["verdict"] == "ok" else 1
+
+
+def cmd_verify(args: argparse.Namespace) -> int:
+    channels = parse_channel_map(args.channels)
+    try:
+        samples = load_samples(args.input, channels)
+        report = verify_samples(
+            samples,
+            max_de_high_us=args.max_de_high_us,
+            ignore_before_us=args.ignore_before_us,
+            require_initial_de_low=not args.allow_initial_de_high,
+            require_initial_tx_high=not args.allow_initial_tx_low,
+            require_re_low=not args.allow_re_high,
+            allow_re_high_during_de=args.allow_re_high_during_de,
+            require_tx_only_during_de=not args.allow_tx_outside_de,
+            require_tx_during_de=not args.allow_de_without_tx,
+            signal=args.signal,
+            gate=args.gate,
+            baud=args.baud,
+            allow_status_gaps=args.allow_status_gaps,
+            min_status_frames=args.min_status_frames,
+        )
+    except Exception as exc:
+        print(f"garage-hcp2-hil-la verify failed: {exc}", file=sys.stderr)
+        return 1
+
+    text = json.dumps(report, indent=2, sort_keys=True) + "\n"
+    if args.output:
+        args.output.write_text(text, encoding="utf-8")
+    print(
+        "verdict={verdict} electrical={electrical_verdict} uart={uart_verdict} "
+        "status={status_frames} gaps={status_counter_gap_count}".format(
+            verdict=report["verdict"],
+            electrical_verdict=report["electrical"]["verdict"],
+            uart_verdict=report["uart"]["verdict"],
+            status_frames=report["uart"]["status_frames"],
+            status_counter_gap_count=report["uart"]["status_counter_gap_count"],
+        )
     )
     for failure in report["failures"]:
         print(f"failure: {failure}", file=sys.stderr)
@@ -359,12 +843,56 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     analyze.add_argument("--input", type=Path, required=True)
     analyze.add_argument("--channels", help="Comma-separated logical mapping, e.g. de=D0,re=D1,tx=D2,rx=D3")
     analyze.add_argument("--max-de-high-us", type=float, default=DEFAULT_MAX_DE_HIGH_US)
+    analyze.add_argument(
+        "--ignore-before-us",
+        type=float,
+        default=0.0,
+        help="Ignore samples before this offset from capture start; default keeps full reset-safety analysis",
+    )
     analyze.add_argument("--allow-initial-de-high", action="store_true")
     analyze.add_argument("--allow-initial-tx-low", action="store_true")
     analyze.add_argument("--allow-re-high", action="store_true")
+    analyze.add_argument("--allow-re-high-during-de", action="store_true")
+    analyze.add_argument("--allow-tx-outside-de", action="store_true")
     analyze.add_argument("--allow-de-without-tx", action="store_true")
     analyze.add_argument("--output", type=Path)
     analyze.set_defaults(func=cmd_analyze)
+
+    decode = subparsers.add_parser("decode-uart", help="Decode HCP2 UART bytes from TX edges gated by DE")
+    decode.add_argument("--input", type=Path, required=True)
+    decode.add_argument("--channels", help="Comma-separated logical mapping, e.g. de=D0,re=D1,tx=D2,rx=D3")
+    decode.add_argument("--baud", type=int, default=DEFAULT_HCP2_BAUD)
+    decode.add_argument("--signal", default="tx")
+    decode.add_argument("--gate", default="de")
+    decode.add_argument("--ignore-before-us", type=float, default=0.0)
+    decode.add_argument("--allow-status-gaps", action="store_true")
+    decode.add_argument("--min-status-frames", type=int, default=0)
+    decode.add_argument("--output", type=Path)
+    decode.set_defaults(func=cmd_decode_uart)
+
+    verify = subparsers.add_parser("verify", help="Run electrical and UART continuity checks as one HIL verdict")
+    verify.add_argument("--input", type=Path, required=True)
+    verify.add_argument("--channels", help="Comma-separated logical mapping, e.g. de=D0,re=D1,tx=D2,rx=D3")
+    verify.add_argument("--max-de-high-us", type=float, default=DEFAULT_MAX_DE_HIGH_US)
+    verify.add_argument(
+        "--ignore-before-us",
+        type=float,
+        default=0.0,
+        help="Ignore samples before this offset from capture start; default keeps full reset-safety analysis",
+    )
+    verify.add_argument("--allow-initial-de-high", action="store_true")
+    verify.add_argument("--allow-initial-tx-low", action="store_true")
+    verify.add_argument("--allow-re-high", action="store_true")
+    verify.add_argument("--allow-re-high-during-de", action="store_true")
+    verify.add_argument("--allow-tx-outside-de", action="store_true")
+    verify.add_argument("--allow-de-without-tx", action="store_true")
+    verify.add_argument("--baud", type=int, default=DEFAULT_HCP2_BAUD)
+    verify.add_argument("--signal", default="tx")
+    verify.add_argument("--gate", default="de")
+    verify.add_argument("--allow-status-gaps", action="store_true")
+    verify.add_argument("--min-status-frames", type=int, default=0)
+    verify.add_argument("--output", type=Path)
+    verify.set_defaults(func=cmd_verify)
 
     return parser.parse_args(argv)
 

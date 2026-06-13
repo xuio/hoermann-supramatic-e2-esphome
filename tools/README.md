@@ -14,11 +14,35 @@ This directory contains the Python helpers used to build, test, capture, and cal
 | `uv run garage-analyze-hcp-timing` | [analyze_hcp_timing.py](analyze_hcp_timing.py) | Align persistent HCP logs with previously extracted motion curves |
 | `uv run garage-init-secrets` | [init_secrets.py](init_secrets.py) | Generate local ESPHome API, OTA, and proxy secrets |
 | `uv run garage-supramatic-sim` | [supramatic_sim](supramatic_sim/) | Virtual SupraMatic 4 HCP2 master for closed-loop host and HIL tests |
-| `uv run garage-hcp2-hil-la` | [hcp2_hil_la.py](hcp2_hil_la.py) | Capture and analyze HCP2 HIL logic-analyzer traces for DE/TX reset-safety checks |
+| `uv run garage-hcp2-hil-la` | [hcp2_hil_la.py](hcp2_hil_la.py) | Capture, decode, and verify HCP2 HIL logic-analyzer traces for DE/TX reset-safety and zero-gap UART checks |
 | `uv run garage-hcp2-hil-load` | [hcp2_hil_load.py](hcp2_hil_load.py) | Run HCP2 HIL simulator scenarios while host/Wi-Fi/API load commands are active |
+| `uv run garage-hcp2-closeout` | [hcp2_closeout.py](hcp2_closeout.py) | Run scripted HCP2 HIL closeout plans with simulator, load, command, and optional LA verdicts |
 | `uv run garage-test-wizard` | [garage_test_wizard.py](garage_test_wizard.py) | Guided manual Home Assistant position tests using measured clear-opening height |
 | `uv run garage-generate-aruco-markers` | [generate_aruco_marker_pdfs.py](generate_aruco_marker_pdfs.py) | Generate printable ArUco marker PDFs |
 | `uv run garage-hcp-proxy-client` | [hcp_proxy_client.py](hcp_proxy_client.py) | Laptop-side RS-485 proxy experiments |
+
+## HCP2 HIL Closeout
+
+`garage-hcp2-closeout` has built-in presets for the repeatable C6/RS-485 bench checks:
+
+```bash
+uv run garage-hcp2-closeout --serial /dev/serial/by-id/usb-1a86_USB_Single_Serial_5ACC032762-if00 \
+  --preset basic --output-dir captures/hcp2/closeout/basic --output captures/hcp2/closeout/basic/report.json
+
+uv run garage-hcp2-closeout --serial /dev/serial/by-id/usb-1a86_USB_Single_Serial_5ACC032762-if00 \
+  --preset la --output-dir captures/hcp2/closeout/la --output captures/hcp2/closeout/la/report.json
+
+uv run garage-hcp2-closeout --serial /dev/serial/by-id/usb-1a86_USB_Single_Serial_5ACC032762-if00 \
+  --preset ota-restart --esp-host 192.168.10.156 --esp-device 192.168.10.156 \
+  --output-dir captures/hcp2/closeout/ota-restart --output captures/hcp2/closeout/ota-restart/report.json
+```
+
+The `la` preset captures the current bench mapping (`TX=D1`, `DE=D3`, `/RE=D5`, `RX=D7`)
+and verifies DE hold time, TX gating, `/RE` gating, UART decode, and status-counter
+continuity. The `ota-restart` preset runs simulator traffic while an ESPHome OTA upload
+and native-API restart button press execute, then records both command tails and bus
+verdicts in one JSON report. API keys are read from `configs/secrets.yaml` by secret
+name, not embedded into the generated command line.
 
 ## Visual Calibration Workflow
 

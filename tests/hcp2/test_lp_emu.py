@@ -20,6 +20,7 @@ from tools.hcp2_lp_emu.dual_iss import (
     RELOAD_REQUIRED,
     RELOAD_SKIP,
 )
+from tools.supramatic_sim import protocol
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -50,6 +51,14 @@ OFF_TX_ABORT_COUNT = 60
 OFF_COLLISION_COUNT = 64
 OFF_MAX_DE_HOLD_US = 68
 OFF_LP_RESET_COUNT = 72
+OFF_LAST_POLL_US = 76
+OFF_CRC_ERROR_COUNT = 80
+OFF_RX_ERROR_COUNT = 84
+OFF_STOP_TRIGGER_EPOCH = 88
+OFF_STOP_TRIGGER_DEADLINE_US = 92
+OFF_STOP_TRIGGER_TARGET_POSITION = 96
+OFF_STOP_TRIGGER_ARMED = 97
+OFF_STOP_TRIGGER_FIRE_COUNT = 98
 
 COMMAND_OPEN = 1
 COMMAND_RESULT_EXECUTED = 1
@@ -85,6 +94,10 @@ def write_u16(emu: LPEmulator, offset: int, value: int) -> None:
 
 def write_u8(emu: LPEmulator, offset: int, value: int) -> None:
     emu.uc.mem_write(MAILBOX_ADDR + offset, bytes([value & 0xFF]))
+
+
+def read_u16(emu: LPEmulator, offset: int) -> int:
+    return struct.unpack("<H", emu.uc.mem_read(MAILBOX_ADDR + offset, 2))[0]
 
 
 def inject_command(emu: LPEmulator, *, epoch: int, sequence: int, command_id: int) -> None:
@@ -225,16 +238,57 @@ def test_lp_emulator_tx_deadman_releases_de_when_fifo_wedged() -> None:
     assert emu.de_events[-1]["enabled"] is False
 
 
-def test_lp_emulator_echo_mismatch_aborts_tx() -> None:
+def test_lp_emulator_ignores_tx_echo_when_receiver_disabled() -> None:
     emu = require_emulator()
     emu.boot()
     emu.echo_mismatch_at = 3
     emu.write_uart(bytes.fromhex("02179CB900089C410002043E030000EBCC"))
-    emu.run_until(lambda: read_u32(emu, OFF_COLLISION_COUNT) > 0, instruction_budget=4_000_000)
+    emu.run_until(lambda: read_u32(emu, OFF_POLLS_ANSWERED) > 0, instruction_budget=4_000_000)
 
-    assert read_u32(emu, OFF_COLLISION_COUNT) > 0
-    assert read_u32(emu, OFF_TX_ABORT_COUNT) > 0
+    assert read_u32(emu, OFF_POLLS_ANSWERED) == 1
+    assert read_u32(emu, OFF_TX_ABORT_COUNT) == 0
     assert emu.de_events[-1]["enabled"] is False
+
+
+def test_lp_emulator_stop_trigger_fires_once_on_crossing_broadcast() -> None:
+    emu = require_emulator()
+    emu.boot()
+    emu.hp_reboot()
+    now_us = read_u32(emu, OFF_LP_TIME_US)
+    write_u32(emu, OFF_STOP_TRIGGER_EPOCH, emu.epoch)
+    write_u32(emu, OFF_STOP_TRIGGER_DEADLINE_US, now_us + 1_000_000)
+    write_u8(emu, OFF_STOP_TRIGGER_TARGET_POSITION, 100)
+    write_u8(emu, OFF_STOP_TRIGGER_ARMED, 1)
+
+    emu.write_uart(protocol.broadcast_status(protocol.BroadcastState(target=200, current=104, state=0x01)))
+    emu.run(200_000)
+    emu.write_uart(protocol.status_poll(0x33))
+    assert emu.run_until(lambda: read_u32(emu, OFF_POLLS_ANSWERED) >= 1, instruction_budget=4_000_000)
+    response = emu.read_uart_available(0.05)
+
+    assert protocol.crc_ok(response)
+    assert protocol.decode_response_kind(response) == "status"
+    assert protocol.response_counter(response) == 0x33
+    assert protocol.decode_status_button(response) == "stop"
+    assert emu.uc.mem_read(MAILBOX_ADDR + OFF_STOP_TRIGGER_ARMED, 1) == b"\x00"
+    assert read_u16(emu, OFF_STOP_TRIGGER_FIRE_COUNT) == 1
+
+    emu.write_uart(protocol.status_poll(0x34))
+    assert emu.run_until(lambda: read_u32(emu, OFF_POLLS_ANSWERED) >= 2, instruction_budget=4_000_000)
+    response = emu.read_uart_available(0.05)
+    assert protocol.decode_status_button(response) == "stop"
+
+    emu.run(2_500_000)
+    emu.write_uart(protocol.status_poll(0x35))
+    assert emu.run_until(lambda: read_u32(emu, OFF_POLLS_ANSWERED) >= 3, instruction_budget=4_000_000)
+    response = emu.read_uart_available(0.05)
+    assert protocol.decode_status_button(response) == "stop"
+
+    emu.write_uart(protocol.status_poll(0x36))
+    assert emu.run_until(lambda: read_u32(emu, OFF_POLLS_ANSWERED) >= 4, instruction_budget=4_000_000)
+    response = emu.read_uart_available(0.05)
+    assert protocol.decode_status_button(response) is None
+    assert read_u16(emu, OFF_STOP_TRIGGER_FIRE_COUNT) == 1
 
 
 def test_dual_iss_shared_mailbox_health_and_torn_state_reads() -> None:
@@ -278,6 +332,7 @@ def test_dual_iss_hp_reboot_clears_pending_command_before_new_epoch(slice_instru
     assert read_u32(dual.lp, OFF_COMMAND_ACK_SEQUENCE) == 0
     assert dual.lp.uc.mem_read(MAILBOX_ADDR + OFF_COMMAND_ID, 1) == b"\x00"
     assert dual.lp.uc.mem_read(MAILBOX_ADDR + OFF_COMMAND_ACK_RESULT, 1) == b"\x00"
+    assert dual.lp.uc.mem_read(MAILBOX_ADDR + OFF_STOP_TRIGGER_ARMED, 1) == b"\x00"
 
     dual.lp.run(250_000)
     assert read_u32(dual.lp, OFF_COMMAND_ACK_SEQUENCE) == 0

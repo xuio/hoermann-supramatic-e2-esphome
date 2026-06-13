@@ -379,6 +379,8 @@ static const char *trace_event_name_(uint16_t event) {
       return "tx-abort";
     case HCP2_LP_TRACE_COLLISION:
       return "collision";
+    case HCP2_LP_TRACE_WDT:
+      return "wdt";
     default:
       return "unknown";
   }
@@ -565,7 +567,7 @@ static void task_wdt_task(void *arg) {
   const esp_task_wdt_config_t twdt_config = {
       .timeout_ms = 1000,
       .idle_core_mask = 0,
-      .trigger_panic = true,
+      .trigger_panic = CONFIG_HCP2_BRINGUP_TASK_WDT_TRIGGER_PANIC,
   };
   esp_err_t status;
 

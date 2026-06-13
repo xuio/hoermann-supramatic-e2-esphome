@@ -17,6 +17,7 @@ typedef struct {
 } hcp2_hp_supervisor_t;
 
 #define HCP2_HP_DEFAULT_COMMAND_TTL_US 250000u
+#define HCP2_HP_DEFAULT_STOP_TRIGGER_TTL_US 30000000u
 
 void hcp2_hp_supervisor_init(hcp2_hp_supervisor_t *supervisor, volatile hcp2_lp_mailbox_t *mailbox,
                              uint32_t expected_firmware_version);
@@ -38,6 +39,11 @@ hcp2_lp_command_result_t hcp2_hp_supervisor_ack_result(const hcp2_hp_supervisor_
                                                        uint32_t sequence);
 uint8_t hcp2_hp_supervisor_read_state(const hcp2_hp_supervisor_t *supervisor,
                                       hcp2_lp_state_snapshot_t *out);
+uint8_t hcp2_hp_supervisor_arm_stop_trigger(hcp2_hp_supervisor_t *supervisor, uint8_t target_position,
+                                            uint32_t ttl_us);
+uint8_t hcp2_hp_supervisor_arm_stop_trigger_at(hcp2_hp_supervisor_t *supervisor, uint8_t target_position,
+                                               uint32_t now_us, uint32_t ttl_us);
+void hcp2_hp_supervisor_disarm_stop_trigger(hcp2_hp_supervisor_t *supervisor);
 
 #ifdef __cplusplus
 }

@@ -62,6 +62,13 @@ CONFIG_SCHEMA = cv.All(
 
 
 async def to_code(config):
+    esp32.include_builtin_idf_component("driver")
+    esp32.include_builtin_idf_component("ulp")
+    esp32.add_idf_sdkconfig_option("CONFIG_ULP_COPROC_ENABLED", True)
+    esp32.add_idf_sdkconfig_option("CONFIG_ULP_COPROC_TYPE_LP_CORE", True)
+    esp32.add_idf_sdkconfig_option("CONFIG_ULP_COPROC_RESERVE_MEM", 16320)
+    esp32.add_idf_sdkconfig_option("CONFIG_ULP_SHARED_MEM", "0x10")
+
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
 

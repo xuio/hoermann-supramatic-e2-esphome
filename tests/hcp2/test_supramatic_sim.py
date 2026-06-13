@@ -25,6 +25,7 @@ def scenario(**kwargs: object) -> Namespace:
         "dut_response_delay_us": 4500,
         "missed_poll_threshold": DEFAULT_MISSED_POLL_THRESHOLD,
         "report": None,
+        "trace": None,
         "fault": [],
         "command": None,
         "expect_button": [],
@@ -50,6 +51,17 @@ def test_pty_functional_report(tmp_path: Path) -> None:
     report = json.loads(report_path.read_text())
     assert report["verdict"] == "ok"
     assert report["polls_sent"] == 120
+
+
+def test_simulator_writes_per_poll_trace(tmp_path: Path) -> None:
+    trace_path = tmp_path / "trace.jsonl"
+    result = run_once(scenario(cycles=3, trace=trace_path))
+
+    assert result["verdict"] == "ok"
+    events = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()]
+    assert any(event["event"] == "bus_scan_tx" for event in events)
+    assert [event["counter"] for event in events if event["event"] == "poll_tx"] == [0, 1, 2]
+    assert [event["counter"] for event in events if event["event"] == "poll_rx"] == [0, 1, 2]
 
 
 def test_socketpair_fault_recovery_and_open_command() -> None:

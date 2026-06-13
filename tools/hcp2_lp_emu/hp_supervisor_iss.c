@@ -12,6 +12,7 @@ typedef enum {
   HCP2_HP_ISS_REQ_SEND_COMMAND = 3,
   HCP2_HP_ISS_REQ_ACK_RECEIVED = 4,
   HCP2_HP_ISS_REQ_READ_STATE = 5,
+  HCP2_HP_ISS_REQ_ARM_STOP_TRIGGER = 6,
 } hcp2_hp_iss_request_t;
 
 typedef struct {
@@ -115,6 +116,11 @@ __attribute__((section(".text.start"))) void _start(void) {
         control->result2 = snapshot.updated_us;
         break;
       }
+
+      case HCP2_HP_ISS_REQ_ARM_STOP_TRIGGER:
+        control->result0 = hcp2_hp_supervisor_arm_stop_trigger_at(
+            &supervisor, (uint8_t) control->arg0, control->arg1, control->arg2);
+        break;
 
       case HCP2_HP_ISS_REQ_NONE:
       default:

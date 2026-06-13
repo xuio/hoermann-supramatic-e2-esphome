@@ -373,7 +373,7 @@ static void test_mailbox_layout_and_reload_decision(void) {
   mailbox.heartbeat = 10u;
   hcp2_lp_mailbox_sample_health(&mailbox, &after);
   assert(hcp2_lp_mailbox_reload_decision(&mailbox, HCP2_LP_FIRMWARE_VERSION, &before, &after) ==
-         HCP2_LP_RELOAD_REQUIRED);
+         HCP2_LP_RELOAD_SKIP);
 
   mailbox.magic = 0u;
   assert(hcp2_lp_mailbox_reload_decision(&mailbox, HCP2_LP_FIRMWARE_VERSION, &before, &after) ==
@@ -392,7 +392,7 @@ static void test_mailbox_state_seqlock(void) {
   state.state = HCP2_DRIVE_OPENING;
   state.light_on = 1u;
   hcp2_lp_mailbox_publish_state(&mailbox, &state, 123456u);
-  hcp2_lp_mailbox_publish_counters(&mailbox, 123500u, 7u, 6u, 2u, 1u, 8000u);
+  hcp2_lp_mailbox_publish_counters(&mailbox, 123500u, 7u, 6u, 2u, 1u, 8000u, 123490u, 3u, 4u);
 
   assert(hcp2_lp_mailbox_read_state(&mailbox, &snapshot));
   assert(snapshot.target_position == 200u);
@@ -406,6 +406,9 @@ static void test_mailbox_state_seqlock(void) {
   assert(mailbox.tx_abort_count == 2u);
   assert(mailbox.collision_count == 1u);
   assert(mailbox.max_de_hold_us == 8000u);
+  assert(mailbox.last_poll_us == 123490u);
+  assert(mailbox.crc_error_count == 3u);
+  assert(mailbox.rx_error_count == 4u);
 
   mailbox.state_seq |= 1u;
   assert(!hcp2_lp_mailbox_read_state(&mailbox, &snapshot));
@@ -445,6 +448,30 @@ static void test_mailbox_command_epoch_and_ack(void) {
   assert(mailbox.command_ack_result == HCP2_LP_COMMAND_RESULT_EXPIRED);
 }
 
+static void test_mailbox_stop_trigger(void) {
+  hcp2_lp_mailbox_t mailbox;
+  hcp2_lp_stop_trigger_t trigger;
+
+  hcp2_lp_mailbox_init(&mailbox);
+  assert(!hcp2_lp_mailbox_read_stop_trigger(&mailbox, &trigger));
+
+  hcp2_lp_mailbox_arm_stop_trigger(&mailbox, 0x1234u, 80u, 500000u);
+  assert(mailbox.stop_trigger_armed == 1u);
+  assert(hcp2_lp_mailbox_read_stop_trigger(&mailbox, &trigger));
+  assert(trigger.epoch == 0x1234u);
+  assert(trigger.target_position == 80u);
+  assert(trigger.deadline_us == 500000u);
+
+  hcp2_lp_mailbox_mark_stop_trigger_fired(&mailbox);
+  assert(mailbox.stop_trigger_armed == 0u);
+  assert(mailbox.stop_trigger_fire_count == 1u);
+
+  hcp2_lp_mailbox_arm_stop_trigger(&mailbox, 0x1234u, 90u, 600000u);
+  assert(mailbox.stop_trigger_armed == 1u);
+  hcp2_lp_mailbox_send_command(&mailbox, 0x1234u, 2u, HCP2_LP_COMMAND_STOP, 0u, 610000u);
+  assert(mailbox.stop_trigger_armed == 0u);
+}
+
 int main(void) {
   test_vector_crc_file();
   test_crc_known_frame();
@@ -459,6 +486,7 @@ int main(void) {
   test_mailbox_layout_and_reload_decision();
   test_mailbox_state_seqlock();
   test_mailbox_command_epoch_and_ack();
+  test_mailbox_stop_trigger();
   puts("hcp2 core tests ok");
   return 0;
 }

@@ -12,8 +12,8 @@
 #include "lp_core_uart.h"
 #include "ulp_lp_core.h"
 
-#define HCP2_LP_DE_GPIO GPIO_NUM_2
-#define HCP2_LP_RE_GPIO GPIO_NUM_3
+#define HCP2_LP_DE_GPIO GPIO_NUM_0
+#define HCP2_LP_RE_GPIO GPIO_NUM_1
 
 static const char *TAG = "hcp2-lp";
 
