@@ -1,7 +1,5 @@
 #include "hcp2_mailbox.h"
 
-#include <string.h>
-
 static void memory_barrier_(void) {
 #if defined(__GNUC__) || defined(__clang__)
   __sync_synchronize();
@@ -10,12 +8,19 @@ static void memory_barrier_(void) {
 #endif
 }
 
+static void zero_memory_(void *dest, size_t len) {
+  uint8_t *out = (uint8_t *) dest;
+  while (len-- > 0u) {
+    *out++ = 0u;
+  }
+}
+
 void hcp2_lp_mailbox_init(volatile hcp2_lp_mailbox_t *mailbox) {
   if (mailbox == 0) {
     return;
   }
 
-  memset((void *) mailbox, 0, sizeof(*mailbox));
+  zero_memory_((void *) mailbox, sizeof(*mailbox));
   mailbox->magic = HCP2_LP_MAILBOX_MAGIC;
   mailbox->abi_version = HCP2_LP_MAILBOX_ABI_VERSION;
   mailbox->struct_size = HCP2_LP_MAILBOX_SIZE;
@@ -228,7 +233,7 @@ void hcp2_lp_mailbox_sample_health(const volatile hcp2_lp_mailbox_t *mailbox, hc
   if (out == 0) {
     return;
   }
-  memset(out, 0, sizeof(*out));
+  zero_memory_(out, sizeof(*out));
   if (mailbox == 0) {
     return;
   }
