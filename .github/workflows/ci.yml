@@ -260,7 +260,7 @@ jobs:
                   "chip": "esp32c6",
               },
           }
-          (build / "wokwi-flasher_args.json").write_text(json.dumps(layout, indent=2) + "\n")
+          (build / "flasher_args.json").write_text(json.dumps(layout, indent=2) + "\n")
           PY
 
       - name: Run Wokwi LP execution probe
