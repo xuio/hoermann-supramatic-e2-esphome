@@ -509,7 +509,8 @@ esp_err_t HCP2Bridge::init_lp_bus_io_() {
   uart_cfg.uart_pin_cfg.rx_io_num = rx_gpio;
   uart_cfg.uart_pin_cfg.rts_io_num = GPIO_NUM_NC;
   uart_cfg.uart_pin_cfg.cts_io_num = GPIO_NUM_NC;
-  uart_cfg.lp_uart_source_clk = LP_UART_SCLK_XTAL_D2;
+  uart_cfg.lp_uart_source_clk =
+      this->lp_uart_clock_source_default_ ? LP_UART_SCLK_DEFAULT : LP_UART_SCLK_XTAL_D2;
 
   esp_err_t err = rtc_gpio_init(de_gpio);
   if (err != ESP_OK) return err;

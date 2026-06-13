@@ -45,3 +45,6 @@ hcp2bridge:
   response_delay: 4500us
   button_press_duration: 100ms
   hp_fallback: false
+  # Wokwi mirrors the passing IDF bring-up path with the IDF default LP-UART
+  # clock. Production stays on XTAL_D2 in supramatic-4-dev.yaml.
+  lp_uart_clock_source: default

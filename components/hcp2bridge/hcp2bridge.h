@@ -43,6 +43,7 @@ class HCP2Bridge : public Component {
   void set_response_delay_us(uint32_t value) { this->config_.response_delay_us = value; }
   void set_button_press_us(uint32_t value) { this->config_.button_press_us = value; }
   void set_hp_fallback(bool value) { this->hp_fallback_ = value; }
+  void set_lp_uart_clock_source_default(bool value) { this->lp_uart_clock_source_default_ = value; }
 
   bool action_open() { return this->queue_button_(HCP2_BUTTON_OPEN); }
   bool action_close() { return this->queue_button_(HCP2_BUTTON_CLOSE); }
@@ -133,6 +134,7 @@ class HCP2Bridge : public Component {
   InternalGPIOPin *re_pin_{nullptr};
   hcp2_engine_config_t config_{};
   bool hp_fallback_{true};
+  bool lp_uart_clock_source_default_{false};
   uint8_t uart_num_config_{1};
 
   hcp2_drive_status_t drive_status_{};

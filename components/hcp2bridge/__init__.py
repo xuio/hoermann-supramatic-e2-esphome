@@ -13,10 +13,16 @@ CONF_DE_PIN = "de_pin"
 CONF_DEVICE_SIGNATURE = "device_signature"
 CONF_HCP2BRIDGE_ID = "hcp2bridge_id"
 CONF_HP_FALLBACK = "hp_fallback"
+CONF_LP_UART_CLOCK_SOURCE = "lp_uart_clock_source"
 CONF_RE_PIN = "re_pin"
 CONF_RESPONSE_DELAY = "response_delay"
 CONF_SLAVE_ID = "slave_id"
 CONF_UART_NUM = "uart_num"
+
+LP_UART_CLOCK_SOURCES = {
+    "xtal_d2": False,
+    "default": True,
+}
 
 hcp2bridge_ns = cg.esphome_ns.namespace("hcp2bridge")
 HCP2Bridge = hcp2bridge_ns.class_("HCP2Bridge", cg.Component)
@@ -52,6 +58,9 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_RESPONSE_DELAY, default="4500us"): cv.positive_time_period_microseconds,
             cv.Optional(CONF_BUTTON_PRESS_DURATION, default="100ms"): cv.positive_time_period_microseconds,
             cv.Optional(CONF_HP_FALLBACK, default=True): cv.boolean,
+            cv.Optional(CONF_LP_UART_CLOCK_SOURCE, default="xtal_d2"): cv.enum(
+                LP_UART_CLOCK_SOURCES, lower=True
+            ),
         }
     )
     .extend(cv.COMPONENT_SCHEMA)
@@ -89,3 +98,4 @@ async def to_code(config):
     cg.add(var.set_response_delay_us(config[CONF_RESPONSE_DELAY].total_microseconds))
     cg.add(var.set_button_press_us(config[CONF_BUTTON_PRESS_DURATION].total_microseconds))
     cg.add(var.set_hp_fallback(config[CONF_HP_FALLBACK]))
+    cg.add(var.set_lp_uart_clock_source_default(config[CONF_LP_UART_CLOCK_SOURCE]))
