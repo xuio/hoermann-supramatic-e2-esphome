@@ -227,6 +227,42 @@ jobs:
         if: ${{ env.WOKWI_CLI_TOKEN != '' }}
         run: uv run esphome compile configs/supramatic-4-dev.yaml
 
+      - name: Generate HCP2 ESPHome Wokwi flash layout
+        if: ${{ env.WOKWI_CLI_TOKEN != '' }}
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          build = Path("configs/.esphome/build/supramatic-4-dev/.pioenvs/supramatic-4-dev")
+          files = {
+              "0x0": "bootloader.bin",
+              "0x8000": "partitions.bin",
+              "0x9000": "ota_data_initial.bin",
+              "0x10000": "firmware.bin",
+          }
+          missing = [name for name in files.values() if not (build / name).is_file()]
+          if missing:
+              raise SystemExit(f"missing ESPHome Wokwi flash files: {', '.join(missing)}")
+
+          layout = {
+              "write_flash_args": ["--flash_mode", "dio", "--flash_size", "4MB", "--flash_freq", "80m"],
+              "flash_settings": {"flash_mode": "dio", "flash_size": "4MB", "flash_freq": "80m"},
+              "flash_files": files,
+              "bootloader": {"offset": "0x0", "file": files["0x0"], "encrypted": "false"},
+              "partition-table": {"offset": "0x8000", "file": files["0x8000"], "encrypted": "false"},
+              "otadata": {"offset": "0x9000", "file": files["0x9000"], "encrypted": "false"},
+              "app": {"offset": "0x10000", "file": files["0x10000"], "encrypted": "false"},
+              "extra_esptool_args": {
+                  "after": "hard_reset",
+                  "before": "default_reset",
+                  "stub": True,
+                  "chip": "esp32c6",
+              },
+          }
+          (build / "wokwi-flasher_args.json").write_text(json.dumps(layout, indent=2) + "\n")
+          PY
+
       - name: Run Wokwi LP execution probe
         if: ${{ env.WOKWI_CLI_TOKEN != '' }}
         run: |
