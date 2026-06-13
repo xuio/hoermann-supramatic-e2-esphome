@@ -28,8 +28,10 @@ response, and the real LP-in-loop steady-state run completes 200 polls with 200
 replies, zero misses, and Wokwi reply latency in the 12.869-12.930 ms range. We
 deliberately do not add a GPIO bit-banged UART workaround to the firmware. The
 native LP-UART Wokwi gate can now be treated as the primary cloud
-full-firmware pre-HIL test; set the GitHub repository variable
-`WOKWI_NATIVE_LP_UART_REQUIRED=true` to make it blocking in CI.
+full-firmware pre-HIL test. The GitHub Wokwi job is manual-only: dispatch the
+CI workflow with `run_wokwi` enabled. Set the GitHub repository variable
+`WOKWI_NATIVE_LP_UART_REQUIRED=true` to make the native LP-UART subgate
+blocking inside that manual job.
 
 What this proves:
 
@@ -171,7 +173,7 @@ cp /tmp/hcp2-wokwi.toml emulation/wokwi/wokwi.toml
 ```
 
 `PASS` and `FAIL` are still output pins on the custom chip for interactive
-inspection, but CI greps the full `wokwi-cli` log for
+inspection, but the manual Wokwi CI job greps the full `wokwi-cli` log for
 `HCP2_WOKWI_VERDICT_*` markers because scenario `wait-serial` only watches the
 ESP serial stream, while custom-chip `printf()` output is emitted on the chip
 console. The ESPHome scenario is therefore a fixed-duration run whose assertion

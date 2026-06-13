@@ -6,6 +6,12 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      run_wokwi:
+        description: "Run HCP2 Wokwi gates"
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   validate:
@@ -131,7 +137,8 @@ jobs:
             firmware/hcp2-lp/build/hcp2_lp.sym
 
   hcp2-wokwi:
-    name: Build HCP2 firmware and run Wokwi gates
+    name: Manual HCP2 Wokwi gates
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_wokwi }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
