@@ -53,6 +53,10 @@ plus explicit command buttons for `open`, `close`, `stop`, `half`, `vent`, and
 5. If the motor shows error 04, stop and collect a support bundle before power
    cycling or changing wiring.
 
+`Missed Polls` is the effective safety counter. During the normal reply window
+the raw `Polls Seen - Polls Answered` delta may briefly be `1`; the debug page
+shows this as `pending response`, not as a missed poll.
+
 ## Command Checklist
 
 Run this while physically present at the door:
@@ -81,7 +85,10 @@ frames when the HP fallback responder is active.
 
 Open `http://supramatic-4-tester.local/` in a browser for the interactive
 debug page. It shows continuity health, core counters, RAM-log controls, a live
-WebSocket log stream, and raw JSON views without writing anything to flash.
+WebSocket stream, and raw JSON views without writing anything to flash. The
+WebSocket pushes typed JSON messages in real time:
+`{"type":"health","health":...}` for live health/counters and
+`{"type":"log","text":"..."}` for new NDJSON log records.
 The page keeps its own bounded browser-side cache of the live stream. The
 `Download JSON` button exports that frontend cache as a structured JSON file
 with receive timestamps, raw lines, and parsed log objects. To keep browser RAM

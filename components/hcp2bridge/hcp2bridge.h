@@ -84,6 +84,8 @@ class HCP2Bridge : public Component {
   uint32_t get_lp_poll_count() const;
   uint32_t get_lp_response_count() const;
   uint32_t get_lp_missed_poll_count() const;
+  uint32_t get_lp_raw_missed_poll_count() const;
+  bool has_lp_pending_response() const;
   uint32_t get_lp_tx_abort_count() const;
   uint32_t get_lp_collision_count() const;
   uint32_t get_lp_max_de_hold_us() const;
@@ -141,6 +143,9 @@ class HCP2Bridge : public Component {
   void http_debug_send_log_binary_response_(std::unique_ptr<socket::Socket> client);
   void http_debug_upgrade_log_ws_(std::unique_ptr<socket::Socket> client, const std::string &request);
   bool http_debug_send_ws_text_(socket::Socket *client, const std::string &payload, uint32_t timeout_ms);
+  std::string http_debug_ws_log_json_(const std::string &body);
+  std::string http_debug_ws_health_json_();
+  static std::string http_debug_json_string_(const std::string &value);
   std::string http_debug_header_value_(const std::string &request, const char *name);
   bool http_debug_write_all_(socket::Socket *client, const std::string &payload, uint32_t timeout_ms);
   bool http_debug_request_complete_() const;
@@ -221,6 +226,8 @@ class HCP2Bridge : public Component {
   uint32_t lp_reset_count_{0};
   uint32_t lp_polls_seen_{0};
   uint32_t lp_polls_answered_{0};
+  uint32_t lp_raw_missed_polls_{0};
+  bool lp_pending_response_{false};
   uint32_t lp_tx_abort_count_{0};
   uint32_t lp_collision_count_{0};
   uint32_t lp_max_de_hold_us_{0};
@@ -280,6 +287,7 @@ class HCP2Bridge : public Component {
   uint32_t http_debug_next_setup_ms_{0};
   uint32_t http_debug_log_ws_next_seq_{0};
   uint32_t http_debug_log_ws_last_send_ms_{0};
+  uint32_t http_debug_log_ws_last_status_ms_{0};
 #endif
 };
 

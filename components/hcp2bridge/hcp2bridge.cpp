@@ -51,8 +51,10 @@ static constexpr uint32_t HCP2BRIDGE_HTTP_SETUP_DELAY_MS = 5000;
 static constexpr uint32_t HCP2BRIDGE_HTTP_SETUP_RETRY_MS = 5000;
 static constexpr uint32_t HCP2BRIDGE_HTTP_PENDING_TIMEOUT_MS = 3000;
 static constexpr uint32_t HCP2BRIDGE_HTTP_WS_SEND_INTERVAL_MS = 100;
+static constexpr uint32_t HCP2BRIDGE_HTTP_WS_HEALTH_INTERVAL_MS = 250;
 static constexpr size_t HCP2BRIDGE_HTTP_WS_MAX_CHUNK_BYTES = 4096;
 static constexpr uint32_t HCP2BRIDGE_MAX_DE_HIGH_US = 9000;
+static constexpr uint32_t HCP2BRIDGE_PENDING_REPLY_GRACE_MS = 20;
 static constexpr const char *HCP2BRIDGE_WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
 static bool hcp2_ascii_iequals(const std::string &left, const char *right) {
@@ -69,6 +71,24 @@ static bool hcp2_ascii_iequals(const std::string &left, const char *right) {
     }
   }
   return true;
+}
+
+static uint32_t hcp2_raw_missed_polls(uint32_t polls_seen, uint32_t polls_answered) {
+  return polls_seen >= polls_answered ? polls_seen - polls_answered : 0u;
+}
+
+static bool hcp2_pending_reply(uint32_t polls_seen, uint32_t polls_answered, uint32_t last_poll_age_ms) {
+  return hcp2_raw_missed_polls(polls_seen, polls_answered) == 1u &&
+         last_poll_age_ms <= HCP2BRIDGE_PENDING_REPLY_GRACE_MS;
+}
+
+static uint32_t hcp2_effective_missed_polls(uint32_t polls_seen, uint32_t polls_answered,
+                                            uint32_t last_poll_age_ms, bool *pending_response) {
+  const bool pending = hcp2_pending_reply(polls_seen, polls_answered, last_poll_age_ms);
+  if (pending_response != nullptr) {
+    *pending_response = pending;
+  }
+  return pending ? 0u : hcp2_raw_missed_polls(polls_seen, polls_answered);
 }
 
 #ifdef USE_ESP32
@@ -231,12 +251,27 @@ uint32_t HCP2Bridge::get_lp_missed_poll_count() const {
 #ifdef USE_ESP32
   portENTER_CRITICAL(&this->state_mux_);
 #endif
-  const uint32_t seen = this->lp_polls_seen_;
-  const uint32_t answered = this->lp_polls_answered_;
+  const uint32_t raw_missed = this->lp_raw_missed_polls_;
+  const bool pending_response = this->lp_pending_response_;
 #ifdef USE_ESP32
   portEXIT_CRITICAL(&this->state_mux_);
 #endif
-  return seen >= answered ? seen - answered : 0u;
+  return pending_response ? 0u : raw_missed;
+}
+
+uint32_t HCP2Bridge::get_lp_raw_missed_poll_count() const {
+  return this->counter_snapshot_(&HCP2Bridge::lp_raw_missed_polls_);
+}
+
+bool HCP2Bridge::has_lp_pending_response() const {
+#ifdef USE_ESP32
+  portENTER_CRITICAL(&this->state_mux_);
+#endif
+  const bool value = this->lp_pending_response_;
+#ifdef USE_ESP32
+  portEXIT_CRITICAL(&this->state_mux_);
+#endif
+  return value;
 }
 
 uint32_t HCP2Bridge::get_lp_tx_abort_count() const {
@@ -950,6 +985,8 @@ std::string HCP2Bridge::http_debug_health_json_() {
   const uint32_t polls_seen = this->get_lp_poll_count();
   const uint32_t polls_answered = this->get_lp_response_count();
   const uint32_t missed_polls = this->get_lp_missed_poll_count();
+  const uint32_t raw_missed_polls = this->get_lp_raw_missed_poll_count();
+  const bool pending_response = this->has_lp_pending_response();
   const uint32_t health_flags = this->get_lp_health_flags();
   const uint32_t tx_aborts = this->get_lp_tx_abort_count();
   const uint32_t collisions = this->get_lp_collision_count();
@@ -989,7 +1026,7 @@ std::string HCP2Bridge::http_debug_health_json_() {
   if (last_poll_age_ms > (HCP2BRIDGE_BUS_ONLINE_TIMEOUT_US / 1000u)) {
     add_reason("last_poll_stale");
   }
-  if (missed_polls != 0u || polls_answered < polls_seen) {
+  if (missed_polls != 0u) {
     add_reason("missed_polls");
   }
   if (health_flags != 0u) {
@@ -1038,6 +1075,10 @@ std::string HCP2Bridge::http_debug_health_json_() {
   json += std::to_string(polls_answered);
   json += ",\"missed_polls\":";
   json += std::to_string(missed_polls);
+  json += ",\"raw_missed_polls\":";
+  json += std::to_string(raw_missed_polls);
+  json += ",\"pending_response\":";
+  json += pending_response ? "true" : "false";
   json += ",\"health_flags\":";
   json += std::to_string(health_flags);
   json += ",\"tx_aborts\":";
@@ -1077,6 +1118,10 @@ std::string HCP2Bridge::http_debug_stats_json_() {
   json += std::to_string(this->get_lp_response_count());
   json += ",\"missed_polls\":";
   json += std::to_string(this->get_lp_missed_poll_count());
+  json += ",\"raw_missed_polls\":";
+  json += std::to_string(this->get_lp_raw_missed_poll_count());
+  json += ",\"pending_response\":";
+  json += this->has_lp_pending_response() ? "true" : "false";
   json += ",\"crc_errors\":";
   json += std::to_string(this->get_lp_crc_error_count());
   json += ",\"rx_errors\":";
@@ -1219,59 +1264,69 @@ let logLines=[];
 let logCache=[];
 let logCacheBytes=0;
 let refreshBusy=false;
+let lastHealthStreamMs=0;
+let logRenderQueued=false;
 const maxVisibleLogLines=300;
 const maxCacheAgeMs=10*60*1000;
 const maxCacheBytes=1024*1024;
 function row(k,v){return `<div class="row"><span class="key">${k}</span><span class="value">${v??''}</span></div>`}
 function setRows(id,items){$(id).innerHTML=items.map(([k,v])=>row(k,v)).join('')}
 async function getJson(path){const r=await fetch(path,{cache:'no-store'});const t=await r.text();try{return JSON.parse(t)}catch(e){throw new Error(path+' returned non-JSON')}}
+function applyHealth(health,source='http'){
+  const stats=health.stats||{};
+  const ok=health.verdict==='ok';
+  if(source==='stream')lastHealthStreamMs=Date.now();
+  $('verdict').className='status '+(ok?'ok':'fail');
+  $('verdict').textContent=ok?'continuity ok':'continuity problem';
+  $('updated').textContent=' updated '+new Date().toLocaleTimeString()+` via ${source}`;
+  $('reasons').textContent=(health.reasons&&health.reasons.length)?'Reasons: '+health.reasons.join(', '):'';
+  const c=health.checks||{};
+  setRows('continuity',[
+    ['safe for OTA/restart',health.safe_for_ota_restart],
+    ['bus online',c.bus_online],
+    ['LP seen',c.lp_seen],
+    ['valid broadcast',c.valid_broadcast],
+    ['last poll age ms',c.last_poll_age_ms],
+    ['pending response',c.pending_response],
+    ['raw poll delta',c.raw_missed_polls],
+    ['missed polls',c.missed_polls],
+    ['health flags',c.health_flags]
+  ]);
+  setRows('door',[
+    ['state',stats.state],
+    ['position',Number(stats.position).toFixed(3)],
+    ['mode',stats.mode],
+    ['uptime ms',stats.uptime_ms]
+  ]);
+  setRows('counters',[
+    ['polls seen',stats.polls_seen],
+    ['polls answered',stats.polls_answered],
+    ['pending response',stats.pending_response],
+    ['raw poll delta',stats.raw_missed_polls],
+    ['crc errors',stats.crc_errors],
+    ['rx errors',stats.rx_errors],
+    ['tx aborts',stats.tx_aborts],
+    ['collisions',stats.collisions],
+    ['LP resets',stats.lp_resets],
+    ['HP resets',stats.hp_resets]
+  ]);
+  const p=stats.protocol_log||{};
+  setRows('timing',[
+    ['max DE hold us',c.max_de_hold_us],
+    ['log mode',p.mode],
+    ['log used bytes',p.used],
+    ['log capacity',p.capacity],
+    ['overwritten records',p.overwritten_records]
+  ]);
+  $('logSummary').textContent=`log ${p.enabled?'enabled':'disabled'}, ${p.used||0}/${p.capacity||0} bytes, overwritten ${p.overwritten_records||0} records`;
+  updateLogCacheSummary();
+}
 async function refresh(){
   if(refreshBusy)return;
   refreshBusy=true;
   try{
     const health=await getJson('/health');
-    const stats=health.stats||{};
-    const ok=health.verdict==='ok';
-    $('verdict').className='status '+(ok?'ok':'fail');
-    $('verdict').textContent=ok?'continuity ok':'continuity problem';
-    $('updated').textContent=' updated '+new Date().toLocaleTimeString();
-    $('reasons').textContent=(health.reasons&&health.reasons.length)?'Reasons: '+health.reasons.join(', '):'';
-    const c=health.checks||{};
-    setRows('continuity',[
-      ['safe for OTA/restart',health.safe_for_ota_restart],
-      ['bus online',c.bus_online],
-      ['LP seen',c.lp_seen],
-      ['valid broadcast',c.valid_broadcast],
-      ['last poll age ms',c.last_poll_age_ms],
-      ['missed polls',c.missed_polls],
-      ['health flags',c.health_flags]
-    ]);
-    setRows('door',[
-      ['state',stats.state],
-      ['position',Number(stats.position).toFixed(3)],
-      ['mode',stats.mode],
-      ['uptime ms',stats.uptime_ms]
-    ]);
-    setRows('counters',[
-      ['polls seen',stats.polls_seen],
-      ['polls answered',stats.polls_answered],
-      ['crc errors',stats.crc_errors],
-      ['rx errors',stats.rx_errors],
-      ['tx aborts',stats.tx_aborts],
-      ['collisions',stats.collisions],
-      ['LP resets',stats.lp_resets],
-      ['HP resets',stats.hp_resets]
-    ]);
-    const p=stats.protocol_log||{};
-    setRows('timing',[
-      ['max DE hold us',c.max_de_hold_us],
-      ['log mode',p.mode],
-      ['log used bytes',p.used],
-      ['log capacity',p.capacity],
-      ['overwritten records',p.overwritten_records]
-    ]);
-    $('logSummary').textContent=`log ${p.enabled?'enabled':'disabled'}, ${p.used||0}/${p.capacity||0} bytes, overwritten ${p.overwritten_records||0} records`;
-    updateLogCacheSummary();
+    applyHealth(health,'http');
   }catch(e){
     $('verdict').className='status unknown';
     $('verdict').textContent='debug fetch failed';
@@ -1306,7 +1361,15 @@ function cacheLogLine(line,receivedMs=Date.now()){
   logCacheBytes+=record.bytes;
   pruneLogCache(receivedMs);
 }
-function renderLog(){const el=$('log');el.textContent=logLines.join('\n');el.scrollTop=el.scrollHeight}
+function renderLogNow(){const el=$('log');el.textContent=logLines.join('\n');el.scrollTop=el.scrollHeight}
+function renderLog(){
+  if(logRenderQueued)return;
+  logRenderQueued=true;
+  requestAnimationFrame(()=>{
+    logRenderQueued=false;
+    renderLogNow();
+  });
+}
 function appendLogText(text,replace=false){
   const now=Date.now();
   if(replace){logLines=[];resetLogCache()}
@@ -1337,7 +1400,19 @@ function connectLogStream(){
   logSocket=ws;
   $('logStream').textContent='stream connecting';
   ws.onopen=()=>{$('logStream').textContent='stream connected'};
-  ws.onmessage=event=>appendLogText(event.data);
+  ws.onmessage=event=>{
+    let message=null;
+    try{message=JSON.parse(event.data)}catch(e){}
+    if(message&&message.type==='health'&&message.health){
+      applyHealth(message.health,'stream');
+      return;
+    }
+    if(message&&message.type==='log'&&typeof message.text==='string'){
+      appendLogText(message.text);
+      return;
+    }
+    appendLogText(event.data);
+  };
   ws.onerror=()=>{try{ws.close()}catch(e){}};
   ws.onclose=()=>{
     if(logSocket===ws)logSocket=null;
@@ -1369,7 +1444,7 @@ function downloadCachedLog(){
   setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
 async function loadRaw(path){const data=await getJson(path);$('raw').textContent=JSON.stringify(data,null,2)}
-setInterval(refresh,5000);
+setInterval(()=>{if(Date.now()-lastHealthStreamMs>2000)refresh()},1000);
 async function init(){await refresh();await refreshLog();connectLogStream()}
 init();
 </script>
@@ -1568,6 +1643,16 @@ void HCP2Bridge::http_debug_service_log_ws_() {
   }
 
   const uint32_t now_ms = millis();
+  if (this->http_debug_log_ws_last_status_ms_ == 0 ||
+      now_ms - this->http_debug_log_ws_last_status_ms_ >= HCP2BRIDGE_HTTP_WS_HEALTH_INTERVAL_MS) {
+    this->http_debug_log_ws_last_status_ms_ = now_ms;
+    if (!this->http_debug_send_ws_text_(this->http_debug_log_ws_client_.get(), this->http_debug_ws_health_json_(),
+                                        25)) {
+      this->http_debug_log_ws_client_.reset();
+      return;
+    }
+  }
+
   if (this->http_debug_log_ws_last_send_ms_ != 0 &&
       now_ms - this->http_debug_log_ws_last_send_ms_ < HCP2BRIDGE_HTTP_WS_SEND_INTERVAL_MS) {
     return;
@@ -1580,7 +1665,7 @@ void HCP2Bridge::http_debug_service_log_ws_() {
   if (body.empty()) {
     return;
   }
-  if (!this->http_debug_send_ws_text_(this->http_debug_log_ws_client_.get(), body, 25)) {
+  if (!this->http_debug_send_ws_text_(this->http_debug_log_ws_client_.get(), this->http_debug_ws_log_json_(body), 25)) {
     this->http_debug_log_ws_client_.reset();
   }
 }
@@ -1637,6 +1722,7 @@ void HCP2Bridge::http_debug_handle_request_(std::unique_ptr<socket::Socket> clie
     if (this->http_debug_log_ws_client_ != nullptr) {
       this->http_debug_log_ws_next_seq_ = 1;
       this->http_debug_log_ws_last_send_ms_ = 0;
+      this->http_debug_log_ws_last_status_ms_ = 0;
     }
     this->http_debug_send_response_(std::move(client), "200 OK", "application/json",
                                     this->protocol_log_summary_json_());
@@ -1687,6 +1773,7 @@ void HCP2Bridge::http_debug_upgrade_log_ws_(std::unique_ptr<socket::Socket> clie
   this->http_debug_log_ws_client_ = std::move(client);
   this->http_debug_log_ws_next_seq_ = this->protocol_log_next_seq_snapshot_();
   this->http_debug_log_ws_last_send_ms_ = 0;
+  this->http_debug_log_ws_last_status_ms_ = 0;
   ESP_LOGI(TAG, "HCP2 HTTP debug log WebSocket connected");
 }
 
@@ -1706,6 +1793,56 @@ bool HCP2Bridge::http_debug_send_ws_text_(socket::Socket *client, const std::str
   }
   frame += payload;
   return this->http_debug_write_all_(client, frame, timeout_ms);
+}
+
+std::string HCP2Bridge::http_debug_ws_log_json_(const std::string &body) {
+  std::string json = "{\"type\":\"log\",\"text\":";
+  json += http_debug_json_string_(body);
+  json += "}";
+  return json;
+}
+
+std::string HCP2Bridge::http_debug_ws_health_json_() {
+  std::string json = "{\"type\":\"health\",\"health\":";
+  json += this->http_debug_health_json_();
+  json += "}";
+  return json;
+}
+
+std::string HCP2Bridge::http_debug_json_string_(const std::string &value) {
+  std::string out;
+  out.reserve(value.size() + 2u);
+  out.push_back('"');
+  for (unsigned char c : value) {
+    switch (c) {
+      case '"':
+        out += "\\\"";
+        break;
+      case '\\':
+        out += "\\\\";
+        break;
+      case '\n':
+        out += "\\n";
+        break;
+      case '\r':
+        out += "\\r";
+        break;
+      case '\t':
+        out += "\\t";
+        break;
+      default:
+        if (c < 0x20u) {
+          char escaped[7];
+          std::snprintf(escaped, sizeof(escaped), "\\u%04X", (unsigned int) c);
+          out += escaped;
+        } else {
+          out.push_back((char) c);
+        }
+        break;
+    }
+  }
+  out.push_back('"');
+  return out;
 }
 
 std::string HCP2Bridge::http_debug_header_value_(const std::string &request, const char *name) {
@@ -2292,7 +2429,11 @@ void HCP2Bridge::update_state_from_mailbox_() {
   const uint32_t mailbox_repairs = mailbox != nullptr ? mailbox->mailbox_repair_count : 0u;
   const uint32_t last_poll_age_us = last_poll_us == 0u ? 0u : (uint32_t) (lp_time_us - last_poll_us);
   const bool bus_online = last_poll_us != 0u && (int32_t) (last_poll_age_us - HCP2BRIDGE_BUS_ONLINE_TIMEOUT_US) <= 0;
-  const uint32_t missed_polls = polls_seen >= polls_answered ? polls_seen - polls_answered : 0u;
+  const uint32_t last_poll_age_ms = last_poll_age_us / 1000u;
+  bool pending_response = false;
+  const uint32_t raw_missed_polls = hcp2_raw_missed_polls(polls_seen, polls_answered);
+  const uint32_t missed_polls =
+      hcp2_effective_missed_polls(polls_seen, polls_answered, last_poll_age_ms, &pending_response);
   const uint32_t now_ms = millis();
 
   portENTER_CRITICAL(&this->state_mux_);
@@ -2329,10 +2470,12 @@ void HCP2Bridge::update_state_from_mailbox_() {
   this->lp_reset_count_ = lp_reset_count;
   this->lp_polls_seen_ = polls_seen;
   this->lp_polls_answered_ = polls_answered;
+  this->lp_raw_missed_polls_ = raw_missed_polls;
+  this->lp_pending_response_ = pending_response;
   this->lp_tx_abort_count_ = tx_abort;
   this->lp_collision_count_ = collision;
   this->lp_max_de_hold_us_ = max_de_hold;
-  this->lp_last_poll_age_ms_ = last_poll_age_us / 1000u;
+  this->lp_last_poll_age_ms_ = last_poll_age_ms;
   this->lp_crc_error_count_ = crc_errors;
   this->lp_rx_error_count_ = rx_errors;
   this->lp_stop_trigger_fire_count_ = stop_trigger_fires;
@@ -2352,7 +2495,7 @@ void HCP2Bridge::update_state_from_mailbox_() {
   }
   const bool continuity_healthy =
       !this->hp_fallback_ && polls_seen > 0u && heartbeat > 0u && this->bus_online_ && this->valid_broadcast_ &&
-      missed_polls == 0u && polls_answered >= polls_seen && health_flags == 0u && tx_abort == 0u &&
+      missed_polls == 0u && (polls_answered >= polls_seen || pending_response) && health_flags == 0u && tx_abort == 0u &&
       collision == 0u && loop_overruns == 0u && rx_starvations == 0u && stuck_de == 0u &&
       (max_de_hold == 0u || max_de_hold <= HCP2BRIDGE_MAX_DE_HIGH_US);
   if (this->continuity_healthy_ != continuity_healthy) {
