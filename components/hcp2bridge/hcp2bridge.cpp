@@ -1214,13 +1214,17 @@ const $=id=>document.getElementById(id);
 let logSocket=null;
 let logReconnectTimer=null;
 let logLines=[];
+let refreshBusy=false;
 const maxLogLines=300;
 function row(k,v){return `<div class="row"><span class="key">${k}</span><span class="value">${v??''}</span></div>`}
 function setRows(id,items){$(id).innerHTML=items.map(([k,v])=>row(k,v)).join('')}
 async function getJson(path){const r=await fetch(path,{cache:'no-store'});const t=await r.text();try{return JSON.parse(t)}catch(e){throw new Error(path+' returned non-JSON')}}
 async function refresh(){
+  if(refreshBusy)return;
+  refreshBusy=true;
   try{
-    const [health,stats]=await Promise.all([getJson('/health'),getJson('/stats')]);
+    const health=await getJson('/health');
+    const stats=health.stats||{};
     const ok=health.verdict==='ok';
     $('verdict').className='status '+(ok?'ok':'fail');
     $('verdict').textContent=ok?'continuity ok':'continuity problem';
@@ -1265,6 +1269,8 @@ async function refresh(){
     $('verdict').className='status unknown';
     $('verdict').textContent='debug fetch failed';
     $('reasons').textContent=e.message;
+  }finally{
+    refreshBusy=false;
   }
 }
 function renderLog(){const el=$('log');el.textContent=logLines.join('\n');el.scrollTop=el.scrollHeight}
@@ -1302,8 +1308,8 @@ function connectLogStream(){
 }
 async function loadRaw(path){const data=await getJson(path);$('raw').textContent=JSON.stringify(data,null,2)}
 setInterval(refresh,5000);
-refresh();
-refreshLog().finally(connectLogStream);
+async function init(){await refresh();await refreshLog();connectLogStream()}
+init();
 </script>
 </body>
 </html>)HTML";
@@ -1391,13 +1397,19 @@ void HCP2Bridge::http_debug_accept_client_() {
       continue;
     }
     if (this->http_debug_pending_client_ != nullptr) {
-      this->http_debug_send_response_(std::move(client), "503 Service Unavailable", "text/plain; charset=utf-8",
-                                      "busy\n");
-      continue;
+      if (millis() - this->http_debug_pending_client_started_ms_ > HCP2BRIDGE_HTTP_PENDING_TIMEOUT_MS) {
+        this->http_debug_pending_client_.reset();
+        this->http_debug_request_buffer_len_ = 0;
+      } else {
+        this->http_debug_send_response_(std::move(client), "503 Service Unavailable", "text/plain; charset=utf-8",
+                                        "busy\n");
+        continue;
+      }
     }
     this->http_debug_pending_client_ = std::move(client);
     this->http_debug_request_buffer_len_ = 0;
     this->http_debug_pending_client_started_ms_ = millis();
+    break;
   }
 }
 
@@ -1410,10 +1422,6 @@ void HCP2Bridge::http_debug_service_pending_client_() {
     this->http_debug_request_buffer_len_ = 0;
     return;
   }
-  if (!this->http_debug_pending_client_->ready()) {
-    return;
-  }
-
   while (true) {
     char buffer[96];
     ssize_t read_len = this->http_debug_pending_client_->read(buffer, sizeof(buffer));
