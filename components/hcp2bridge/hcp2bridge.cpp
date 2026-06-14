@@ -50,9 +50,9 @@ static constexpr uint32_t HCP2BRIDGE_OBSTRUCTION_LATCH_MS = 10000;
 static constexpr uint32_t HCP2BRIDGE_HTTP_SETUP_DELAY_MS = 5000;
 static constexpr uint32_t HCP2BRIDGE_HTTP_SETUP_RETRY_MS = 5000;
 static constexpr uint32_t HCP2BRIDGE_HTTP_PENDING_TIMEOUT_MS = 3000;
-static constexpr uint32_t HCP2BRIDGE_HTTP_WS_SEND_INTERVAL_MS = 100;
-static constexpr uint32_t HCP2BRIDGE_HTTP_WS_HEALTH_INTERVAL_MS = 250;
-static constexpr size_t HCP2BRIDGE_HTTP_WS_MAX_CHUNK_BYTES = 4096;
+static constexpr uint32_t HCP2BRIDGE_HTTP_WS_SEND_INTERVAL_MS = 250;
+static constexpr uint32_t HCP2BRIDGE_HTTP_WS_HEALTH_INTERVAL_MS = 500;
+static constexpr size_t HCP2BRIDGE_HTTP_WS_MAX_CHUNK_BYTES = 2048;
 static constexpr uint32_t HCP2BRIDGE_MAX_DE_HIGH_US = 9000;
 static constexpr uint32_t HCP2BRIDGE_PENDING_REPLY_GRACE_MS = 20;
 static constexpr const char *HCP2BRIDGE_WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
@@ -906,13 +906,23 @@ std::string HCP2Bridge::protocol_log_summary_json_() const {
 
 std::string HCP2Bridge::protocol_log_body_() {
   std::string body;
+  size_t snapshot_len = 0;
+
   portENTER_CRITICAL(&this->protocol_log_mux_);
-  body.reserve(this->protocol_log_used_);
-  for (size_t i = 0; i < this->protocol_log_used_; i++) {
+  snapshot_len = this->protocol_log_used_;
+  portEXIT_CRITICAL(&this->protocol_log_mux_);
+
+  body.resize(snapshot_len);
+
+  portENTER_CRITICAL(&this->protocol_log_mux_);
+  const size_t copy_len = std::min(snapshot_len, this->protocol_log_used_);
+  for (size_t i = 0; i < copy_len; i++) {
     const size_t index = (this->protocol_log_start_ + i) % this->PROTOCOL_LOG_CAPACITY;
-    body.push_back((char) this->protocol_log_buffer_[index]);
+    body[i] = (char) this->protocol_log_buffer_[index];
   }
   portEXIT_CRITICAL(&this->protocol_log_mux_);
+
+  body.resize(copy_len);
   return body;
 }
 
@@ -943,19 +953,35 @@ uint32_t HCP2Bridge::protocol_log_line_seq_(const std::string &line) {
 
 std::string HCP2Bridge::protocol_log_body_since_(uint32_t cursor_seq, uint32_t *next_cursor_seq, size_t max_bytes) {
   std::string body;
+  std::string snapshot;
   std::string line;
   uint32_t next_seq = 1;
   uint32_t last_sent_seq = 0;
+  size_t snapshot_len = 0;
 
   portENTER_CRITICAL(&this->protocol_log_mux_);
+  snapshot_len = this->protocol_log_used_;
+  portEXIT_CRITICAL(&this->protocol_log_mux_);
+
+  snapshot.resize(snapshot_len);
+  line.reserve(256);
+  body.reserve(std::min(max_bytes, snapshot_len));
+
+  portENTER_CRITICAL(&this->protocol_log_mux_);
+  const size_t copy_len = std::min(snapshot_len, this->protocol_log_used_);
   next_seq = this->protocol_log_next_seq_;
+  for (size_t i = 0; i < copy_len; i++) {
+    const size_t index = (this->protocol_log_start_ + i) % this->PROTOCOL_LOG_CAPACITY;
+    snapshot[i] = (char) this->protocol_log_buffer_[index];
+  }
+  portEXIT_CRITICAL(&this->protocol_log_mux_);
+
+  snapshot.resize(copy_len);
+
   if (next_seq < cursor_seq) {
     cursor_seq = 1;
   }
-  line.reserve(256);
-  for (size_t i = 0; i < this->protocol_log_used_; i++) {
-    const size_t index = (this->protocol_log_start_ + i) % this->PROTOCOL_LOG_CAPACITY;
-    const char c = (char) this->protocol_log_buffer_[index];
+  for (char c : snapshot) {
     if (c != '\n') {
       line.push_back(c);
       continue;
@@ -972,7 +998,6 @@ std::string HCP2Bridge::protocol_log_body_since_(uint32_t cursor_seq, uint32_t *
     }
     line.clear();
   }
-  portEXIT_CRITICAL(&this->protocol_log_mux_);
 
   if (next_cursor_seq != nullptr) {
     *next_cursor_seq = last_sent_seq != 0u ? last_sent_seq + 1u : next_seq;
