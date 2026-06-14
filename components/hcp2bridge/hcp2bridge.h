@@ -131,6 +131,7 @@ class HCP2Bridge : public Component {
   void setup_protocol_log_();
   bool http_debug_enabled_() const { return this->http_debug_port_ != 0; }
   void setup_http_debug_server_();
+  void maybe_setup_http_debug_server_();
   void http_debug_accept_client_();
   void http_debug_service_pending_client_();
   void http_debug_handle_request_(std::unique_ptr<socket::Socket> client, const std::string &request_line);
@@ -267,6 +268,7 @@ class HCP2Bridge : public Component {
   char http_debug_request_buffer_[256]{};
   size_t http_debug_request_buffer_len_{0};
   uint32_t http_debug_pending_client_started_ms_{0};
+  uint32_t http_debug_next_setup_ms_{0};
 #endif
 };
 

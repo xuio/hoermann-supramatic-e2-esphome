@@ -93,7 +93,7 @@ run still leaves poll/reply/miss counters if the SSH session or runner dies.
 
 ## HCP2 Series 4 Tester Bundles
 
-The Series 4 tester image exposes RAM-only debug endpoints on port `8080`.
+The Series 4 tester image exposes RAM-only debug endpoints on port `80`.
 Prepare a fresh logging window before reproducing an issue, then stop and
 collect the bundle:
 

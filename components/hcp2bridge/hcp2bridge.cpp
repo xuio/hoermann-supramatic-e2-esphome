@@ -44,6 +44,8 @@ static constexpr uint32_t HCP2BRIDGE_LP_HEALTH_LOG_INTERVAL_MS = 5000;
 static constexpr uint32_t HCP2BRIDGE_BUS_ONLINE_TIMEOUT_US = 1000000;
 static constexpr uint32_t HCP2BRIDGE_OBSTRUCTION_COMMAND_GRACE_MS = 2000;
 static constexpr uint32_t HCP2BRIDGE_OBSTRUCTION_LATCH_MS = 10000;
+static constexpr uint32_t HCP2BRIDGE_HTTP_SETUP_DELAY_MS = 5000;
+static constexpr uint32_t HCP2BRIDGE_HTTP_SETUP_RETRY_MS = 5000;
 static constexpr uint32_t HCP2BRIDGE_HTTP_PENDING_TIMEOUT_MS = 3000;
 static constexpr uint32_t HCP2BRIDGE_MAX_DE_HIGH_US = 9000;
 
@@ -61,7 +63,7 @@ void HCP2Bridge::setup() {
 #ifdef USE_ESP32
   this->setup_protocol_log_();
   if (this->http_debug_enabled_()) {
-    this->setup_http_debug_server_();
+    this->http_debug_next_setup_ms_ = millis() + HCP2BRIDGE_HTTP_SETUP_DELAY_MS;
   }
   this->record_hp_reset_reason_();
   this->protocol_log_append_control_("boot");
@@ -92,6 +94,7 @@ void HCP2Bridge::loop() {
 
 #ifdef USE_ESP32
   if (this->http_debug_enabled_()) {
+    this->maybe_setup_http_debug_server_();
     this->http_debug_accept_client_();
     this->http_debug_service_pending_client_();
   }
@@ -1185,8 +1188,9 @@ refresh();
 void HCP2Bridge::setup_http_debug_server_() {
   this->http_debug_server_ = socket::socket_ip_loop_monitored(SOCK_STREAM, 0);
   if (this->http_debug_server_ == nullptr) {
-    ESP_LOGE(TAG, "Failed to create HCP2 HTTP debug socket");
-    this->mark_failed();
+    ESP_LOGW(TAG, "Failed to create HCP2 HTTP debug socket, retrying");
+    this->http_debug_server_.reset();
+    this->http_debug_next_setup_ms_ = millis() + HCP2BRIDGE_HTTP_SETUP_RETRY_MS;
     return;
   }
 
@@ -1197,8 +1201,9 @@ void HCP2Bridge::setup_http_debug_server_() {
   }
   err = this->http_debug_server_->setblocking(false);
   if (err != 0) {
-    ESP_LOGE(TAG, "Failed to set HCP2 HTTP debug socket nonblocking: errno=%d", errno);
-    this->mark_failed();
+    ESP_LOGW(TAG, "Failed to set HCP2 HTTP debug socket nonblocking: errno=%d, retrying", errno);
+    this->http_debug_server_.reset();
+    this->http_debug_next_setup_ms_ = millis() + HCP2BRIDGE_HTTP_SETUP_RETRY_MS;
     return;
   }
 
@@ -1206,24 +1211,41 @@ void HCP2Bridge::setup_http_debug_server_() {
   socklen_t server_addr_len =
       socket::set_sockaddr_any((struct sockaddr *) &server_addr, sizeof(server_addr), this->http_debug_port_);
   if (server_addr_len == 0) {
-    ESP_LOGE(TAG, "Failed to build HCP2 HTTP debug bind address");
-    this->mark_failed();
+    ESP_LOGW(TAG, "Failed to build HCP2 HTTP debug bind address, retrying");
+    this->http_debug_server_.reset();
+    this->http_debug_next_setup_ms_ = millis() + HCP2BRIDGE_HTTP_SETUP_RETRY_MS;
     return;
   }
   err = this->http_debug_server_->bind((struct sockaddr *) &server_addr, server_addr_len);
   if (err != 0) {
-    ESP_LOGE(TAG, "Failed to bind HCP2 HTTP debug port %u: errno=%d", (unsigned int) this->http_debug_port_, errno);
-    this->mark_failed();
+    ESP_LOGW(TAG, "Failed to bind HCP2 HTTP debug port %u: errno=%d, retrying", (unsigned int) this->http_debug_port_,
+             errno);
+    this->http_debug_server_.reset();
+    this->http_debug_next_setup_ms_ = millis() + HCP2BRIDGE_HTTP_SETUP_RETRY_MS;
     return;
   }
   err = this->http_debug_server_->listen(1);
   if (err != 0) {
-    ESP_LOGE(TAG, "Failed to listen on HCP2 HTTP debug port %u: errno=%d", (unsigned int) this->http_debug_port_,
+    ESP_LOGW(TAG, "Failed to listen on HCP2 HTTP debug port %u: errno=%d, retrying", (unsigned int) this->http_debug_port_,
              errno);
-    this->mark_failed();
+    this->http_debug_server_.reset();
+    this->http_debug_next_setup_ms_ = millis() + HCP2BRIDGE_HTTP_SETUP_RETRY_MS;
     return;
   }
+  this->http_debug_next_setup_ms_ = 0;
   ESP_LOGI(TAG, "HCP2 HTTP debug listening on port %u", (unsigned int) this->http_debug_port_);
+}
+
+void HCP2Bridge::maybe_setup_http_debug_server_() {
+  if (this->http_debug_server_ != nullptr) {
+    return;
+  }
+  const uint32_t now_ms = millis();
+  if (this->http_debug_next_setup_ms_ != 0 &&
+      static_cast<int32_t>(now_ms - this->http_debug_next_setup_ms_) < 0) {
+    return;
+  }
+  this->setup_http_debug_server_();
 }
 
 void HCP2Bridge::http_debug_accept_client_() {

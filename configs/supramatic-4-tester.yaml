@@ -65,7 +65,7 @@ hcp2bridge:
   response_delay: 4200us
   button_press_duration: 100ms
   hp_fallback: false
-  http_debug_port: 8080
+  http_debug_port: 80
   protocol_log: true
 
 cover:

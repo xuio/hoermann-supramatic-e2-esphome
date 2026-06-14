@@ -72,28 +72,28 @@ After every command, confirm `Missed Polls`, `TX Aborts`, `Collisions`,
 
 ## RAM Protocol Log
 
-The tester image enables a RAM-only HCP2 debug log on port `8080`. It never
+The tester image enables a RAM-only HCP2 debug log on port `80`. It never
 writes this log to ESP flash. The log is a ring buffer, so support bundles keep
 the newest events before a failure instead of only the first events after boot.
 It contains command queue/execution events, state changes, LP health
 transitions, LP trace breadcrumbs (`rx`, `tx`, `de`, errors), and full protocol
 frames when the HP fallback responder is active.
 
-Open `http://supramatic-4-tester.local:8080/` in a browser for the interactive
+Open `http://supramatic-4-tester.local/` in a browser for the interactive
 debug page. It shows continuity health, core counters, RAM-log controls, log
 tail, and raw JSON views without writing anything to flash.
 
 Raw endpoints:
 
-- `http://supramatic-4-tester.local:8080/health`
-- `http://supramatic-4-tester.local:8080/preflight`
-- `http://supramatic-4-tester.local:8080/stats`
-- `http://supramatic-4-tester.local:8080/support`
-- `http://supramatic-4-tester.local:8080/hcp2_log/start`
-- `http://supramatic-4-tester.local:8080/hcp2_log/stop`
-- `http://supramatic-4-tester.local:8080/hcp2_log/clear`
-- `http://supramatic-4-tester.local:8080/hcp2_log`
-- `http://supramatic-4-tester.local:8080/hcp2_log.bin`
+- `http://supramatic-4-tester.local/health`
+- `http://supramatic-4-tester.local/preflight`
+- `http://supramatic-4-tester.local/stats`
+- `http://supramatic-4-tester.local/support`
+- `http://supramatic-4-tester.local/hcp2_log/start`
+- `http://supramatic-4-tester.local/hcp2_log/stop`
+- `http://supramatic-4-tester.local/hcp2_log/clear`
+- `http://supramatic-4-tester.local/hcp2_log`
+- `http://supramatic-4-tester.local/hcp2_log.bin`
 
 For a reproducible issue, start a fresh RAM log immediately before reproducing
 the problem:

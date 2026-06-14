@@ -96,7 +96,7 @@ def make_output_dir(root: Path | None) -> Path:
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Collect an HCP2 tester support bundle from the ESP HTTP debug port")
     parser.add_argument("--host", required=True, help="ESP hostname or IP address")
-    parser.add_argument("--port", type=int, default=8080, help="HCP2 HTTP debug port")
+    parser.add_argument("--port", type=int, default=80, help="HCP2 HTTP debug port")
     parser.add_argument("--timeout", type=float, default=10.0, help="HTTP timeout per request in seconds")
     parser.add_argument("--output-dir", type=Path, help="Bundle output directory")
     parser.add_argument(
