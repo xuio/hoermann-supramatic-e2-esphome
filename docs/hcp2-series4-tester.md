@@ -80,8 +80,8 @@ The tester image enables a RAM-only HCP2 debug log on port `80`. It never
 writes this log to ESP flash. The log is a ring buffer, so support bundles keep
 the newest events before a failure instead of only the first events after boot.
 It contains command queue/execution events, state changes, LP health
-transitions, LP trace breadcrumbs (`rx`, `tx`, `de`, errors), and full protocol
-frames when the HP fallback responder is active.
+transitions, important LP trace breadcrumbs (boot, command, health, error), and
+full protocol frames when the HP fallback responder is active.
 
 Open `http://supramatic-4-tester.local/` in a browser for the interactive
 debug page. It shows continuity health, core counters, RAM-log controls, a live
@@ -89,12 +89,14 @@ WebSocket stream, and raw JSON views without writing anything to flash. The
 WebSocket pushes typed JSON messages in real time:
 `{"type":"health","health":...}` for live health/counters and
 `{"type":"log","text":"..."}` for new NDJSON log records.
-The page keeps its own bounded browser-side cache of the live stream. The
-`Download JSON` button exports that frontend cache as a structured JSON file
-with receive timestamps, raw lines, and parsed log objects. To keep browser RAM
-bounded, the cache keeps only the newest 10 minutes and at most 1 MiB. The
-`Device NDJSON` and `Device Raw` links still download the ESP's current RAM ring
-buffer directly.
+Opening the page does not automatically download the full device ring buffer;
+the live view starts from the current stream position. The page keeps its own
+bounded browser-side cache of the live stream. The `Download JSON` button
+exports that frontend cache as a structured JSON file with receive timestamps,
+raw lines, and parsed log objects. To keep browser RAM bounded, the cache keeps
+only the newest 10 minutes and at most 1 MiB. `Refresh Log`, `Device NDJSON`,
+and `Device Raw` still download the ESP's current RAM ring buffer directly when
+you request them.
 
 Raw endpoints:
 

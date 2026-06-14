@@ -50,9 +50,17 @@ static constexpr uint32_t HCP2BRIDGE_OBSTRUCTION_LATCH_MS = 10000;
 static constexpr uint32_t HCP2BRIDGE_HTTP_SETUP_DELAY_MS = 5000;
 static constexpr uint32_t HCP2BRIDGE_HTTP_SETUP_RETRY_MS = 5000;
 static constexpr uint32_t HCP2BRIDGE_HTTP_PENDING_TIMEOUT_MS = 3000;
+static constexpr uint32_t HCP2BRIDGE_HTTP_RESPONSE_TIMEOUT_MS = 150;
+static constexpr uint32_t HCP2BRIDGE_HTTP_LARGE_RESPONSE_TIMEOUT_MS = 750;
+static constexpr uint32_t HCP2BRIDGE_HTTP_WS_HANDSHAKE_TIMEOUT_MS = 100;
+static constexpr uint32_t HCP2BRIDGE_HTTP_WS_WRITE_TIMEOUT_MS = 5;
 static constexpr uint32_t HCP2BRIDGE_HTTP_WS_SEND_INTERVAL_MS = 250;
 static constexpr uint32_t HCP2BRIDGE_HTTP_WS_HEALTH_INTERVAL_MS = 500;
+static constexpr size_t HCP2BRIDGE_HTTP_REQUEST_READ_BUDGET_BYTES = 256;
+static constexpr size_t HCP2BRIDGE_HTTP_WS_DRAIN_BUDGET_BYTES = 128;
+static constexpr size_t HCP2BRIDGE_HTTP_LARGE_RESPONSE_BYTES = 4096;
 static constexpr size_t HCP2BRIDGE_HTTP_WS_MAX_CHUNK_BYTES = 2048;
+static constexpr uint32_t HCP2BRIDGE_LP_TRACE_DRAIN_MAX_PER_TICK = HCP2_LP_TRACE_CAPACITY;
 static constexpr uint32_t HCP2BRIDGE_MAX_DE_HIGH_US = 9000;
 static constexpr uint32_t HCP2BRIDGE_PENDING_REPLY_GRACE_MS = 20;
 static constexpr const char *HCP2BRIDGE_WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
@@ -511,6 +519,27 @@ const char *HCP2Bridge::lp_trace_event_name_(uint16_t event) {
   }
 }
 
+bool HCP2Bridge::lp_trace_should_log_(const hcp2_lp_trace_entry_t &entry) {
+  switch (entry.event) {
+    case HCP2_LP_TRACE_BOOT:
+    case HCP2_LP_TRACE_COMMAND:
+    case HCP2_LP_TRACE_RX_ERROR:
+    case HCP2_LP_TRACE_TX_ABORT:
+    case HCP2_LP_TRACE_COLLISION:
+    case HCP2_LP_TRACE_WDT:
+    case HCP2_LP_TRACE_STOP_TRIGGER:
+    case HCP2_LP_TRACE_HEALTH:
+      return true;
+    case HCP2_LP_TRACE_TX:
+    case HCP2_LP_TRACE_RX:
+    case HCP2_LP_TRACE_DE:
+    case HCP2_LP_TRACE_GPIO_RX:
+    case HCP2_LP_TRACE_RX_ECHO:
+    default:
+      return false;
+  }
+}
+
 bool HCP2Bridge::arm_stop_trigger(float target_position, uint32_t ttl_ms) {
 #ifdef USE_ESP32
   if (this->hp_fallback_) {
@@ -681,6 +710,9 @@ void HCP2Bridge::protocol_log_append_control_(const char *action) {
 
 void HCP2Bridge::protocol_log_append_command_(const char *phase, hcp2_button_t button, bool ok,
                                               const char *reason) {
+  if (!this->protocol_log_ready_ || !this->protocol_log_enabled_) {
+    return;
+  }
   uint32_t seq;
   portENTER_CRITICAL(&this->protocol_log_mux_);
   seq = this->protocol_log_next_seq_++;
@@ -704,6 +736,9 @@ void HCP2Bridge::protocol_log_append_command_(const char *phase, hcp2_button_t b
 
 void HCP2Bridge::protocol_log_append_state_(const hcp2_drive_status_t &status, bool bus_online, bool obstruction,
                                             const char *source) {
+  if (!this->protocol_log_ready_ || !this->protocol_log_enabled_) {
+    return;
+  }
   uint32_t seq;
   portENTER_CRITICAL(&this->protocol_log_mux_);
   seq = this->protocol_log_next_seq_++;
@@ -735,6 +770,9 @@ void HCP2Bridge::protocol_log_append_state_(const hcp2_drive_status_t &status, b
 
 void HCP2Bridge::protocol_log_append_protocol_event_(uint32_t event_us, uint8_t event_type, uint8_t frame_type,
                                                      const uint8_t *data, uint8_t len, const char *source) {
+  if (!this->protocol_log_ready_ || !this->protocol_log_enabled_) {
+    return;
+  }
   uint32_t seq;
   if (len > HCP2_MAX_FRAME_LEN) {
     len = HCP2_MAX_FRAME_LEN;
@@ -764,6 +802,9 @@ void HCP2Bridge::protocol_log_append_protocol_event_(uint32_t event_us, uint8_t 
 }
 
 void HCP2Bridge::protocol_log_append_lp_trace_(const hcp2_lp_trace_entry_t &entry) {
+  if (!this->protocol_log_ready_ || !this->protocol_log_enabled_) {
+    return;
+  }
   uint32_t seq;
   portENTER_CRITICAL(&this->protocol_log_mux_);
   seq = this->protocol_log_next_seq_++;
@@ -786,6 +827,9 @@ void HCP2Bridge::protocol_log_append_lp_trace_(const hcp2_lp_trace_entry_t &entr
 }
 
 void HCP2Bridge::protocol_log_append_lp_trace_overflow_(uint32_t dropped) {
+  if (!this->protocol_log_ready_ || !this->protocol_log_enabled_) {
+    return;
+  }
   uint32_t seq;
   portENTER_CRITICAL(&this->protocol_log_mux_);
   seq = this->protocol_log_next_seq_++;
@@ -837,14 +881,22 @@ void HCP2Bridge::drain_lp_trace_() {
     cursor = next_cursor;
   }
 
-  while (cursor < head) {
+  uint32_t drained = 0;
+  while (cursor < head && drained < HCP2BRIDGE_LP_TRACE_DRAIN_MAX_PER_TICK) {
     const uint32_t index = cursor % HCP2_LP_TRACE_CAPACITY;
     hcp2_lp_trace_entry_t entry{};
     entry.at_us = mailbox->trace[index].at_us;
     entry.event = mailbox->trace[index].event;
     entry.value = mailbox->trace[index].value;
-    this->protocol_log_append_lp_trace_(entry);
+    if (lp_trace_should_log_(entry)) {
+      this->protocol_log_append_lp_trace_(entry);
+    }
     cursor++;
+    drained++;
+  }
+  if (cursor < head) {
+    this->protocol_log_append_lp_trace_overflow_(head - cursor);
+    cursor = head;
   }
   this->last_lp_trace_head_ = cursor;
 }
@@ -961,7 +1013,17 @@ std::string HCP2Bridge::protocol_log_body_since_(uint32_t cursor_seq, uint32_t *
 
   portENTER_CRITICAL(&this->protocol_log_mux_);
   snapshot_len = this->protocol_log_used_;
+  next_seq = this->protocol_log_next_seq_;
   portEXIT_CRITICAL(&this->protocol_log_mux_);
+
+  if (next_seq < cursor_seq) {
+    cursor_seq = 1;
+  } else if (cursor_seq >= next_seq) {
+    if (next_cursor_seq != nullptr) {
+      *next_cursor_seq = next_seq;
+    }
+    return body;
+  }
 
   snapshot.resize(snapshot_len);
   line.reserve(256);
@@ -980,6 +1042,11 @@ std::string HCP2Bridge::protocol_log_body_since_(uint32_t cursor_seq, uint32_t *
 
   if (next_seq < cursor_seq) {
     cursor_seq = 1;
+  } else if (cursor_seq >= next_seq) {
+    if (next_cursor_seq != nullptr) {
+      *next_cursor_seq = next_seq;
+    }
+    return body;
   }
   for (char c : snapshot) {
     if (c != '\n') {
@@ -1000,7 +1067,7 @@ std::string HCP2Bridge::protocol_log_body_since_(uint32_t cursor_seq, uint32_t *
   }
 
   if (next_cursor_seq != nullptr) {
-    *next_cursor_seq = last_sent_seq != 0u ? last_sent_seq + 1u : next_seq;
+    *next_cursor_seq = last_sent_seq != 0u ? last_sent_seq + 1u : cursor_seq;
   }
   return body;
 }
@@ -1470,7 +1537,7 @@ function downloadCachedLog(){
 }
 async function loadRaw(path){const data=await getJson(path);$('raw').textContent=JSON.stringify(data,null,2)}
 setInterval(()=>{if(Date.now()-lastHealthStreamMs>2000)refresh()},1000);
-async function init(){await refresh();await refreshLog();connectLogStream()}
+async function init(){await refresh();connectLogStream()}
 init();
 </script>
 </body>
@@ -1584,10 +1651,13 @@ void HCP2Bridge::http_debug_service_pending_client_() {
     this->http_debug_request_buffer_len_ = 0;
     return;
   }
-  while (true) {
+  size_t budget = HCP2BRIDGE_HTTP_REQUEST_READ_BUDGET_BYTES;
+  while (budget > 0u) {
     char buffer[96];
-    ssize_t read_len = this->http_debug_pending_client_->read(buffer, sizeof(buffer));
+    const size_t read_budget = std::min(sizeof(buffer), budget);
+    ssize_t read_len = this->http_debug_pending_client_->read(buffer, read_budget);
     if (read_len > 0) {
+      budget -= (size_t) read_len;
       for (ssize_t i = 0; i < read_len; i++) {
         const char c = buffer[i];
         if (this->http_debug_request_buffer_len_ < sizeof(this->http_debug_request_buffer_) - 1u) {
@@ -1649,10 +1719,13 @@ void HCP2Bridge::http_debug_service_log_ws_() {
   }
 
   if (this->http_debug_log_ws_client_->ready()) {
-    while (true) {
+    size_t budget = HCP2BRIDGE_HTTP_WS_DRAIN_BUDGET_BYTES;
+    while (budget > 0u) {
       char buffer[96];
-      ssize_t read_len = this->http_debug_log_ws_client_->read(buffer, sizeof(buffer));
+      const size_t read_budget = std::min(sizeof(buffer), budget);
+      ssize_t read_len = this->http_debug_log_ws_client_->read(buffer, read_budget);
       if (read_len > 0) {
+        budget -= (size_t) read_len;
         continue;
       }
       if (read_len == 0) {
@@ -1672,7 +1745,7 @@ void HCP2Bridge::http_debug_service_log_ws_() {
       now_ms - this->http_debug_log_ws_last_status_ms_ >= HCP2BRIDGE_HTTP_WS_HEALTH_INTERVAL_MS) {
     this->http_debug_log_ws_last_status_ms_ = now_ms;
     if (!this->http_debug_send_ws_text_(this->http_debug_log_ws_client_.get(), this->http_debug_ws_health_json_(),
-                                        25)) {
+                                        HCP2BRIDGE_HTTP_WS_WRITE_TIMEOUT_MS)) {
       this->http_debug_log_ws_client_.reset();
       return;
     }
@@ -1690,7 +1763,8 @@ void HCP2Bridge::http_debug_service_log_ws_() {
   if (body.empty()) {
     return;
   }
-  if (!this->http_debug_send_ws_text_(this->http_debug_log_ws_client_.get(), this->http_debug_ws_log_json_(body), 25)) {
+  if (!this->http_debug_send_ws_text_(this->http_debug_log_ws_client_.get(), this->http_debug_ws_log_json_(body),
+                                      HCP2BRIDGE_HTTP_WS_WRITE_TIMEOUT_MS)) {
     this->http_debug_log_ws_client_.reset();
   }
 }
@@ -1790,7 +1864,7 @@ void HCP2Bridge::http_debug_upgrade_log_ws_(std::unique_ptr<socket::Socket> clie
   response += "Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ";
   response.append((const char *) encoded, encoded_len);
   response += "\r\nAccess-Control-Allow-Origin: *\r\n\r\n";
-  if (!this->http_debug_write_all_(client.get(), response, 1000)) {
+  if (!this->http_debug_write_all_(client.get(), response, HCP2BRIDGE_HTTP_WS_HANDSHAKE_TIMEOUT_MS)) {
     return;
   }
 
@@ -1911,7 +1985,10 @@ void HCP2Bridge::http_debug_send_response_(std::unique_ptr<socket::Socket> clien
   response += std::to_string(body.size());
   response += "\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\n";
   response += body;
-  if (!this->http_debug_write_all_(client.get(), response, 1000)) {
+  const uint32_t timeout_ms =
+      response.size() > HCP2BRIDGE_HTTP_LARGE_RESPONSE_BYTES ? HCP2BRIDGE_HTTP_LARGE_RESPONSE_TIMEOUT_MS
+                                                             : HCP2BRIDGE_HTTP_RESPONSE_TIMEOUT_MS;
+  if (!this->http_debug_write_all_(client.get(), response, timeout_ms)) {
     ESP_LOGW(TAG, "Failed to write HCP2 HTTP response: errno=%d", errno);
   }
 }
@@ -1925,6 +2002,9 @@ bool HCP2Bridge::http_debug_write_all_(socket::Socket *client, const std::string
   size_t offset = 0;
   const uint32_t started = millis();
   while (offset < payload.size()) {
+    if (timeout_ms != 0u && millis() - started > timeout_ms) {
+      return false;
+    }
     ssize_t written = client->write(payload.data() + offset, payload.size() - offset);
     if (written > 0) {
       offset += (size_t) written;
@@ -1933,7 +2013,7 @@ bool HCP2Bridge::http_debug_write_all_(socket::Socket *client, const std::string
     if (written < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
       return false;
     }
-    if (millis() - started > timeout_ms) {
+    if (timeout_ms != 0u && millis() - started > timeout_ms) {
       return false;
     }
     delay(1);

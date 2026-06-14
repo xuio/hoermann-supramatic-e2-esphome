@@ -170,6 +170,7 @@ class HCP2Bridge : public Component {
                                            const uint8_t *data, uint8_t len, const char *source);
   void protocol_log_append_lp_trace_(const hcp2_lp_trace_entry_t &entry);
   void protocol_log_append_lp_trace_overflow_(uint32_t dropped);
+  static bool lp_trace_should_log_(const hcp2_lp_trace_entry_t &entry);
   void drain_lp_protocol_event_();
   void drain_lp_trace_();
   void drain_hp_protocol_event_();
