@@ -1074,6 +1074,7 @@ std::string HCP2Bridge::protocol_log_body_since_(uint32_t cursor_seq, uint32_t *
 
 std::string HCP2Bridge::http_debug_health_json_() {
   const bool lp_mode = !this->hp_fallback_;
+  hcp2_drive_status_t status = this->drive_status_snapshot_();
   const uint32_t polls_seen = this->get_lp_poll_count();
   const uint32_t polls_answered = this->get_lp_response_count();
   const uint32_t missed_polls = this->get_lp_missed_poll_count();
@@ -1187,6 +1188,51 @@ std::string HCP2Bridge::http_debug_health_json_() {
   json += std::to_string(max_de_hold_us);
   json += "},\"stats\":";
   json += this->http_debug_stats_json_();
+  json += ",\"door\":{\"target_position_raw\":";
+  json += std::to_string(status.target_position);
+  json += ",\"current_position_raw\":";
+  json += std::to_string(status.current_position);
+  json += ",\"state_raw\":";
+  json += std::to_string(status.state);
+  json += ",\"state\":\"";
+  json += hcp2_state_name(static_cast<hcp2_drive_state_code_t>(status.state));
+  json += "\",\"light\":";
+  json += status.light_on ? "true" : "false";
+  json += ",\"obstruction\":";
+  json += this->is_obstructed() ? "true" : "false";
+  json += "},\"lp\":{\"health_flags\":";
+  json += std::to_string(this->get_lp_health_flags());
+  json += ",\"max_rx_fifo\":";
+  json += std::to_string(this->get_lp_max_rx_fifo_count());
+  json += ",\"max_loop_us\":";
+  json += std::to_string(this->get_lp_max_loop_us());
+  json += ",\"max_poll_rx_to_schedule_us\":";
+  json += std::to_string(this->get_lp_max_poll_rx_to_schedule_us());
+  json += ",\"max_response_schedule_to_tx_start_us\":";
+  json += std::to_string(this->get_lp_max_response_schedule_to_tx_start_us());
+  json += ",\"max_response_tx_us\":";
+  json += std::to_string(this->get_lp_max_response_tx_us());
+  json += ",\"max_de_hold_us\":";
+  json += std::to_string(this->get_lp_max_de_hold_us());
+  json += ",\"last_poll_age_ms\":";
+  json += std::to_string(this->get_lp_last_poll_age_ms());
+  json += ",\"loop_overruns\":";
+  json += std::to_string(this->get_lp_loop_overrun_count());
+  json += ",\"rx_starvations\":";
+  json += std::to_string(this->get_lp_rx_starvation_count());
+  json += ",\"stuck_de_recoveries\":";
+  json += std::to_string(this->get_lp_stuck_de_count());
+  json += ",\"mailbox_repairs\":";
+  json += std::to_string(this->get_lp_mailbox_repair_count());
+  json += "},\"hp\":{\"resets\":";
+  json += std::to_string(this->get_hp_reset_count());
+  json += ",\"panic_resets\":";
+  json += std::to_string(this->get_hp_panic_reset_count());
+  json += ",\"wdt_resets\":";
+  json += std::to_string(this->get_hp_wdt_reset_count());
+  json += ",\"brownout_resets\":";
+  json += std::to_string(this->get_hp_brownout_reset_count());
+  json += "}";
   json += "}";
   return json;
 }
@@ -1322,10 +1368,13 @@ pre{white-space:pre-wrap;overflow:auto;max-height:48vh;background:#020617;border
   <div id="reasons" class="reasons"></div>
 </div>
 <div class="grid" style="margin-top:12px">
-  <section class="panel"><h2>Continuity</h2><div id="continuity"></div></section>
+  <section class="panel"><h2>Health</h2><div id="continuity"></div></section>
   <section class="panel"><h2>Door</h2><div id="door"></div></section>
-  <section class="panel"><h2>Counters</h2><div id="counters"></div></section>
-  <section class="panel"><h2>Timing</h2><div id="timing"></div></section>
+  <section class="panel"><h2>Checks</h2><div id="counters"></div></section>
+  <section class="panel"><h2>LP Core</h2><div id="timing"></div></section>
+  <section class="panel"><h2>Stats</h2><div id="statsPanel"></div></section>
+  <section class="panel"><h2>Protocol Log</h2><div id="protocolPanel"></div></section>
+  <section class="panel"><h2>HP</h2><div id="hpPanel"></div></section>
 </div>
 <section class="panel" style="margin-top:12px">
   <h2>RAM Protocol Log</h2>
@@ -1366,6 +1415,30 @@ const maxCacheAgeMs=10*60*1000;
 const maxCacheBytes=1024*1024;
 function row(k,v){return `<div class="row"><span class="key">${k}</span><span class="value">${v??''}</span></div>`}
 function setRows(id,items){$(id).innerHTML=items.map(([k,v])=>row(k,v)).join('')}
+function label(k){return String(k).replaceAll('_',' ')}
+function fmt(v){
+  if(v===undefined||v===null)return '';
+  if(Array.isArray(v))return v.join(', ');
+  if(typeof v==='number')return Number.isInteger(v)?String(v):v.toFixed(3);
+  if(typeof v==='object')return JSON.stringify(v);
+  return String(v);
+}
+function objectRows(obj,priority=[]){
+  const source=obj||{};
+  const seen=new Set();
+  const rows=[];
+  function add(k){
+    if(seen.has(k)||!Object.prototype.hasOwnProperty.call(source,k))return;
+    const v=source[k];
+    if(v&&typeof v==='object'&&!Array.isArray(v))return;
+    seen.add(k);
+    rows.push([label(k),fmt(v)]);
+  }
+  priority.forEach(add);
+  Object.keys(source).sort().forEach(add);
+  return rows;
+}
+function setObjectRows(id,obj,priority=[]){setRows(id,objectRows(obj,priority))}
 function sleep(ms){return new Promise(resolve=>setTimeout(resolve,ms))}
 async function getJson(path,attempts=3){
   let lastError=null;
@@ -1391,43 +1464,17 @@ function applyHealth(health,source='http'){
   $('updated').textContent=' updated '+new Date().toLocaleTimeString()+` via ${source}`;
   $('reasons').textContent=(health.reasons&&health.reasons.length)?'Reasons: '+health.reasons.join(', '):'';
   const c=health.checks||{};
-  setRows('continuity',[
-    ['safe for OTA/restart',health.safe_for_ota_restart],
-    ['bus online',c.bus_online],
-    ['LP seen',c.lp_seen],
-    ['valid broadcast',c.valid_broadcast],
-    ['last poll age ms',c.last_poll_age_ms],
-    ['pending response',c.pending_response],
-    ['raw poll delta',c.raw_missed_polls],
-    ['missed polls',c.missed_polls],
-    ['health flags',c.health_flags]
-  ]);
-  setRows('door',[
-    ['state',stats.state],
-    ['position',Number(stats.position).toFixed(3)],
-    ['mode',stats.mode],
-    ['uptime ms',stats.uptime_ms]
-  ]);
-  setRows('counters',[
-    ['polls seen',stats.polls_seen],
-    ['polls answered',stats.polls_answered],
-    ['pending response',stats.pending_response],
-    ['raw poll delta',stats.raw_missed_polls],
-    ['crc errors',stats.crc_errors],
-    ['rx errors',stats.rx_errors],
-    ['tx aborts',stats.tx_aborts],
-    ['collisions',stats.collisions],
-    ['LP resets',stats.lp_resets],
-    ['HP resets',stats.hp_resets]
-  ]);
+  const door=Object.assign({position:stats.position,state:stats.state},health.door||{});
+  const lp=health.lp||{};
+  const hp=health.hp||{};
   const p=stats.protocol_log||{};
-  setRows('timing',[
-    ['max DE hold us',c.max_de_hold_us],
-    ['log mode',p.mode],
-    ['log used bytes',p.used],
-    ['log capacity',p.capacity],
-    ['overwritten records',p.overwritten_records]
-  ]);
+  setObjectRows('continuity',{verdict:health.verdict,safe_for_ota_restart:health.safe_for_ota_restart,reasons:health.reasons||[]},['verdict','safe_for_ota_restart','reasons']);
+  setObjectRows('door',door,['state','position','state_raw','target_position_raw','current_position_raw','light','obstruction']);
+  setObjectRows('counters',c,['lp_mode','lp_seen','bus_online','valid_broadcast','polls_seen','polls_answered','pending_response','raw_missed_polls','missed_polls']);
+  setObjectRows('timing',lp,['health_flags','max_loop_us','max_rx_fifo','max_poll_rx_to_schedule_us','max_response_schedule_to_tx_start_us','max_response_tx_us','max_de_hold_us','last_poll_age_ms']);
+  setObjectRows('statsPanel',stats,['protocol','mode','uptime_ms','bus_online','valid_broadcast','state','position','polls_seen','polls_answered','missed_polls','raw_missed_polls','pending_response']);
+  setObjectRows('protocolPanel',p,['enabled','used','capacity','overwritten_records','overwritten_bytes','dropped_records','dropped_bytes','next_seq','storage','mode','flash_writes','ready']);
+  setObjectRows('hpPanel',hp,['resets','panic_resets','wdt_resets','brownout_resets']);
   $('logSummary').textContent=`log ${p.enabled?'enabled':'disabled'}, ${p.used||0}/${p.capacity||0} bytes, overwritten ${p.overwritten_records||0} records`;
   updateLogCacheSummary();
 }
