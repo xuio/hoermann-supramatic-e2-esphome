@@ -1406,10 +1406,14 @@ let logLines=[];
 let logCache=[];
 let logCacheBytes=0;
 let refreshBusy=false;
+let logLoadBusy=false;
+let rawPath=null;
+let rawBusy=false;
 let lastHealthStreamMs=0;
 let lastHealthOkMs=0;
 let logReconnectDelayMs=1000;
 let logRenderQueued=false;
+let logSeenSeqs=new Set();
 const maxVisibleLogLines=300;
 const maxCacheAgeMs=10*60*1000;
 const maxCacheBytes=1024*1024;
@@ -1478,6 +1482,7 @@ function applyHealth(health,source='http'){
   $('logSummary').textContent=`log ${p.enabled?'enabled':'disabled'}, ${p.used||0}/${p.capacity||0} bytes, overwritten ${p.overwritten_records||0} records`;
   updateLogCacheSummary();
 }
+function requestRefresh(){refresh().catch(()=>{})}
 async function refresh(){
   if(refreshBusy)return;
   refreshBusy=true;
@@ -1495,7 +1500,7 @@ async function refresh(){
     refreshBusy=false;
   }
 }
-function resetLogCache(){logCache=[];logCacheBytes=0;updateLogCacheSummary()}
+function resetLogCache(){logCache=[];logCacheBytes=0;logSeenSeqs=new Set();updateLogCacheSummary()}
 function pruneLogCache(now=Date.now()){
   const minMs=now-maxCacheAgeMs;
   while(logCache.length&&(logCache[0].received_ms<minMs||logCacheBytes>maxCacheBytes)){
@@ -1512,14 +1517,19 @@ function updateLogCacheSummary(){
   $('logCache').textContent=`browser cache ${logCache.length} records, ${kb} KiB, newest 10 min / 1 MiB, ${oldest} to ${newest}`;
 }
 function cacheLogLine(line,receivedMs=Date.now()){
-  if(!line)return;
+  if(!line)return false;
   let entry=null;
   try{entry=JSON.parse(line)}catch(e){}
+  if(entry&&typeof entry.seq==='number'){
+    if(logSeenSeqs.has(entry.seq))return false;
+    logSeenSeqs.add(entry.seq);
+  }
   const record={received_at:new Date(receivedMs).toISOString(),received_ms:receivedMs,bytes:line.length,raw:line};
   if(entry&&typeof entry==='object')record.entry=entry;else record.parse_error=true;
   logCache.push(record);
   logCacheBytes+=record.bytes;
   pruneLogCache(receivedMs);
+  return true;
 }
 function renderLogNow(){const el=$('log');el.textContent=logLines.join('\n');el.scrollTop=el.scrollHeight}
 function renderLog(){
@@ -1533,24 +1543,35 @@ function renderLog(){
 function appendLogText(text,replace=false){
   const now=Date.now();
   if(replace){logLines=[];resetLogCache()}
+  let changed=replace;
   for(const line of text.split('\n')){
     if(!line)continue;
-    logLines.push(line);
-    cacheLogLine(line,now);
+    if(cacheLogLine(line,now)){
+      logLines.push(line);
+      changed=true;
+    }
   }
   if(logLines.length>maxVisibleLogLines)logLines=logLines.slice(logLines.length-maxVisibleLogLines);
-  renderLog();
+  if(changed)renderLog();
   updateLogCacheSummary();
 }
 async function controlLog(action){
   await fetch('/hcp2_log/'+action,{cache:'no-store'});
-  await refresh();
-  if(action==='clear'){logLines=[];resetLogCache();renderLog()}else await refreshLog();
+  requestRefresh();
+  if(action==='clear'){logLines=[];resetLogCache();renderLog();await refreshLog(false)}else await refreshLog();
 }
-async function refreshLog(){
-  const r=await fetch('/hcp2_log',{cache:'no-store'});
-  const text=await r.text();
-  appendLogText(text,true);
+async function refreshLog(replace=true){
+  if(logLoadBusy)return;
+  logLoadBusy=true;
+  try{
+    const r=await fetch('/hcp2_log',{cache:'no-store'});
+    const text=await r.text();
+    appendLogText(text,replace);
+  }catch(e){
+    $('logStream').textContent='log refresh failed: '+e.message;
+  }finally{
+    logLoadBusy=false;
+  }
 }
 function connectLogStream(){
   if(logReconnectTimer){clearTimeout(logReconnectTimer);logReconnectTimer=null}
@@ -1559,7 +1580,7 @@ function connectLogStream(){
   const ws=new WebSocket(`${scheme}://${location.host}/hcp2_log/ws`);
   logSocket=ws;
   $('logStream').textContent='stream connecting';
-  ws.onopen=()=>{$('logStream').textContent='stream connected';logReconnectDelayMs=1000};
+  ws.onopen=()=>{$('logStream').textContent='stream connected';logReconnectDelayMs=1000;refreshLog(false)};
   ws.onmessage=event=>{
     let message=null;
     try{message=JSON.parse(event.data)}catch(e){}
@@ -1605,9 +1626,23 @@ function downloadCachedLog(){
   a.remove();
   setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
-async function loadRaw(path){const data=await getJson(path);$('raw').textContent=JSON.stringify(data,null,2)}
-setInterval(()=>{if(Date.now()-lastHealthStreamMs>2000)refresh()},1000);
-async function init(){await refresh();connectLogStream()}
+async function refreshRaw(){
+  if(!rawPath||rawBusy)return;
+  rawBusy=true;
+  try{
+    const data=await getJson(rawPath,2);
+    $('raw').textContent=JSON.stringify(data,null,2);
+  }catch(e){
+    $('raw').textContent='refresh failed: '+e.message;
+  }finally{
+    rawBusy=false;
+  }
+}
+async function loadRaw(path){rawPath=path;await refreshRaw()}
+setInterval(()=>{if(Date.now()-lastHealthStreamMs>2000)requestRefresh()},1000);
+setInterval(requestRefresh,5000);
+setInterval(()=>{refreshRaw().catch(()=>{})},3000);
+async function init(){requestRefresh();connectLogStream()}
 init();
 </script>
 </body>
