@@ -25,14 +25,26 @@ HCP2BridgeObstructionSensor = hcp2bridge_ns.class_(
 HCP2BridgeBusOnlineSensor = hcp2bridge_ns.class_(
     "HCP2BridgeBusOnlineSensor", binary_sensor.BinarySensor, cg.Component
 )
+HCP2BridgeContinuityHealthySensor = hcp2bridge_ns.class_(
+    "HCP2BridgeContinuityHealthySensor", binary_sensor.BinarySensor, cg.Component
+)
+HCP2BridgeSafeForOTARestartSensor = hcp2bridge_ns.class_(
+    "HCP2BridgeSafeForOTARestartSensor", binary_sensor.BinarySensor, cg.Component
+)
+HCP2BridgeContinuityProblemSensor = hcp2bridge_ns.class_(
+    "HCP2BridgeContinuityProblemSensor", binary_sensor.BinarySensor, cg.Component
+)
 
 CONF_BUS_ONLINE = "bus_online"
 CONF_CLOSED = "closed"
+CONF_CONTINUITY_HEALTHY = "continuity_healthy"
+CONF_CONTINUITY_PROBLEM = "continuity_problem"
 CONF_GOT_VALID_BROADCAST = "got_valid_broadcast"
 CONF_LIGHT = "light"
 CONF_MOVING = "moving"
 CONF_OBSTRUCTION = "obstruction"
 CONF_OPEN = "open"
+CONF_SAFE_FOR_OTA_RESTART = "safe_for_ota_restart"
 
 CONFIG_SCHEMA = cv.Schema(
     {
@@ -61,6 +73,21 @@ CONFIG_SCHEMA = cv.Schema(
             device_class=DEVICE_CLASS_CONNECTIVITY,
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
         ),
+        cv.Optional(CONF_CONTINUITY_HEALTHY): binary_sensor.binary_sensor_schema(
+            HCP2BridgeContinuityHealthySensor,
+            device_class=DEVICE_CLASS_CONNECTIVITY,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
+        cv.Optional(CONF_SAFE_FOR_OTA_RESTART): binary_sensor.binary_sensor_schema(
+            HCP2BridgeSafeForOTARestartSensor,
+            device_class=DEVICE_CLASS_CONNECTIVITY,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
+        cv.Optional(CONF_CONTINUITY_PROBLEM): binary_sensor.binary_sensor_schema(
+            HCP2BridgeContinuityProblemSensor,
+            device_class=DEVICE_CLASS_PROBLEM,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
     }
 )
 
@@ -81,3 +108,6 @@ async def to_code(config):
     await _new_sensor(config, CONF_LIGHT, parent)
     await _new_sensor(config, CONF_OBSTRUCTION, parent)
     await _new_sensor(config, CONF_BUS_ONLINE, parent)
+    await _new_sensor(config, CONF_CONTINUITY_HEALTHY, parent)
+    await _new_sensor(config, CONF_SAFE_FOR_OTA_RESTART, parent)
+    await _new_sensor(config, CONF_CONTINUITY_PROBLEM, parent)

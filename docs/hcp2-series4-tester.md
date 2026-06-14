@@ -45,6 +45,8 @@ plus explicit command buttons for `open`, `close`, `stop`, `half`, `vent`, and
 4. Confirm these entities become healthy:
    - `Valid HCP2 Broadcast`
    - `HCP2 Bus Online`
+   - `HCP2 Continuity Healthy`
+   - `Safe For OTA Restart`
    - `Polls Seen`
    - `Polls Answered`
    - `Missed Polls` stays `0`
@@ -71,12 +73,16 @@ After every command, confirm `Missed Polls`, `TX Aborts`, `Collisions`,
 ## RAM Protocol Log
 
 The tester image enables a RAM-only HCP2 debug log on port `8080`. It never
-writes this log to ESP flash. The log contains command queue/execution events,
-state changes, LP health transitions, LP trace breadcrumbs (`rx`, `tx`, `de`,
-errors), and full protocol frames when the HP fallback responder is active.
+writes this log to ESP flash. The log is a ring buffer, so support bundles keep
+the newest events before a failure instead of only the first events after boot.
+It contains command queue/execution events, state changes, LP health
+transitions, LP trace breadcrumbs (`rx`, `tx`, `de`, errors), and full protocol
+frames when the HP fallback responder is active.
 
 Endpoints:
 
+- `http://supramatic-4-tester.local:8080/health`
+- `http://supramatic-4-tester.local:8080/preflight`
 - `http://supramatic-4-tester.local:8080/stats`
 - `http://supramatic-4-tester.local:8080/support`
 - `http://supramatic-4-tester.local:8080/hcp2_log/start`
@@ -95,7 +101,7 @@ uv run garage-hcp2-support-bundle --host supramatic-4-tester.local --action stop
 ```
 
 The command prints the bundle directory. Send the whole directory, including
-`manifest.json`, `support.json`, `stats.json`, `hcp2-log.ndjson`, and
+`manifest.json`, `health.json`, `support.json`, `stats.json`, `hcp2-log.ndjson`, and
 `hcp2-log.bin`.
 
 ## Tester Exit Criteria
@@ -106,5 +112,7 @@ Before treating the image as usable for daily testing:
 - The bridge survives an ESPHome API restart without motor error 04.
 - Open, close, stop, light, vent, and half commands all work from Home Assistant.
 - The door remains controllable after stop-during-open and stop-during-close.
+- Reversing direction from the Home Assistant cover first stops, then starts the
+  requested direction after the drive settles.
 - A support bundle collected after command tests shows zero missed polls,
   zero collisions, zero TX aborts, and no LP health flags.

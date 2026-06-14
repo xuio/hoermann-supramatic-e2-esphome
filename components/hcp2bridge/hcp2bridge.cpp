@@ -45,6 +45,7 @@ static constexpr uint32_t HCP2BRIDGE_BUS_ONLINE_TIMEOUT_US = 1000000;
 static constexpr uint32_t HCP2BRIDGE_OBSTRUCTION_COMMAND_GRACE_MS = 2000;
 static constexpr uint32_t HCP2BRIDGE_OBSTRUCTION_LATCH_MS = 10000;
 static constexpr uint32_t HCP2BRIDGE_HTTP_PENDING_TIMEOUT_MS = 3000;
+static constexpr uint32_t HCP2BRIDGE_MAX_DE_HIGH_US = 9000;
 
 #ifdef USE_ESP32
 RTC_DATA_ATTR static uint32_t hcp2_hp_reset_count;
@@ -160,6 +161,19 @@ bool HCP2Bridge::is_bus_online() const {
 #endif
   return value;
 }
+
+bool HCP2Bridge::is_continuity_healthy() const {
+#ifdef USE_ESP32
+  portENTER_CRITICAL(&this->state_mux_);
+#endif
+  const bool value = this->continuity_healthy_;
+#ifdef USE_ESP32
+  portEXIT_CRITICAL(&this->state_mux_);
+#endif
+  return value;
+}
+
+bool HCP2Bridge::is_safe_for_ota_restart() const { return this->is_continuity_healthy(); }
 
 hcp2_drive_state_code_t HCP2Bridge::get_drive_state() const {
   return (hcp2_drive_state_code_t) this->drive_status_snapshot_().state;
@@ -531,12 +545,31 @@ void HCP2Bridge::setup_protocol_log_() {
 
 void HCP2Bridge::protocol_log_clear_() {
   portENTER_CRITICAL(&this->protocol_log_mux_);
+  this->protocol_log_start_ = 0;
   this->protocol_log_used_ = 0;
   this->protocol_log_next_seq_ = 1;
   this->protocol_log_dropped_records_ = 0;
   this->protocol_log_dropped_bytes_ = 0;
   std::memset(this->protocol_log_buffer_, 0, sizeof(this->protocol_log_buffer_));
   portEXIT_CRITICAL(&this->protocol_log_mux_);
+}
+
+void HCP2Bridge::protocol_log_discard_oldest_line_locked_() {
+  if (this->protocol_log_used_ == 0u) {
+    return;
+  }
+  size_t discard = this->protocol_log_used_;
+  for (size_t i = 0; i < this->protocol_log_used_; i++) {
+    const size_t index = (this->protocol_log_start_ + i) % this->PROTOCOL_LOG_CAPACITY;
+    if (this->protocol_log_buffer_[index] == '\n') {
+      discard = i + 1u;
+      break;
+    }
+  }
+  this->protocol_log_start_ = (this->protocol_log_start_ + discard) % this->PROTOCOL_LOG_CAPACITY;
+  this->protocol_log_used_ -= discard;
+  this->protocol_log_dropped_records_++;
+  this->protocol_log_dropped_bytes_ += discard;
 }
 
 void HCP2Bridge::protocol_log_append_line_(const std::string &line, bool force) {
@@ -548,15 +581,22 @@ void HCP2Bridge::protocol_log_append_line_(const std::string &line, bool force) 
   }
   const size_t needed = line.size() + 1u;
   portENTER_CRITICAL(&this->protocol_log_mux_);
-  if (needed > this->PROTOCOL_LOG_CAPACITY - this->protocol_log_used_) {
+  if (needed > this->PROTOCOL_LOG_CAPACITY) {
     this->protocol_log_dropped_records_++;
     this->protocol_log_dropped_bytes_ += needed;
     portEXIT_CRITICAL(&this->protocol_log_mux_);
     return;
   }
-  std::memcpy(this->protocol_log_buffer_ + this->protocol_log_used_, line.data(), line.size());
-  this->protocol_log_used_ += line.size();
-  this->protocol_log_buffer_[this->protocol_log_used_++] = '\n';
+  while (needed > this->PROTOCOL_LOG_CAPACITY - this->protocol_log_used_) {
+    this->protocol_log_discard_oldest_line_locked_();
+  }
+  size_t write = (this->protocol_log_start_ + this->protocol_log_used_) % this->PROTOCOL_LOG_CAPACITY;
+  for (char c : line) {
+    this->protocol_log_buffer_[write] = (uint8_t) c;
+    write = (write + 1u) % this->PROTOCOL_LOG_CAPACITY;
+  }
+  this->protocol_log_buffer_[write] = '\n';
+  this->protocol_log_used_ += needed;
   portEXIT_CRITICAL(&this->protocol_log_mux_);
 }
 
@@ -785,13 +825,17 @@ std::string HCP2Bridge::protocol_log_summary_json_() const {
   json += this->protocol_log_enabled_ ? "true" : "false";
   json += ",\"ready\":";
   json += this->protocol_log_ready_ ? "true" : "false";
-  json += ",\"storage\":\"internal_ram\",\"flash_writes\":false,\"used\":";
+  json += ",\"storage\":\"internal_ram\",\"mode\":\"ring\",\"flash_writes\":false,\"used\":";
   json += std::to_string(used);
   json += ",\"capacity\":";
   json += std::to_string(this->PROTOCOL_LOG_CAPACITY);
   json += ",\"dropped_records\":";
   json += std::to_string(dropped_records);
   json += ",\"dropped_bytes\":";
+  json += std::to_string(dropped_bytes);
+  json += ",\"overwritten_records\":";
+  json += std::to_string(dropped_records);
+  json += ",\"overwritten_bytes\":";
   json += std::to_string(dropped_bytes);
   json += ",\"next_seq\":";
   json += std::to_string(next_seq);
@@ -802,9 +846,126 @@ std::string HCP2Bridge::protocol_log_summary_json_() const {
 std::string HCP2Bridge::protocol_log_body_() {
   std::string body;
   portENTER_CRITICAL(&this->protocol_log_mux_);
-  body.assign(reinterpret_cast<const char *>(this->protocol_log_buffer_), this->protocol_log_used_);
+  body.reserve(this->protocol_log_used_);
+  for (size_t i = 0; i < this->protocol_log_used_; i++) {
+    const size_t index = (this->protocol_log_start_ + i) % this->PROTOCOL_LOG_CAPACITY;
+    body.push_back((char) this->protocol_log_buffer_[index]);
+  }
   portEXIT_CRITICAL(&this->protocol_log_mux_);
   return body;
+}
+
+std::string HCP2Bridge::http_debug_health_json_() {
+  const bool lp_mode = !this->hp_fallback_;
+  const uint32_t polls_seen = this->get_lp_poll_count();
+  const uint32_t polls_answered = this->get_lp_response_count();
+  const uint32_t missed_polls = this->get_lp_missed_poll_count();
+  const uint32_t health_flags = this->get_lp_health_flags();
+  const uint32_t tx_aborts = this->get_lp_tx_abort_count();
+  const uint32_t collisions = this->get_lp_collision_count();
+  const uint32_t loop_overruns = this->get_lp_loop_overrun_count();
+  const uint32_t rx_starvations = this->get_lp_rx_starvation_count();
+  const uint32_t stuck_de = this->get_lp_stuck_de_count();
+  const uint32_t last_poll_age_ms = this->get_lp_last_poll_age_ms();
+  const uint32_t max_de_hold_us = this->get_lp_max_de_hold_us();
+  const bool bus_online = this->is_bus_online();
+  const bool valid_broadcast = this->has_valid_broadcast();
+  const bool lp_seen = polls_seen > 0u && this->get_lp_heartbeat() > 0u;
+
+  std::string reasons = "[";
+  bool first_reason = true;
+  const auto add_reason = [&](const char *reason) {
+    if (!first_reason) {
+      reasons += ",";
+    }
+    first_reason = false;
+    reasons += "\"";
+    reasons += reason;
+    reasons += "\"";
+  };
+
+  if (!lp_mode) {
+    add_reason("hp_fallback_enabled");
+  }
+  if (!lp_seen) {
+    add_reason("lp_not_seen");
+  }
+  if (!bus_online) {
+    add_reason("bus_offline");
+  }
+  if (!valid_broadcast) {
+    add_reason("no_broadcast_state");
+  }
+  if (last_poll_age_ms > (HCP2BRIDGE_BUS_ONLINE_TIMEOUT_US / 1000u)) {
+    add_reason("last_poll_stale");
+  }
+  if (missed_polls != 0u || polls_answered < polls_seen) {
+    add_reason("missed_polls");
+  }
+  if (health_flags != 0u) {
+    add_reason("lp_health_flags");
+  }
+  if (tx_aborts != 0u) {
+    add_reason("tx_aborts");
+  }
+  if (collisions != 0u) {
+    add_reason("collisions");
+  }
+  if (loop_overruns != 0u) {
+    add_reason("loop_overruns");
+  }
+  if (rx_starvations != 0u) {
+    add_reason("rx_starvations");
+  }
+  if (stuck_de != 0u) {
+    add_reason("stuck_de_recoveries");
+  }
+  if (max_de_hold_us > 0u && max_de_hold_us > HCP2BRIDGE_MAX_DE_HIGH_US) {
+    add_reason("de_hold_too_long");
+  }
+  reasons += "]";
+
+  const bool safe_for_ota_restart = first_reason;
+  std::string json = "{\"verdict\":\"";
+  json += safe_for_ota_restart ? "ok" : "fail";
+  json += "\",\"safe_for_ota_restart\":";
+  json += safe_for_ota_restart ? "true" : "false";
+  json += ",\"reasons\":";
+  json += reasons;
+  json += ",\"checks\":{\"lp_mode\":";
+  json += lp_mode ? "true" : "false";
+  json += ",\"lp_seen\":";
+  json += lp_seen ? "true" : "false";
+  json += ",\"bus_online\":";
+  json += bus_online ? "true" : "false";
+  json += ",\"valid_broadcast\":";
+  json += valid_broadcast ? "true" : "false";
+  json += ",\"last_poll_age_ms\":";
+  json += std::to_string(last_poll_age_ms);
+  json += ",\"polls_seen\":";
+  json += std::to_string(polls_seen);
+  json += ",\"polls_answered\":";
+  json += std::to_string(polls_answered);
+  json += ",\"missed_polls\":";
+  json += std::to_string(missed_polls);
+  json += ",\"health_flags\":";
+  json += std::to_string(health_flags);
+  json += ",\"tx_aborts\":";
+  json += std::to_string(tx_aborts);
+  json += ",\"collisions\":";
+  json += std::to_string(collisions);
+  json += ",\"loop_overruns\":";
+  json += std::to_string(loop_overruns);
+  json += ",\"rx_starvations\":";
+  json += std::to_string(rx_starvations);
+  json += ",\"stuck_de_recoveries\":";
+  json += std::to_string(stuck_de);
+  json += ",\"max_de_hold_us\":";
+  json += std::to_string(max_de_hold_us);
+  json += "},\"stats\":";
+  json += this->http_debug_stats_json_();
+  json += "}";
+  return json;
 }
 
 std::string HCP2Bridge::http_debug_stats_json_() {
@@ -850,6 +1011,8 @@ std::string HCP2Bridge::http_debug_support_json_() {
   hcp2_drive_status_t status = this->drive_status_snapshot_();
   std::string json = "{\"device\":\"hcp2bridge\",\"target\":\"supramatic_series_4\",\"stats\":";
   json += this->http_debug_stats_json_();
+  json += ",\"health\":";
+  json += this->http_debug_health_json_();
   json += ",\"door\":{\"target_position_raw\":";
   json += std::to_string(status.target_position);
   json += ",\"current_position_raw\":";
@@ -898,7 +1061,8 @@ std::string HCP2Bridge::http_debug_support_json_() {
 
 std::string HCP2Bridge::http_debug_index_html_() {
   return "<!doctype html><html><head><meta charset=\"utf-8\"><title>HCP2 Bridge</title></head><body>"
-         "<h1>HCP2 Bridge</h1><p><a href=\"/stats\">stats</a> <a href=\"/support\">support</a> "
+         "<h1>HCP2 Bridge</h1><p><a href=\"/health\">health</a> <a href=\"/stats\">stats</a> "
+         "<a href=\"/support\">support</a> "
          "<a href=\"/hcp2_log\">hcp2 log</a> <a href=\"/hcp2_log.bin\">hcp2 log raw</a></p></body></html>";
 }
 
@@ -1045,6 +1209,12 @@ void HCP2Bridge::http_debug_handle_request_(std::unique_ptr<socket::Socket> clie
   }
   if (path == "/stats") {
     this->http_debug_send_response_(std::move(client), "200 OK", "application/json", this->http_debug_stats_json_());
+    return;
+  }
+  if (path == "/health" || path == "/preflight") {
+    const std::string body = this->http_debug_health_json_();
+    const char *status = body.find("\"verdict\":\"ok\"") != std::string::npos ? "200 OK" : "503 Service Unavailable";
+    this->http_debug_send_response_(std::move(client), status, "application/json", body);
     return;
   }
   if (path == "/support") {
@@ -1638,6 +1808,7 @@ void HCP2Bridge::update_state_from_mailbox_() {
   const uint32_t mailbox_repairs = mailbox != nullptr ? mailbox->mailbox_repair_count : 0u;
   const uint32_t last_poll_age_us = last_poll_us == 0u ? 0u : (uint32_t) (lp_time_us - last_poll_us);
   const bool bus_online = last_poll_us != 0u && (int32_t) (last_poll_age_us - HCP2BRIDGE_BUS_ONLINE_TIMEOUT_US) <= 0;
+  const uint32_t missed_polls = polls_seen >= polls_answered ? polls_seen - polls_answered : 0u;
   const uint32_t now_ms = millis();
 
   portENTER_CRITICAL(&this->state_mux_);
@@ -1693,6 +1864,15 @@ void HCP2Bridge::update_state_from_mailbox_() {
   this->lp_mailbox_repair_count_ = mailbox_repairs;
   if (this->bus_online_ != bus_online) {
     this->bus_online_ = bus_online;
+    changed = true;
+  }
+  const bool continuity_healthy =
+      !this->hp_fallback_ && polls_seen > 0u && heartbeat > 0u && this->bus_online_ && this->valid_broadcast_ &&
+      missed_polls == 0u && polls_answered >= polls_seen && health_flags == 0u && tx_abort == 0u &&
+      collision == 0u && loop_overruns == 0u && rx_starvations == 0u && stuck_de == 0u &&
+      (max_de_hold == 0u || max_de_hold <= HCP2BRIDGE_MAX_DE_HIGH_US);
+  if (this->continuity_healthy_ != continuity_healthy) {
+    this->continuity_healthy_ = continuity_healthy;
     changed = true;
   }
   if (changed) {

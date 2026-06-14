@@ -357,7 +357,7 @@ void hcp2_lp_mailbox_sample_health(const volatile hcp2_lp_mailbox_t *mailbox, hc
 
 static uint8_t state_is_moving_(uint8_t state) {
   return state == (uint8_t) HCP2_DRIVE_OPENING || state == (uint8_t) HCP2_DRIVE_CLOSING ||
-         state == (uint8_t) HCP2_DRIVE_HALF_OPENING;
+         state == (uint8_t) HCP2_DRIVE_HALF_OPENING || state == (uint8_t) HCP2_DRIVE_VENT_MOVING;
 }
 
 static uint8_t command_pending_(const hcp2_lp_health_sample_t *sample) {

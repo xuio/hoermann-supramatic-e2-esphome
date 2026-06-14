@@ -6,6 +6,7 @@
 using esphome::hcp2bridge::HCP2CoverOperation;
 using esphome::hcp2bridge::hcp2_cover_button_for_control;
 using esphome::hcp2bridge::hcp2_cover_operation;
+using esphome::hcp2bridge::hcp2_cover_operation_from_delta;
 using esphome::hcp2bridge::hcp2_direction_button_for_target;
 using esphome::hcp2bridge::hcp2_is_uncommanded_closing_reversal;
 using esphome::hcp2bridge::hcp2_should_stop_at_target;
@@ -43,6 +44,14 @@ static void test_binary_sensor_and_position_mapping() {
   assert(hcp2_state_is_moving(status));
   assert(hcp2_state_position(status) == 0.5f);
 
+  status = status_with(HCP2_DRIVE_VENT_MOVING, 80, 0);
+  assert(hcp2_state_is_moving(status));
+  assert(hcp2_state_position(status) == 0.4f);
+
+  status = status_with(HCP2_DRIVE_VENT, 80, 0);
+  assert(!hcp2_state_is_moving(status));
+  assert(hcp2_state_position(status) == 0.4f);
+
   status = status_with(HCP2_DRIVE_OPEN, 250, 0);
   assert(hcp2_state_position(status) == 1.0f);
 }
@@ -50,10 +59,22 @@ static void test_binary_sensor_and_position_mapping() {
 static void test_cover_operation_mapping() {
   assert(hcp2_cover_operation(HCP2_DRIVE_OPENING) == HCP2CoverOperation::OPENING);
   assert(hcp2_cover_operation(HCP2_DRIVE_HALF_OPENING) == HCP2CoverOperation::OPENING);
+  assert(hcp2_cover_operation(HCP2_DRIVE_VENT_MOVING) == HCP2CoverOperation::OPENING);
   assert(hcp2_cover_operation(HCP2_DRIVE_CLOSING) == HCP2CoverOperation::CLOSING);
   assert(hcp2_cover_operation(HCP2_DRIVE_OPEN) == HCP2CoverOperation::IDLE);
   assert(hcp2_cover_operation(HCP2_DRIVE_CLOSED) == HCP2CoverOperation::IDLE);
+  assert(hcp2_cover_operation(HCP2_DRIVE_VENT) == HCP2CoverOperation::IDLE);
   assert(hcp2_cover_operation(HCP2_DRIVE_STOPPED) == HCP2CoverOperation::IDLE);
+
+  assert(hcp2_cover_operation_from_delta(HCP2_DRIVE_HALF_OPENING, 0.45f, 0.40f) ==
+         HCP2CoverOperation::OPENING);
+  assert(hcp2_cover_operation_from_delta(HCP2_DRIVE_HALF_OPENING, 0.45f, 0.50f) ==
+         HCP2CoverOperation::CLOSING);
+  assert(hcp2_cover_operation_from_delta(HCP2_DRIVE_VENT_MOVING, 0.30f, 0.25f) ==
+         HCP2CoverOperation::OPENING);
+  assert(hcp2_cover_operation_from_delta(HCP2_DRIVE_VENT_MOVING, 0.30f, 0.35f) ==
+         HCP2CoverOperation::CLOSING);
+  assert(hcp2_cover_operation_from_delta(HCP2_DRIVE_OPENING, 0.30f, 0.35f) == HCP2CoverOperation::OPENING);
 }
 
 static void test_cover_control_mapping() {
@@ -91,6 +112,8 @@ static void test_state_names() {
   assert(std::strcmp(hcp2_state_name(HCP2_DRIVE_OPENING), "opening") == 0);
   assert(std::strcmp(hcp2_state_name(HCP2_DRIVE_CLOSING), "closing") == 0);
   assert(std::strcmp(hcp2_state_name(HCP2_DRIVE_HALF_OPENING), "half_opening") == 0);
+  assert(std::strcmp(hcp2_state_name(HCP2_DRIVE_VENT_MOVING), "vent_moving") == 0);
+  assert(std::strcmp(hcp2_state_name(HCP2_DRIVE_VENT), "vent") == 0);
   assert(std::strcmp(hcp2_state_name(HCP2_DRIVE_OPEN), "open") == 0);
   assert(std::strcmp(hcp2_state_name(HCP2_DRIVE_CLOSED), "closed") == 0);
   assert(std::strcmp(hcp2_state_name(HCP2_DRIVE_PART_OPEN), "part_open") == 0);

@@ -56,7 +56,17 @@ def write_result(output_dir: Path, result: FetchResult, filename: str) -> dict[s
     }
 
 
+def result_is_collectable(entry: dict[str, object]) -> bool:
+    endpoint = entry.get("endpoint")
+    status = entry.get("status")
+    byte_count = entry.get("bytes")
+    if endpoint == "/health" and status in (200, 503) and isinstance(byte_count, int) and byte_count > 0:
+        return True
+    return status == 200
+
+
 def endpoint_plan(include_log: bool) -> Iterable[tuple[str, str]]:
+    yield "/health", "health.json"
     yield "/support", "support.json"
     yield "/stats", "stats.json"
     if include_log:
@@ -122,7 +132,7 @@ def main(argv: list[str] | None = None) -> int:
     (output_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     print(output_dir)
 
-    failed = [entry for entry in files if entry.get("status") not in (200,)]
+    failed = [entry for entry in files if not result_is_collectable(entry)]
     return 1 if failed else 0
 
 

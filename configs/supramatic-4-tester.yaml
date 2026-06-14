@@ -172,3 +172,9 @@ binary_sensor:
       name: "${friendly_name} Obstruction"
     bus_online:
       name: "${friendly_name} HCP2 Bus Online"
+    continuity_healthy:
+      name: "${friendly_name} HCP2 Continuity Healthy"
+    safe_for_ota_restart:
+      name: "${friendly_name} Safe For OTA Restart"
+    continuity_problem:
+      name: "${friendly_name} HCP2 Continuity Problem"

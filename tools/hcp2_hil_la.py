@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from bisect import bisect_right
 import csv
+import gzip
 from itertools import chain
 import json
 import re
@@ -169,8 +170,14 @@ def load_sigrok_csv_samples(
     return samples
 
 
+def open_samples_text(path: Path):
+    if path.suffix.lower() == ".gz":
+        return gzip.open(path, "rt", newline="", encoding="utf-8")
+    return path.open(newline="", encoding="utf-8")
+
+
 def load_samples_csv(path: Path, channels: dict[str, str]) -> list[Sample]:
-    with path.open(newline="", encoding="utf-8") as handle:
+    with open_samples_text(path) as handle:
         comments: list[str] = []
         first_line = ""
         for line in handle:
@@ -214,7 +221,8 @@ def load_samples_csv(path: Path, channels: dict[str, str]) -> list[Sample]:
 
 
 def load_samples_json(path: Path, channels: dict[str, str]) -> list[Sample]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    with open_samples_text(path) as handle:
+        payload = json.load(handle)
     raw_samples = payload.get("samples") if isinstance(payload, dict) else payload
     if not isinstance(raw_samples, list):
         raise ValueError(f"{path} JSON must be a list or contain a samples list")
@@ -236,7 +244,8 @@ def load_samples_json(path: Path, channels: dict[str, str]) -> list[Sample]:
 
 
 def load_samples(path: Path, channels: dict[str, str]) -> list[Sample]:
-    suffix = path.suffix.lower()
+    suffixes = [suffix.lower() for suffix in path.suffixes]
+    suffix = suffixes[-2] if suffixes[-1:] == [".gz"] and len(suffixes) >= 2 else path.suffix.lower()
     if suffix == ".json":
         samples = load_samples_json(path, channels)
     else:
@@ -880,9 +889,13 @@ def analyze_samples(
         failures.append(f"{len(tx_outside_de)} TX transitions occurred while DE was low")
 
     de_without_tx = []
+    initial_boundary_de_without_tx = []
     if require_tx_during_de and tx_transitions:
         for window in de_windows:
             if not any(contains_time(window, time_s) for time_s in tx_transitions):
+                if not require_initial_de_low and abs(window.start_s - samples[0].time_s) <= 1e-12:
+                    initial_boundary_de_without_tx.append(window)
+                    continue
                 de_without_tx.append(window)
         if de_without_tx:
             failures.append(f"{len(de_without_tx)} DE high windows had no TX activity")
@@ -915,6 +928,7 @@ def analyze_samples(
         "tx_transitions": len(tx_transitions),
         "tx_transitions_outside_de": len(tx_outside_de),
         "de_windows_without_tx_activity": len(de_without_tx),
+        "initial_boundary_de_windows_without_tx_activity": len(initial_boundary_de_without_tx),
         "re_high_samples": re_high_samples,
         "re_high_outside_de_samples": re_high_outside_de_samples,
         "allow_re_high_during_de": allow_re_high_during_de,

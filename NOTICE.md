@@ -6,6 +6,10 @@ This project is released under The Unlicense. It also contains code and protocol
 
 - `hoermann_door` ESPHome/UAP1 implementations, especially ESP32-compatible forks used as the starting point for the local ESPHome external component.
 - Other public HCP/Hörmann protocol notes and experiments used only as protocol references.
+- HCP2 Series-4 state/light behavior cross-checks from
+  `14yannick/esphome-hcpbridge` at commit
+  `47823652491e2465a9b7a8f897bd1bcd01a3f43f`. The repository is used only as
+  a protocol-behavior reference; no implementation code is copied.
 - HCP2 / UAP1-HCP protocol facts and public capture fixtures from
   `Tysonpower/HCPBridgeMqtt_tynet` at commit
   `e2d8297a868d4dd62781b8b4a305279b787d250c`, file

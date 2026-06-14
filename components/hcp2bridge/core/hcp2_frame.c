@@ -127,12 +127,14 @@ hcp2_parse_result_t hcp2_frame_parse_master(const uint8_t *data, uint8_t len, ui
     const uint8_t byte_count = data[6];
     if (data[0] == 0u && start_addr == HCP2_REG_BROADCAST_STATUS && quantity == 9u && byte_count == 18u) {
       const uint8_t *payload = &data[7];
+      const uint8_t state = payload[4];
+      const uint8_t state_detail = payload[5];
       out->type = HCP2_FRAME_BROADCAST_STATUS;
       out->drive_status.target_position = payload[2];
       out->drive_status.current_position = payload[3];
-      out->drive_status.state = payload[4];
+      out->drive_status.state = (state == 0x00u && state_detail == 0x61u) ? (uint8_t) HCP2_DRIVE_VENT : state;
       out->drive_status.light_raw = payload[13];
-      out->drive_status.light_on = payload[13] != 0u ? 1u : 0u;
+      out->drive_status.light_on = (payload[13] == 0x10u || payload[13] == 0x14u) ? 1u : 0u;
     }
     return HCP2_PARSE_OK;
   }

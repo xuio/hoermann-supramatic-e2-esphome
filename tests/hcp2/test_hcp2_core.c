@@ -107,6 +107,28 @@ static uint8_t build_status_poll(uint8_t counter, uint8_t *out) {
   return 17;
 }
 
+static uint8_t build_broadcast_status(uint8_t target, uint8_t current, uint8_t state, uint8_t state_detail,
+                                      uint8_t light_raw, uint8_t *out) {
+  memset(out, 0, HCP2_MAX_FRAME_LEN);
+  out[0] = 0x00;
+  out[1] = HCP2_FC_WRITE_MULTIPLE_REGISTERS;
+  out[2] = 0x9D;
+  out[3] = 0x31;
+  out[4] = 0x00;
+  out[5] = 0x09;
+  out[6] = 0x12;
+  out[7] = 0x16;
+  out[8] = 0x00;
+  out[9] = target;
+  out[10] = current;
+  out[11] = state;
+  out[12] = state_detail;
+  out[20] = light_raw;
+  out[22] = 0x01;
+  hcp2_crc16_append(out, 25);
+  return 27;
+}
+
 static void feed_bytes(hcp2_engine_t *engine, const uint8_t *data, uint8_t len) {
   uint8_t i;
   for (i = 0; i < len; i++) {
@@ -233,6 +255,8 @@ static void test_broadcast_decode(void) {
   hcp2_port_t port;
   hcp2_engine_t engine;
   const hcp2_drive_status_t *state;
+  uint8_t frame[HCP2_MAX_FRAME_LEN];
+  uint8_t len;
 
   memset(&test_port, 0, sizeof(test_port));
   port = make_port(&test_port);
@@ -254,6 +278,46 @@ static void test_broadcast_decode(void) {
   assert(state->state == HCP2_DRIVE_CLOSED);
   assert(state->light_raw == 0x00);
   assert(state->light_on == 0);
+
+  len = build_broadcast_status(0x00, 0x00, HCP2_DRIVE_CLOSED, 0x60u, 0x04u, frame);
+  feed_bytes(&engine, frame, len);
+  state = hcp2_engine_drive_status(&engine);
+  assert(state->light_raw == 0x04);
+  assert(state->light_on == 0);
+
+  len = build_broadcast_status(0x00, 0x00, HCP2_DRIVE_CLOSED, 0x60u, 0x10u, frame);
+  feed_bytes(&engine, frame, len);
+  state = hcp2_engine_drive_status(&engine);
+  assert(state->light_raw == 0x10);
+  assert(state->light_on == 1);
+}
+
+static void test_series4_partial_state_decode(void) {
+  test_port_t test_port;
+  hcp2_port_t port;
+  hcp2_engine_t engine;
+  const hcp2_drive_status_t *state;
+  uint8_t frame[HCP2_MAX_FRAME_LEN];
+  uint8_t len;
+
+  memset(&test_port, 0, sizeof(test_port));
+  port = make_port(&test_port);
+  hcp2_engine_init(&engine, &port, NULL);
+
+  len = build_broadcast_status(0x50, 0x30, HCP2_DRIVE_VENT_MOVING, 0x60u, 0x00u, frame);
+  feed_bytes(&engine, frame, len);
+  state = hcp2_engine_drive_status(&engine);
+  assert(state->state == HCP2_DRIVE_VENT_MOVING);
+
+  len = build_broadcast_status(0x50, 0x50, HCP2_DRIVE_VENT, 0x60u, 0x00u, frame);
+  feed_bytes(&engine, frame, len);
+  state = hcp2_engine_drive_status(&engine);
+  assert(state->state == HCP2_DRIVE_VENT);
+
+  len = build_broadcast_status(0x50, 0x50, HCP2_DRIVE_STOPPED, 0x61u, 0x00u, frame);
+  feed_bytes(&engine, frame, len);
+  state = hcp2_engine_drive_status(&engine);
+  assert(state->state == HCP2_DRIVE_VENT);
 }
 
 static void test_button_press_release_sequence(void) {
@@ -604,6 +668,7 @@ int main(void) {
   test_status_poll_idle_response();
   test_light_command_response();
   test_broadcast_decode();
+  test_series4_partial_state_decode();
   test_button_press_release_sequence();
   test_bad_crc_no_response_and_recovery();
   test_rx_error_resets_partial_frame();

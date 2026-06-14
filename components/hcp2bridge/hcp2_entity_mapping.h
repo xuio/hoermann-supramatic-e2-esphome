@@ -20,11 +20,11 @@ inline bool hcp2_state_is_light_on(const hcp2_drive_status_t &status) { return s
 
 inline bool hcp2_state_is_moving(const hcp2_drive_status_t &status) {
   return status.state == HCP2_DRIVE_OPENING || status.state == HCP2_DRIVE_CLOSING ||
-         status.state == HCP2_DRIVE_HALF_OPENING;
+         status.state == HCP2_DRIVE_HALF_OPENING || status.state == HCP2_DRIVE_VENT_MOVING;
 }
 
 inline bool hcp2_state_code_is_opening(hcp2_drive_state_code_t state) {
-  return state == HCP2_DRIVE_OPENING || state == HCP2_DRIVE_HALF_OPENING;
+  return state == HCP2_DRIVE_OPENING || state == HCP2_DRIVE_HALF_OPENING || state == HCP2_DRIVE_VENT_MOVING;
 }
 
 inline bool hcp2_state_code_is_closing(hcp2_drive_state_code_t state) { return state == HCP2_DRIVE_CLOSING; }
@@ -47,6 +47,10 @@ inline const char *hcp2_state_name(hcp2_drive_state_code_t state) {
       return "closing";
     case HCP2_DRIVE_HALF_OPENING:
       return "half_opening";
+    case HCP2_DRIVE_VENT_MOVING:
+      return "vent_moving";
+    case HCP2_DRIVE_VENT:
+      return "vent";
     case HCP2_DRIVE_OPEN:
       return "open";
     case HCP2_DRIVE_CLOSED:
@@ -62,12 +66,21 @@ inline HCP2CoverOperation hcp2_cover_operation(hcp2_drive_state_code_t state) {
   switch (state) {
     case HCP2_DRIVE_OPENING:
     case HCP2_DRIVE_HALF_OPENING:
+    case HCP2_DRIVE_VENT_MOVING:
       return HCP2CoverOperation::OPENING;
     case HCP2_DRIVE_CLOSING:
       return HCP2CoverOperation::CLOSING;
     default:
       return HCP2CoverOperation::IDLE;
   }
+}
+
+inline HCP2CoverOperation hcp2_cover_operation_from_delta(hcp2_drive_state_code_t state, float current_position,
+                                                          float previous_position) {
+  if (state == HCP2_DRIVE_HALF_OPENING || state == HCP2_DRIVE_VENT_MOVING) {
+    return previous_position > current_position ? HCP2CoverOperation::CLOSING : HCP2CoverOperation::OPENING;
+  }
+  return hcp2_cover_operation(state);
 }
 
 inline hcp2_button_t hcp2_cover_button_for_control(bool stop, bool has_position, float target_position) {

@@ -68,6 +68,9 @@ class HCP2Bridge : public Component {
   bool is_closed() const;
   bool is_obstructed() const;
   bool is_bus_online() const;
+  bool is_continuity_healthy() const;
+  bool is_safe_for_ota_restart() const;
+  bool has_continuity_problem() const { return !this->is_continuity_healthy(); }
   float get_position() const;
   hcp2_drive_state_code_t get_drive_state() const;
   std::string get_state_string() const;
@@ -137,12 +140,14 @@ class HCP2Bridge : public Component {
   bool http_debug_write_all_(socket::Socket *client, const std::string &payload, uint32_t timeout_ms);
   std::string http_debug_path_from_request_line_(const std::string &request_line);
   std::string http_debug_index_html_();
+  std::string http_debug_health_json_();
   std::string http_debug_stats_json_();
   std::string http_debug_support_json_();
   std::string protocol_log_summary_json_() const;
   std::string protocol_log_body_();
   void protocol_log_clear_();
   void protocol_log_append_line_(const std::string &line, bool force = false);
+  void protocol_log_discard_oldest_line_locked_();
   void protocol_log_append_control_(const char *action);
   void protocol_log_append_command_(const char *phase, hcp2_button_t button, bool ok, const char *reason);
   void protocol_log_append_state_(const hcp2_drive_status_t &status, bool bus_online, bool obstruction,
@@ -191,6 +196,7 @@ class HCP2Bridge : public Component {
   bool valid_broadcast_{false};
   bool obstruction_{false};
   bool bus_online_{false};
+  bool continuity_healthy_{false};
   bool state_callback_pending_{false};
   bool command_callback_pending_{false};
   hcp2_button_t last_commanded_button_{HCP2_BUTTON_NONE};
@@ -247,6 +253,7 @@ class HCP2Bridge : public Component {
   static constexpr size_t PROTOCOL_LOG_CAPACITY = 49152;
   bool protocol_log_ready_{false};
   uint8_t protocol_log_buffer_[PROTOCOL_LOG_CAPACITY]{};
+  size_t protocol_log_start_{0};
   size_t protocol_log_used_{0};
   uint32_t protocol_log_next_seq_{1};
   uint32_t protocol_log_dropped_records_{0};

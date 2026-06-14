@@ -448,6 +448,7 @@ static uint8_t stop_trigger_crossed_(const hcp2_drive_status_t *status, uint8_t 
   switch ((hcp2_drive_state_code_t) status->state) {
     case HCP2_DRIVE_OPENING:
     case HCP2_DRIVE_HALF_OPENING:
+    case HCP2_DRIVE_VENT_MOVING:
       return status->current_position >= target_position ? 1u : 0u;
     case HCP2_DRIVE_CLOSING:
       return status->current_position <= target_position ? 1u : 0u;

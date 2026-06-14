@@ -62,5 +62,23 @@ class HCP2BridgeBusOnlineSensor : public HCP2BridgeBinarySensorBase {
   const char *sensor_name_() const override { return "Bus Online"; }
 };
 
+class HCP2BridgeContinuityHealthySensor : public HCP2BridgeBinarySensorBase {
+ protected:
+  bool read_state_() const override { return this->parent_->is_continuity_healthy(); }
+  const char *sensor_name_() const override { return "Continuity Healthy"; }
+};
+
+class HCP2BridgeSafeForOTARestartSensor : public HCP2BridgeBinarySensorBase {
+ protected:
+  bool read_state_() const override { return this->parent_->is_safe_for_ota_restart(); }
+  const char *sensor_name_() const override { return "Safe For OTA Restart"; }
+};
+
+class HCP2BridgeContinuityProblemSensor : public HCP2BridgeBinarySensorBase {
+ protected:
+  bool read_state_() const override { return this->parent_->has_continuity_problem(); }
+  const char *sensor_name_() const override { return "Continuity Problem"; }
+};
+
 }  // namespace hcp2bridge
 }  // namespace esphome

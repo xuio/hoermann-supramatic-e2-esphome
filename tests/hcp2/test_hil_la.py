@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gzip
 import json
 from argparse import Namespace
 from pathlib import Path
@@ -239,6 +240,37 @@ def test_logic_analyzer_can_crop_startup_glitch_for_runtime_report(tmp_path: Pat
     assert runtime_report["de_windows"] == 1
 
 
+def test_logic_analyzer_allows_initial_boundary_de_fragment_without_tx(tmp_path: Path) -> None:
+    capture = tmp_path / "initial-boundary-de.csv"
+    write_csv(
+        capture,
+        [
+            (0.0000, 1, 0, 1, 1),
+            (0.0012, 0, 0, 1, 1),
+            (0.0600, 1, 0, 1, 1),
+            (0.0601, 1, 0, 0, 1),
+            (0.0602, 1, 0, 1, 1),
+            (0.0650, 0, 0, 1, 1),
+            (0.0660, 0, 0, 1, 1),
+        ],
+    )
+    samples = load_samples(capture, {"de": "de", "re": "re", "tx": "tx", "rx": "rx"})
+
+    strict_report = analyze_samples(samples, max_de_high_us=9000.0)
+    boundary_report = analyze_samples(
+        samples,
+        max_de_high_us=9000.0,
+        require_initial_de_low=False,
+    )
+
+    assert strict_report["verdict"] == "fail"
+    assert "DE is not low at the first sample" in strict_report["failures"]
+    assert any("DE high windows had no TX activity" in failure for failure in strict_report["failures"])
+    assert boundary_report["verdict"] == "ok"
+    assert boundary_report["de_windows_without_tx_activity"] == 0
+    assert boundary_report["initial_boundary_de_windows_without_tx_activity"] == 1
+
+
 def test_logic_analyzer_decodes_8e1_uart_frame(tmp_path: Path) -> None:
     capture = tmp_path / "uart.csv"
     frame = protocol.SCAN_RESPONSE
@@ -381,6 +413,38 @@ def test_logic_analyzer_loads_json_samples(tmp_path: Path) -> None:
     report = analyze_samples(samples)
 
     assert report["verdict"] == "ok"
+
+
+def test_logic_analyzer_loads_gzipped_csv_and_json_samples(tmp_path: Path) -> None:
+    csv_capture = tmp_path / "ok.csv.gz"
+    csv_body = (
+        "time_s,de,re,tx,rx\n"
+        "0.0000,0,0,1,1\n"
+        "0.0010,1,0,1,1\n"
+        "0.0011,1,0,0,1\n"
+        "0.0012,1,0,1,1\n"
+        "0.0015,0,0,1,1\n"
+    )
+    with gzip.open(csv_capture, "wt", encoding="utf-8") as handle:
+        handle.write(csv_body)
+
+    json_capture = tmp_path / "ok.json.gz"
+    with gzip.open(json_capture, "wt", encoding="utf-8") as handle:
+        json.dump(
+            {
+                "samples": [
+                    {"time_s": 0.0, "DE": 0, "RE": 0, "TX": 1},
+                    {"time_s": 0.001, "DE": 1, "RE": 0, "TX": 1},
+                    {"time_s": 0.0011, "DE": 1, "RE": 0, "TX": 0},
+                    {"time_s": 0.0012, "DE": 1, "RE": 0, "TX": 1},
+                    {"time_s": 0.0015, "DE": 0, "RE": 0, "TX": 1},
+                ]
+            },
+            handle,
+        )
+
+    assert analyze_samples(load_samples(csv_capture, {"de": "de", "re": "re", "tx": "tx"}))["verdict"] == "ok"
+    assert analyze_samples(load_samples(json_capture, {"de": "DE", "re": "RE", "tx": "TX"}))["verdict"] == "ok"
 
 
 def test_logic_analyzer_loads_sigrok_csv_samples_without_time_column(tmp_path: Path) -> None:
