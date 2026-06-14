@@ -17,6 +17,7 @@ This directory contains the Python helpers used to build, test, capture, and cal
 | `uv run garage-hcp2-hil-la` | [hcp2_hil_la.py](hcp2_hil_la.py) | Capture, decode, and verify HCP2 HIL logic-analyzer traces for DE/TX reset-safety and zero-gap UART checks |
 | `uv run garage-hcp2-hil-load` | [hcp2_hil_load.py](hcp2_hil_load.py) | Run HCP2 HIL simulator scenarios while host/Wi-Fi/API load commands are active |
 | `uv run garage-hcp2-closeout` | [hcp2_closeout.py](hcp2_closeout.py) | Run scripted HCP2 HIL closeout plans with simulator, load, command, and optional LA verdicts |
+| `uv run garage-hcp2-support-bundle` | [hcp2_support_bundle.py](hcp2_support_bundle.py) | Collect Series 4 tester `/support`, `/stats`, and RAM protocol-log files from the ESP HTTP debug port |
 | `uv run garage-test-wizard` | [garage_test_wizard.py](garage_test_wizard.py) | Guided manual Home Assistant position tests using measured clear-opening height |
 | `uv run garage-generate-aruco-markers` | [generate_aruco_marker_pdfs.py](generate_aruco_marker_pdfs.py) | Generate printable ArUco marker PDFs |
 | `uv run garage-hcp-proxy-client` | [hcp_proxy_client.py](hcp_proxy_client.py) | Laptop-side RS-485 proxy experiments |
@@ -35,6 +36,11 @@ uv run garage-hcp2-closeout --serial /dev/serial/by-id/usb-1a86_USB_Single_Seria
 uv run garage-hcp2-closeout --serial /dev/serial/by-id/usb-1a86_USB_Single_Serial_5ACC032762-if00 \
   --preset ota-restart --esp-host 192.168.10.156 --esp-device 192.168.10.156 \
   --output-dir captures/hcp2/closeout/ota-restart --output captures/hcp2/closeout/ota-restart/report.json
+
+uv run garage-hcp2-closeout --serial /dev/serial/by-id/usb-1a86_USB_Single_Serial_5ACC032762-if00 \
+  --preset full --esp-host 192.168.10.156 --esp-device 192.168.10.156 \
+  --skip-esphome-compile --sigrok-cli /tmp/hcp2-la-work/.bin/sigrok-cli \
+  --output-dir captures/hcp2/closeout/full --output captures/hcp2/closeout/full/report.json
 ```
 
 The `la` preset captures the current bench mapping (`TX=D1`, `DE=D3`, `/RE=D5`, `RX=D7`)
@@ -43,6 +49,61 @@ continuity. The `ota-restart` preset runs simulator traffic while an ESPHome OTA
 and native-API restart button press execute, then records both command tails and bus
 verdicts in one JSON report. API keys are read from `configs/secrets.yaml` by secret
 name, not embedded into the generated command line.
+
+The `full` preset is the current closeout baseline. It runs `basic`, `la`, and
+`ota-restart` in one report; the latest 2026-06-13 v10 run passed runtime
+1000/1000, fault-recovery 251/251, LA 160/160, OTA 500/500, and API restart
+350/350 with zero misses. `garage-hcp2-closeout` preflights the LA executable
+before opening the serial bus. If `sigrok-cli` is not on `PATH`, pass
+`--sigrok-cli /path/to/sigrok-cli` or set `HCP2_SIGROK_CLI`.
+
+## HCP2 Hostile HIL Load
+
+Use `garage-hcp2-hil-load` directly when the goal is a longer soak with Wi-Fi
+and API pressure instead of the fixed closeout matrix:
+
+```bash
+uv run garage-hcp2-hil-load --serial /dev/serial/by-id/usb-1a86_USB_Single_Serial_5ACC032762-if00 \
+  --preset hostile --esp-host 192.168.10.156 \
+  --cycles 2000 --repeat 3 --settle-s 2 \
+  --trace captures/hcp2/hil-load/hostile.jsonl \
+  --output captures/hcp2/hil-load/hostile.json
+```
+
+The hostile preset adds a ping stream and repeated ESPHome native-API TCP
+connects while the same virtual SupraMatic master verifies poll replies. With
+`--repeat`, the JSON output becomes an aggregate report with total polls,
+misses, max consecutive misses, and worst latency across runs. Per-run traces
+are written as `*.runNN.jsonl`.
+
+For 24h reliability soaks, do not enable the full per-poll `--trace`; it grows
+too large to be useful. Run at real cadence with low-volume progress snapshots
+and abort on the first missed status poll:
+
+```bash
+uv run garage-hcp2-hil-load --serial /dev/serial/by-id/usb-1a86_USB_Single_Serial_5ACC032762-if00 \
+  --preset hostile --esp-host 192.168.10.156 \
+  --speed-factor 1 --duration-hours 24 --abort-on-miss \
+  --progress-output captures/hcp2/soak-24h/progress.jsonl \
+  --output captures/hcp2/soak-24h/report.json
+```
+
+The progress file is JSONL and fsynced after every snapshot, so a detached bench
+run still leaves poll/reply/miss counters if the SSH session or runner dies.
+
+## HCP2 Series 4 Tester Bundles
+
+The Series 4 tester image exposes RAM-only debug endpoints on port `8080`.
+Prepare a fresh logging window before reproducing an issue, then stop and
+collect the bundle:
+
+```bash
+uv run garage-hcp2-support-bundle --host supramatic-4-tester.local --action start
+uv run garage-hcp2-support-bundle --host supramatic-4-tester.local --action stop-and-collect
+```
+
+The tool writes under ignored `captures/hcp2/support-bundle-*` by default and
+prints the exact bundle directory. See [docs/hcp2-series4-tester.md](../docs/hcp2-series4-tester.md).
 
 ## Visual Calibration Workflow
 

@@ -468,11 +468,17 @@ def decode_uart_windows(
 
         frame = bytes(bytes_out)
         kind = protocol.decode_response_kind(frame) if frame else "none"
+        first_byte_start_us = byte_reports[0]["start_us"] if byte_reports else None
+        frame_end_us = None
+        if byte_reports:
+            frame_end_us = byte_reports[-1]["start_us"] + frame_bits * bit_s * 1_000_000.0
         decoded_windows.append(
             {
                 "start_us": (window.start_s - samples[0].time_s) * 1_000_000.0,
                 "end_us": (window.end_s - samples[0].time_s) * 1_000_000.0,
                 "duration_us": window.duration_us,
+                "first_byte_start_us": first_byte_start_us,
+                "frame_end_us": frame_end_us,
                 "byte_count": len(frame),
                 "frame": frame.hex(),
                 "crc_ok": protocol.crc_ok(frame) if frame else False,
@@ -483,6 +489,155 @@ def decode_uart_windows(
             }
         )
     return decoded_windows
+
+
+def master_expected_len(buffer: bytes) -> int | None:
+    if len(buffer) < 2:
+        return None
+    function = buffer[1]
+    if function == protocol.FC_WRITE_MULTIPLE_REGISTERS:
+        if len(buffer) < 7:
+            return None
+        byte_count = buffer[6]
+        expected = 7 + byte_count + 2
+    elif function == protocol.FC_READ_WRITE_MULTIPLE_REGISTERS:
+        if len(buffer) < 11:
+            return None
+        byte_count = buffer[10]
+        expected = 11 + byte_count + 2
+    else:
+        return -1
+    if expected < 5 or expected > 32:
+        return -1
+    return expected
+
+
+def decode_master_kind(frame: bytes) -> str:
+    if len(frame) < 2:
+        return "unknown"
+    if frame[0] == 0 and frame[1] == protocol.FC_WRITE_MULTIPLE_REGISTERS:
+        return "broadcast"
+    if frame[1] != protocol.FC_READ_WRITE_MULTIPLE_REGISTERS or len(frame) < 13:
+        return "unknown"
+    if frame[2:4] != bytes([0x9C, 0xB9]) or frame[6:8] != bytes([0x9C, 0x41]):
+        return "unknown"
+    read_qty = (frame[4] << 8) | frame[5]
+    write_qty = (frame[8] << 8) | frame[9]
+    byte_count = frame[10]
+    if read_qty == 8 and write_qty == 2 and byte_count == 4 and len(frame) == 17 and frame[12] == 0x03:
+        return "status_poll"
+    if read_qty == 5 and write_qty == 3 and byte_count == 6 and len(frame) == 19:
+        return "bus_scan"
+    if read_qty == 2 and write_qty == 2 and byte_count == 4 and len(frame) == 17:
+        return "command"
+    return "unknown"
+
+
+def master_counter(frame: bytes) -> int | None:
+    kind = decode_master_kind(frame)
+    if kind in {"status_poll", "command"} and len(frame) > 11:
+        return frame[11]
+    return None
+
+
+def decode_uart_byte(
+    samples: list[Sample],
+    times: list[float],
+    *,
+    signal: str,
+    start_edge_s: float,
+    baud: int,
+) -> tuple[int, dict[str, Any]]:
+    bit_s = 1.0 / float(baud)
+    errors: list[str] = []
+    if level_at_time(samples, times, signal, start_edge_s + 0.5 * bit_s) != 0:
+        errors.append("start")
+
+    value = 0
+    ones = 0
+    for bit in range(8):
+        bit_value = level_at_time(samples, times, signal, start_edge_s + (1.5 + bit) * bit_s)
+        if bit_value not in {0, 1}:
+            errors.append(f"data{bit}")
+            bit_value = 0
+        if bit_value:
+            value |= 1 << bit
+            ones += 1
+
+    parity_value = level_at_time(samples, times, signal, start_edge_s + 9.5 * bit_s)
+    if parity_value not in {0, 1}:
+        errors.append("parity-missing")
+        parity_value = 0
+    elif (ones + parity_value) % 2 != 0:
+        errors.append("parity")
+
+    stop_value = level_at_time(samples, times, signal, start_edge_s + 10.5 * bit_s)
+    if stop_value != 1:
+        errors.append("stop")
+
+    return value, {
+        "start_us": (start_edge_s - samples[0].time_s) * 1_000_000.0,
+        "byte": value,
+        "errors": errors,
+    }
+
+
+def decode_uart_stream(
+    samples: list[Sample],
+    *,
+    signal: str = "rx",
+    baud: int = DEFAULT_HCP2_BAUD,
+    ignore_before_us: float = 0.0,
+) -> list[dict[str, Any]]:
+    samples = crop_samples(samples, ignore_before_us)
+    if not any(signal in sample.values for sample in samples):
+        return []
+    times = [sample.time_s for sample in samples]
+    bit_s = 1.0 / float(baud)
+    frame_bits = 1 + 8 + 1 + 1
+    edges = transition_edges(samples, signal)
+    buffer = bytearray()
+    byte_reports: list[dict[str, Any]] = []
+    decoded: list[dict[str, Any]] = []
+    cursor_s = samples[0].time_s
+
+    for edge_s, before, after in edges:
+        if edge_s < cursor_s:
+            continue
+        if before != 1 or after != 0:
+            continue
+        value, byte_report = decode_uart_byte(samples, times, signal=signal, start_edge_s=edge_s, baud=baud)
+        cursor_s = edge_s + (frame_bits - 0.25) * bit_s
+        buffer.append(value)
+        byte_reports.append(byte_report)
+        while buffer:
+            expected = master_expected_len(bytes(buffer))
+            if expected is None:
+                break
+            if expected < 0:
+                del buffer[0]
+                del byte_reports[0]
+                continue
+            if len(buffer) < expected:
+                break
+            frame_bytes = bytes(buffer[:expected])
+            frame_reports = byte_reports[:expected]
+            decoded.append(
+                {
+                    "start_us": frame_reports[0]["start_us"],
+                    "end_us": frame_reports[-1]["start_us"] + frame_bits * bit_s * 1_000_000.0,
+                    "byte_count": len(frame_bytes),
+                    "frame": frame_bytes.hex(),
+                    "crc_ok": protocol.crc_ok(frame_bytes),
+                    "kind": decode_master_kind(frame_bytes),
+                    "counter": master_counter(frame_bytes),
+                    "bytes": frame_reports,
+                    "errors": [error for byte in frame_reports for error in byte["errors"]],
+                }
+            )
+            del buffer[:expected]
+            del byte_reports[:expected]
+    return decoded
 
 
 def status_counter_gaps(counters: list[int]) -> list[dict[str, Any]]:
@@ -506,6 +661,20 @@ def status_counter_gaps(counters: list[int]) -> list[dict[str, Any]]:
             }
         )
     return gaps
+
+
+def percentile(sorted_values: list[float], pct: int) -> float | None:
+    if not sorted_values:
+        return None
+    if len(sorted_values) == 1:
+        return sorted_values[0]
+    rank = (pct / 100.0) * (len(sorted_values) - 1)
+    low = int(rank)
+    high = min(len(sorted_values) - 1, low + (0 if rank == low else 1))
+    if low == high:
+        return sorted_values[low]
+    weight = rank - low
+    return sorted_values[low] * (1.0 - weight) + sorted_values[high] * weight
 
 
 def summarize_decoded_uart(
@@ -544,6 +713,132 @@ def summarize_decoded_uart(
         "status_counter_gaps": gaps,
         "status_counter_gap_count": len(gaps),
         "windows_detail": windows,
+}
+
+
+def metric_summary(values: list[float]) -> dict[str, float | int | None]:
+    sorted_values = sorted(values)
+    return {
+        "count": len(values),
+        "min_us": sorted_values[0] if sorted_values else None,
+        "mean_us": (sum(sorted_values) / len(sorted_values)) if sorted_values else None,
+        "p99_us": percentile(sorted_values, 99) if sorted_values else None,
+        "max_us": sorted_values[-1] if sorted_values else None,
+    }
+
+
+def summarize_response_latencies(
+    samples: list[Sample],
+    *,
+    baud: int = DEFAULT_HCP2_BAUD,
+    ignore_before_us: float = 0.0,
+    response_signal: str = "tx",
+    response_gate: str = "de",
+    request_signal: str = "rx",
+) -> dict[str, Any]:
+    cropped_samples = crop_samples(samples, ignore_before_us)
+    if not any(request_signal in sample.values for sample in cropped_samples):
+        return {
+            "verdict": "not-run",
+            "reason": f"capture does not contain request channel {request_signal!r}",
+            "matched_status_pairs": 0,
+        }
+
+    request_frames = decode_uart_stream(
+        samples,
+        signal=request_signal,
+        baud=baud,
+        ignore_before_us=ignore_before_us,
+    )
+    response_windows = decode_uart_windows(
+        samples,
+        signal=response_signal,
+        gate=response_gate,
+        baud=baud,
+        ignore_before_us=ignore_before_us,
+    )
+    status_polls = [
+        frame
+        for frame in request_frames
+        if frame["crc_ok"] and not frame["errors"] and frame["kind"] == "status_poll" and frame["counter"] is not None
+    ]
+    status_responses = [
+        frame
+        for frame in response_windows
+        if frame["crc_ok"] and not frame["errors"] and frame["kind"] == "status" and frame["counter"] is not None
+    ]
+    pending_by_counter: dict[int, list[dict[str, Any]]] = {}
+    for poll in status_polls:
+        pending_by_counter.setdefault(int(poll["counter"]), []).append(poll)
+
+    pairs: list[dict[str, Any]] = []
+    unmatched_responses = 0
+    for response in status_responses:
+        counter = int(response["counter"])
+        candidates = pending_by_counter.get(counter, [])
+        eligible_matches = [
+            (index, poll)
+            for index, poll in enumerate(candidates)
+            if poll["end_us"] <= response["start_us"]
+        ]
+        match = max(
+            eligible_matches,
+            key=lambda item: item[1]["end_us"],
+            default=None,
+        )
+        if match is None:
+            unmatched_responses += 1
+            continue
+        match_index, _ = match
+        poll = candidates.pop(match_index)
+        first_byte_start_us = response.get("first_byte_start_us")
+        frame_end_us = response.get("frame_end_us")
+        if first_byte_start_us is None or frame_end_us is None:
+            unmatched_responses += 1
+            continue
+        pairs.append(
+            {
+                "counter": counter,
+                "poll_start_us": poll["start_us"],
+                "poll_end_us": poll["end_us"],
+                "de_assert_us": response["start_us"],
+                "response_first_byte_us": first_byte_start_us,
+                "response_end_us": frame_end_us,
+                "de_release_us": response["end_us"],
+                "poll_end_to_de_assert_us": response["start_us"] - poll["end_us"],
+                "poll_end_to_first_byte_us": first_byte_start_us - poll["end_us"],
+                "poll_end_to_response_end_us": frame_end_us - poll["end_us"],
+                "de_assert_to_first_byte_us": first_byte_start_us - response["start_us"],
+                "first_byte_to_response_end_us": frame_end_us - first_byte_start_us,
+                "de_hold_us": response["duration_us"],
+            }
+        )
+
+    unmatched_polls = sum(len(polls) for polls in pending_by_counter.values())
+    failures: list[str] = []
+    if status_polls and not pairs:
+        failures.append("no status poll/response latency pairs could be matched")
+    return {
+        "verdict": "fail" if failures else "ok",
+        "failures": failures,
+        "ignored_before_us": ignore_before_us,
+        "baud": baud,
+        "request_signal": request_signal,
+        "response_signal": response_signal,
+        "response_gate": response_gate,
+        "request_frames": len(request_frames),
+        "status_polls": len(status_polls),
+        "status_responses": len(status_responses),
+        "matched_status_pairs": len(pairs),
+        "unmatched_status_polls": unmatched_polls,
+        "unmatched_status_responses": unmatched_responses,
+        "poll_end_to_de_assert": metric_summary([pair["poll_end_to_de_assert_us"] for pair in pairs]),
+        "poll_end_to_first_byte": metric_summary([pair["poll_end_to_first_byte_us"] for pair in pairs]),
+        "poll_end_to_response_end": metric_summary([pair["poll_end_to_response_end_us"] for pair in pairs]),
+        "de_assert_to_first_byte": metric_summary([pair["de_assert_to_first_byte_us"] for pair in pairs]),
+        "first_byte_to_response_end": metric_summary([pair["first_byte_to_response_end_us"] for pair in pairs]),
+        "de_hold": metric_summary([pair["de_hold_us"] for pair in pairs]),
+        "pairs_detail": pairs[:200],
     }
 
 
@@ -672,14 +967,24 @@ def verify_samples(
         min_status_frames=min_status_frames,
     )
     apply_uart_sampling_check(uart, cropped_samples, baud)
+    latency = summarize_response_latencies(
+        samples,
+        baud=baud,
+        ignore_before_us=ignore_before_us,
+        response_signal=signal,
+        response_gate=gate,
+    )
     failures: list[str] = []
     failures.extend(f"electrical: {failure}" for failure in electrical["failures"])
     failures.extend(f"uart: {failure}" for failure in uart["failures"])
+    if latency["verdict"] == "fail":
+        failures.extend(f"latency: {failure}" for failure in latency["failures"])
     return {
         "verdict": "fail" if failures else "ok",
         "failures": failures,
         "electrical": electrical,
         "uart": uart,
+        "latency": latency,
     }
 
 
@@ -811,17 +1116,50 @@ def cmd_verify(args: argparse.Namespace) -> int:
         args.output.write_text(text, encoding="utf-8")
     print(
         "verdict={verdict} electrical={electrical_verdict} uart={uart_verdict} "
-        "status={status_frames} gaps={status_counter_gap_count}".format(
+        "status={status_frames} gaps={status_counter_gap_count} latency_pairs={latency_pairs}".format(
             verdict=report["verdict"],
             electrical_verdict=report["electrical"]["verdict"],
             uart_verdict=report["uart"]["verdict"],
             status_frames=report["uart"]["status_frames"],
             status_counter_gap_count=report["uart"]["status_counter_gap_count"],
+            latency_pairs=report["latency"].get("matched_status_pairs", 0),
         )
     )
     for failure in report["failures"]:
         print(f"failure: {failure}", file=sys.stderr)
     return 0 if report["verdict"] == "ok" else 1
+
+
+def cmd_latency(args: argparse.Namespace) -> int:
+    channels = parse_channel_map(args.channels)
+    try:
+        samples = load_samples(args.input, channels)
+        report = summarize_response_latencies(
+            samples,
+            baud=args.baud,
+            ignore_before_us=args.ignore_before_us,
+            response_signal=args.signal,
+            response_gate=args.gate,
+            request_signal=args.request_signal,
+        )
+    except Exception as exc:
+        print(f"garage-hcp2-hil-la latency failed: {exc}", file=sys.stderr)
+        return 1
+
+    text = json.dumps(report, indent=2, sort_keys=True) + "\n"
+    if args.output:
+        args.output.write_text(text, encoding="utf-8")
+    first_byte = report.get("poll_end_to_first_byte", {})
+    print(
+        "verdict={verdict} pairs={pairs} poll_end_to_first_byte_max_us={max_us}".format(
+            verdict=report["verdict"],
+            pairs=report.get("matched_status_pairs", 0),
+            max_us=first_byte.get("max_us") if isinstance(first_byte, dict) else None,
+        )
+    )
+    for failure in report.get("failures", []):
+        print(f"failure: {failure}", file=sys.stderr)
+    return 0 if report["verdict"] in {"ok", "not-run"} else 1
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -893,6 +1231,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     verify.add_argument("--min-status-frames", type=int, default=0)
     verify.add_argument("--output", type=Path)
     verify.set_defaults(func=cmd_verify)
+
+    latency = subparsers.add_parser("latency", help="Correlate RX status polls to TX status responses")
+    latency.add_argument("--input", type=Path, required=True)
+    latency.add_argument("--channels", help="Comma-separated logical mapping, e.g. de=D0,re=D1,tx=D2,rx=D3")
+    latency.add_argument("--baud", type=int, default=DEFAULT_HCP2_BAUD)
+    latency.add_argument("--signal", default="tx")
+    latency.add_argument("--gate", default="de")
+    latency.add_argument("--request-signal", default="rx")
+    latency.add_argument("--ignore-before-us", type=float, default=0.0)
+    latency.add_argument("--output", type=Path)
+    latency.set_defaults(func=cmd_latency)
 
     return parser.parse_args(argv)
 

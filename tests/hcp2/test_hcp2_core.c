@@ -12,6 +12,7 @@
 
 typedef struct {
   uint32_t now_us;
+  uint32_t tx_duration_us;
   uint8_t tx[16][HCP2_MAX_FRAME_LEN];
   uint8_t tx_len[16];
   uint8_t tx_count;
@@ -30,6 +31,7 @@ static void test_tx(void *user, const uint8_t *data, uint8_t len) {
   memcpy(port->tx[port->tx_count], data, len);
   port->tx_len[port->tx_count] = len;
   port->tx_count++;
+  port->now_us += port->tx_duration_us;
 }
 
 static void test_de_set(void *user, uint8_t enabled) {
@@ -334,6 +336,80 @@ static void test_rx_error_resets_partial_frame(void) {
   assert(test_port.tx_count == 1);
 }
 
+static void test_engine_latency_counters(void) {
+  test_port_t test_port;
+  hcp2_port_t port;
+  hcp2_engine_config_t config;
+  hcp2_engine_t engine;
+
+  memset(&test_port, 0, sizeof(test_port));
+  test_port.now_us = 1000u;
+  test_port.tx_duration_us = 4100u;
+  port = make_port(&test_port);
+  hcp2_engine_config_default(&config);
+  config.response_delay_us = 4200u;
+  hcp2_engine_init(&engine, &port, &config);
+
+  feed_hex(&engine, "02179CB900089C410002043E030000EBCC");
+  assert(engine.status_polls_received == 1u);
+  assert(engine.max_status_poll_rx_to_schedule_us == 0u);
+  test_port.now_us = 5199u;
+  hcp2_engine_poll(&engine);
+  assert(test_port.tx_count == 0u);
+  test_port.now_us = 5200u;
+  hcp2_engine_poll(&engine);
+
+  assert(test_port.tx_count == 1u);
+  assert(engine.status_responses_sent == 1u);
+  assert(engine.max_status_response_schedule_to_tx_start_us == 4200u);
+  assert(engine.max_status_response_tx_us == 4100u);
+}
+
+static void test_engine_protocol_events(void) {
+  test_port_t test_port;
+  hcp2_port_t port;
+  hcp2_engine_config_t config;
+  hcp2_engine_t engine;
+  hcp2_protocol_event_t event;
+  uint8_t poll[HCP2_MAX_FRAME_LEN];
+  uint32_t last_sequence = 0u;
+  uint8_t poll_len;
+
+  memset(&test_port, 0, sizeof(test_port));
+  test_port.now_us = 1234u;
+  port = make_port(&test_port);
+  hcp2_engine_config_default(&config);
+  config.response_delay_us = 0u;
+  hcp2_engine_init(&engine, &port, &config);
+
+  poll_len = build_status_poll(0x42u, poll);
+  feed_bytes(&engine, poll, poll_len);
+  assert(hcp2_engine_read_protocol_event(&engine, &last_sequence, &event));
+  assert(event.event_type == HCP2_PROTOCOL_EVENT_RX);
+  assert(event.frame_type == HCP2_FRAME_STATUS_POLL);
+  assert(event.at_us == 1234u);
+  assert(event.len == poll_len);
+  assert(memcmp(event.data, poll, poll_len) == 0);
+
+  hcp2_engine_poll(&engine);
+  assert(test_port.tx_count == 1u);
+  assert(hcp2_engine_read_protocol_event(&engine, &last_sequence, &event));
+  assert(event.event_type == HCP2_PROTOCOL_EVENT_TX);
+  assert(event.frame_type == HCP2_FRAME_STATUS_POLL);
+  assert(event.len == HCP2_STATUS_RESPONSE_LEN);
+  assert(memcmp(event.data, test_port.tx[0], event.len) == 0);
+
+  feed_hex(&engine, "02179CB900089C410002043E030000EB00");
+  assert(hcp2_engine_read_protocol_event(&engine, &last_sequence, &event));
+  assert(event.event_type == HCP2_PROTOCOL_EVENT_BAD_CRC);
+  assert(event.len == 17u);
+
+  hcp2_engine_rx_byte(&engine, 0x00u, HCP2_RX_PARITY_ERROR);
+  assert(hcp2_engine_read_protocol_event(&engine, &last_sequence, &event));
+  assert(event.event_type == HCP2_PROTOCOL_EVENT_RX_ERROR);
+  assert(event.len == 0u);
+}
+
 static void test_mailbox_layout_and_reload_decision(void) {
   hcp2_lp_mailbox_t mailbox;
   hcp2_lp_health_sample_t before;
@@ -392,7 +468,9 @@ static void test_mailbox_state_seqlock(void) {
   state.state = HCP2_DRIVE_OPENING;
   state.light_on = 1u;
   hcp2_lp_mailbox_publish_state(&mailbox, &state, 123456u);
-  hcp2_lp_mailbox_publish_counters(&mailbox, 123500u, 7u, 6u, 2u, 1u, 8000u, 123490u, 3u, 4u);
+  hcp2_lp_mailbox_publish_counters(&mailbox, 123500u, 7u, 6u, 2u, 1u, 8000u, 123490u, 3u, 4u,
+                                   6100u, 5u, 6u, 7u, 8u, HCP2_LP_HEALTH_FLAG_RX_STARVATION, 9u,
+                                   10u, 4200u, 4100u);
 
   assert(hcp2_lp_mailbox_read_state(&mailbox, &snapshot));
   assert(snapshot.target_position == 200u);
@@ -409,9 +487,55 @@ static void test_mailbox_state_seqlock(void) {
   assert(mailbox.last_poll_us == 123490u);
   assert(mailbox.crc_error_count == 3u);
   assert(mailbox.rx_error_count == 4u);
+  assert(mailbox.max_loop_us == 6100u);
+  assert(mailbox.loop_overrun_count == 5u);
+  assert(mailbox.rx_starvation_count == 6u);
+  assert(mailbox.stuck_de_count == 7u);
+  assert(mailbox.mailbox_repair_count == 8u);
+  assert(mailbox.health_flags == HCP2_LP_HEALTH_FLAG_RX_STARVATION);
+  assert(mailbox.max_rx_fifo_count == 9u);
+  assert(mailbox.max_poll_rx_to_schedule_us == 10u);
+  assert(mailbox.max_response_schedule_to_tx_start_us == 4200u);
+  assert(mailbox.max_response_tx_us == 4100u);
 
   mailbox.state_seq |= 1u;
   assert(!hcp2_lp_mailbox_read_state(&mailbox, &snapshot));
+}
+
+static void test_mailbox_protocol_event(void) {
+  hcp2_lp_mailbox_t mailbox;
+  hcp2_protocol_event_t event;
+  hcp2_lp_protocol_event_t snapshot;
+  uint32_t last_sequence = 0u;
+
+  hcp2_lp_mailbox_init(&mailbox);
+  assert(!hcp2_lp_mailbox_read_protocol_event(&mailbox, &last_sequence, &snapshot));
+
+  memset(&event, 0, sizeof(event));
+  event.sequence = 7u;
+  event.at_us = 123456u;
+  event.event_type = HCP2_PROTOCOL_EVENT_TX;
+  event.frame_type = HCP2_FRAME_STATUS_POLL;
+  event.len = 3u;
+  event.data[0] = 0x02u;
+  event.data[1] = 0x17u;
+  event.data[2] = 0x10u;
+  hcp2_lp_mailbox_publish_protocol_event(&mailbox, &event);
+
+  assert(mailbox.protocol_sequence == 7u);
+  assert(hcp2_lp_mailbox_read_protocol_event(&mailbox, &last_sequence, &snapshot));
+  assert(snapshot.sequence == 7u);
+  assert(snapshot.at_us == 123456u);
+  assert(snapshot.event_type == HCP2_PROTOCOL_EVENT_TX);
+  assert(snapshot.frame_type == HCP2_FRAME_STATUS_POLL);
+  assert(snapshot.len == 3u);
+  assert(snapshot.data[0] == 0x02u);
+  assert(snapshot.data[1] == 0x17u);
+  assert(snapshot.data[2] == 0x10u);
+  assert(!hcp2_lp_mailbox_read_protocol_event(&mailbox, &last_sequence, &snapshot));
+
+  mailbox.protocol_sequence = 0u;
+  assert(!hcp2_lp_mailbox_read_protocol_event(&mailbox, &last_sequence, &snapshot));
 }
 
 static void test_mailbox_command_epoch_and_ack(void) {
@@ -483,8 +607,11 @@ int main(void) {
   test_button_press_release_sequence();
   test_bad_crc_no_response_and_recovery();
   test_rx_error_resets_partial_frame();
+  test_engine_latency_counters();
+  test_engine_protocol_events();
   test_mailbox_layout_and_reload_decision();
   test_mailbox_state_seqlock();
+  test_mailbox_protocol_event();
   test_mailbox_command_epoch_and_ack();
   test_mailbox_stop_trigger();
   puts("hcp2 core tests ok");

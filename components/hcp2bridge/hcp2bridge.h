@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <string>
 
 #include "esphome/core/component.h"
@@ -14,6 +15,7 @@ extern "C" {
 }
 
 #ifdef USE_ESP32
+#include "esphome/components/socket/socket.h"
 #include "driver/uart.h"
 #include "esp_err.h"
 #include "freertos/FreeRTOS.h"
@@ -44,6 +46,8 @@ class HCP2Bridge : public Component {
   void set_button_press_us(uint32_t value) { this->config_.button_press_us = value; }
   void set_hp_fallback(bool value) { this->hp_fallback_ = value; }
   void set_lp_uart_clock_source_default(bool value) { this->lp_uart_clock_source_default_ = value; }
+  void set_http_debug_port(uint16_t port) { this->http_debug_port_ = port; }
+  void set_protocol_log_enabled(bool enabled) { this->protocol_log_enabled_ = enabled; }
 
   bool action_open() { return this->queue_button_(HCP2_BUTTON_OPEN); }
   bool action_close() { return this->queue_button_(HCP2_BUTTON_CLOSE); }
@@ -84,6 +88,16 @@ class HCP2Bridge : public Component {
   uint32_t get_lp_crc_error_count() const;
   uint32_t get_lp_rx_error_count() const;
   uint32_t get_lp_stop_trigger_fire_count() const;
+  uint32_t get_lp_health_flags() const;
+  uint32_t get_lp_max_rx_fifo_count() const;
+  uint32_t get_lp_max_loop_us() const;
+  uint32_t get_lp_max_poll_rx_to_schedule_us() const;
+  uint32_t get_lp_max_response_schedule_to_tx_start_us() const;
+  uint32_t get_lp_max_response_tx_us() const;
+  uint32_t get_lp_loop_overrun_count() const;
+  uint32_t get_lp_rx_starvation_count() const;
+  uint32_t get_lp_stuck_de_count() const;
+  uint32_t get_lp_mailbox_repair_count() const;
   uint32_t get_hp_reset_count() const;
   uint32_t get_hp_panic_reset_count() const;
   uint32_t get_hp_wdt_reset_count() const;
@@ -111,6 +125,36 @@ class HCP2Bridge : public Component {
   void drain_command_queue_();
   void update_state_from_engine_();
   void update_state_from_mailbox_();
+  void setup_protocol_log_();
+  bool http_debug_enabled_() const { return this->http_debug_port_ != 0; }
+  void setup_http_debug_server_();
+  void http_debug_accept_client_();
+  void http_debug_service_pending_client_();
+  void http_debug_handle_request_(std::unique_ptr<socket::Socket> client, const std::string &request_line);
+  void http_debug_send_response_(std::unique_ptr<socket::Socket> client, const char *status, const char *content_type,
+                                 const std::string &body);
+  void http_debug_send_log_binary_response_(std::unique_ptr<socket::Socket> client);
+  bool http_debug_write_all_(socket::Socket *client, const std::string &payload, uint32_t timeout_ms);
+  std::string http_debug_path_from_request_line_(const std::string &request_line);
+  std::string http_debug_index_html_();
+  std::string http_debug_stats_json_();
+  std::string http_debug_support_json_();
+  std::string protocol_log_summary_json_() const;
+  std::string protocol_log_body_();
+  void protocol_log_clear_();
+  void protocol_log_append_line_(const std::string &line, bool force = false);
+  void protocol_log_append_control_(const char *action);
+  void protocol_log_append_command_(const char *phase, hcp2_button_t button, bool ok, const char *reason);
+  void protocol_log_append_state_(const hcp2_drive_status_t &status, bool bus_online, bool obstruction,
+                                  const char *source);
+  void protocol_log_append_protocol_event_(uint32_t event_us, uint8_t event_type, uint8_t frame_type,
+                                           const uint8_t *data, uint8_t len, const char *source);
+  void protocol_log_append_lp_trace_(const hcp2_lp_trace_entry_t &entry);
+  void protocol_log_append_lp_trace_overflow_(uint32_t dropped);
+  void drain_lp_protocol_event_();
+  void drain_lp_trace_();
+  void drain_hp_protocol_event_();
+  std::string hex_encode_(const uint8_t *data, size_t len) const;
   TickType_t pending_tx_wait_ticks_() const;
   void set_de_(bool enabled);
   uint32_t fresh_epoch_() const;
@@ -127,6 +171,10 @@ class HCP2Bridge : public Component {
   bool valid_broadcast_snapshot_() const;
   bool obstruction_snapshot_() const;
   uint32_t counter_snapshot_(uint32_t HCP2Bridge::*field) const;
+  static const char *button_name_(hcp2_button_t button);
+  static const char *protocol_event_name_(uint8_t event_type);
+  static const char *frame_type_name_(uint8_t frame_type);
+  static const char *lp_trace_event_name_(uint16_t event);
 
   InternalGPIOPin *rx_pin_{nullptr};
   InternalGPIOPin *tx_pin_{nullptr};
@@ -136,6 +184,8 @@ class HCP2Bridge : public Component {
   bool hp_fallback_{true};
   bool lp_uart_clock_source_default_{false};
   uint8_t uart_num_config_{1};
+  uint16_t http_debug_port_{0};
+  bool protocol_log_enabled_{false};
 
   hcp2_drive_status_t drive_status_{};
   bool valid_broadcast_{false};
@@ -163,6 +213,16 @@ class HCP2Bridge : public Component {
   uint32_t lp_crc_error_count_{0};
   uint32_t lp_rx_error_count_{0};
   uint32_t lp_stop_trigger_fire_count_{0};
+  uint32_t lp_health_flags_{0};
+  uint32_t lp_max_rx_fifo_count_{0};
+  uint32_t lp_max_loop_us_{0};
+  uint32_t lp_max_poll_rx_to_schedule_us_{0};
+  uint32_t lp_max_response_schedule_to_tx_start_us_{0};
+  uint32_t lp_max_response_tx_us_{0};
+  uint32_t lp_loop_overrun_count_{0};
+  uint32_t lp_rx_starvation_count_{0};
+  uint32_t lp_stuck_de_count_{0};
+  uint32_t lp_mailbox_repair_count_{0};
   uint32_t hp_reset_count_{0};
   uint32_t hp_panic_reset_count_{0};
   uint32_t hp_wdt_reset_count_{0};
@@ -184,6 +244,22 @@ class HCP2Bridge : public Component {
   bool bus_task_started_{false};
   bool lp_ready_{false};
   uint32_t lp_last_health_log_ms_{0};
+  static constexpr size_t PROTOCOL_LOG_CAPACITY = 49152;
+  bool protocol_log_ready_{false};
+  uint8_t protocol_log_buffer_[PROTOCOL_LOG_CAPACITY]{};
+  size_t protocol_log_used_{0};
+  uint32_t protocol_log_next_seq_{1};
+  uint32_t protocol_log_dropped_records_{0};
+  uint32_t protocol_log_dropped_bytes_{0};
+  uint32_t last_lp_protocol_sequence_{0};
+  uint32_t last_lp_trace_head_{0};
+  uint32_t last_hp_protocol_sequence_{0};
+  mutable portMUX_TYPE protocol_log_mux_ = portMUX_INITIALIZER_UNLOCKED;
+  std::unique_ptr<socket::ListenSocket> http_debug_server_;
+  std::unique_ptr<socket::Socket> http_debug_pending_client_;
+  char http_debug_request_buffer_[256]{};
+  size_t http_debug_request_buffer_len_{0};
+  uint32_t http_debug_pending_client_started_ms_{0};
 #endif
 };
 

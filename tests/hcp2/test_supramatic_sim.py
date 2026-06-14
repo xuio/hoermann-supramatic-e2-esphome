@@ -6,12 +6,14 @@ import pty
 import select
 import subprocess
 import threading
+import time
 import tty
 from argparse import Namespace
 from pathlib import Path
 
 from tools.supramatic_sim.__main__ import run_once, selftest
-from tools.supramatic_sim.simulator import DEFAULT_MISSED_POLL_THRESHOLD
+from tools.supramatic_sim import protocol
+from tools.supramatic_sim.simulator import DEFAULT_MISSED_POLL_THRESHOLD, SupraMaticSimulator
 from tools.supramatic_sim.transport import HOST_RESPONDER, build_host_responder
 
 
@@ -21,11 +23,15 @@ def scenario(**kwargs: object) -> Namespace:
         "socketpair": False,
         "serial": None,
         "cycles": 100,
+        "duration_hours": None,
         "speed_factor": 50.0,
-        "dut_response_delay_us": 4500,
+        "dut_response_delay_us": 4200,
         "missed_poll_threshold": DEFAULT_MISSED_POLL_THRESHOLD,
         "report": None,
         "trace": None,
+        "progress": None,
+        "progress_interval_s": 60.0,
+        "abort_on_miss": False,
         "fault": [],
         "command": None,
         "expect_button": [],
@@ -62,6 +68,66 @@ def test_simulator_writes_per_poll_trace(tmp_path: Path) -> None:
     assert any(event["event"] == "bus_scan_tx" for event in events)
     assert [event["counter"] for event in events if event["event"] == "poll_tx"] == [0, 1, 2]
     assert [event["counter"] for event in events if event["event"] == "poll_rx"] == [0, 1, 2]
+
+
+def test_simulator_writes_low_volume_progress(tmp_path: Path) -> None:
+    progress_path = tmp_path / "progress.jsonl"
+    result = run_once(scenario(cycles=4, progress=progress_path, progress_interval_s=0.0))
+
+    assert result["verdict"] == "ok"
+    events = [json.loads(line) for line in progress_path.read_text(encoding="utf-8").splitlines()]
+    assert [event["event"] for event in events[:2]] == ["start", "bus_scan"]
+    assert events[-1]["event"] == "final"
+    assert events[-1]["polls_sent"] == 4
+    assert events[-1]["misses"] == 0
+
+
+class ScanThenSilentTransport:
+    def __init__(self) -> None:
+        self.pending = bytearray()
+
+    def write(self, data: bytes) -> None:
+        if data == protocol.bus_scan_request(protocol.SLAVE_ID):
+            self.pending.extend(protocol.SCAN_RESPONSE)
+
+    def read_available(self, timeout: float) -> bytes:
+        if self.pending:
+            data = bytes(self.pending)
+            self.pending.clear()
+            return data
+        time.sleep(min(timeout, 0.001))
+        return b""
+
+    def command(self, line: str) -> str:
+        raise RuntimeError(line)
+
+    def close(self) -> None:
+        pass
+
+
+def test_simulator_abort_on_first_miss(tmp_path: Path) -> None:
+    progress_path = tmp_path / "miss-progress.jsonl"
+    transport = ScanThenSilentTransport()
+    simulator = SupraMaticSimulator(
+        transport,
+        speed_factor=5000.0,
+        response_timeout_s=0.001,
+        abort_on_first_miss=True,
+        progress_path=progress_path,
+        progress_interval_s=0.0,
+    )
+    try:
+        report = simulator.run(5)
+    finally:
+        simulator.close()
+
+    assert report.verdict == "missed-poll"
+    assert report.polls_sent == 1
+    assert report.replies == 0
+    assert report.misses == 1
+    events = [json.loads(line) for line in progress_path.read_text(encoding="utf-8").splitlines()]
+    assert events[-1]["event"] == "final"
+    assert events[-1]["verdict"] == "missed-poll"
 
 
 def test_socketpair_fault_recovery_and_open_command() -> None:

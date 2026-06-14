@@ -21,6 +21,14 @@ void hcp2_lp_mailbox_init(volatile hcp2_lp_mailbox_t *mailbox) {
   }
 
   zero_memory_((void *) mailbox, sizeof(*mailbox));
+  hcp2_lp_mailbox_repair_header(mailbox);
+}
+
+void hcp2_lp_mailbox_repair_header(volatile hcp2_lp_mailbox_t *mailbox) {
+  if (mailbox == 0) {
+    return;
+  }
+
   mailbox->magic = HCP2_LP_MAILBOX_MAGIC;
   mailbox->abi_version = HCP2_LP_MAILBOX_ABI_VERSION;
   mailbox->struct_size = HCP2_LP_MAILBOX_SIZE;
@@ -56,7 +64,13 @@ void hcp2_lp_mailbox_publish_counters(volatile hcp2_lp_mailbox_t *mailbox, uint3
                                       uint32_t polls_answered, uint32_t tx_abort_count,
                                       uint32_t collision_count, uint32_t max_de_hold_us,
                                       uint32_t last_poll_us, uint32_t crc_error_count,
-                                      uint32_t rx_error_count) {
+                                      uint32_t rx_error_count, uint32_t max_loop_us,
+                                      uint32_t loop_overrun_count, uint32_t rx_starvation_count,
+                                      uint32_t stuck_de_count, uint32_t mailbox_repair_count,
+                                      uint16_t health_flags, uint16_t max_rx_fifo_count,
+                                      uint32_t max_poll_rx_to_schedule_us,
+                                      uint32_t max_response_schedule_to_tx_start_us,
+                                      uint32_t max_response_tx_us) {
   if (mailbox == 0) {
     return;
   }
@@ -72,7 +86,101 @@ void hcp2_lp_mailbox_publish_counters(volatile hcp2_lp_mailbox_t *mailbox, uint3
   mailbox->last_poll_us = last_poll_us;
   mailbox->crc_error_count = crc_error_count;
   mailbox->rx_error_count = rx_error_count;
+  if (max_loop_us > mailbox->max_loop_us) {
+    mailbox->max_loop_us = max_loop_us;
+  }
+  mailbox->loop_overrun_count = loop_overrun_count;
+  mailbox->rx_starvation_count = rx_starvation_count;
+  mailbox->stuck_de_count = stuck_de_count;
+  mailbox->mailbox_repair_count = mailbox_repair_count;
+  mailbox->health_flags = health_flags;
+  if (max_rx_fifo_count > mailbox->max_rx_fifo_count) {
+    mailbox->max_rx_fifo_count = max_rx_fifo_count;
+  }
+  if (max_poll_rx_to_schedule_us > mailbox->max_poll_rx_to_schedule_us) {
+    mailbox->max_poll_rx_to_schedule_us = max_poll_rx_to_schedule_us;
+  }
+  if (max_response_schedule_to_tx_start_us > mailbox->max_response_schedule_to_tx_start_us) {
+    mailbox->max_response_schedule_to_tx_start_us = max_response_schedule_to_tx_start_us;
+  }
+  if (max_response_tx_us > mailbox->max_response_tx_us) {
+    mailbox->max_response_tx_us = max_response_tx_us;
+  }
   memory_barrier_();
+}
+
+void hcp2_lp_mailbox_publish_protocol_event(volatile hcp2_lp_mailbox_t *mailbox,
+                                            const hcp2_protocol_event_t *event) {
+  uint8_t i;
+  uint8_t len;
+
+  if (mailbox == 0 || event == 0 || event->sequence == 0u) {
+    return;
+  }
+
+  len = event->len;
+  if (len > HCP2_MAX_FRAME_LEN) {
+    len = HCP2_MAX_FRAME_LEN;
+  }
+
+  mailbox->protocol_sequence = 0u;
+  memory_barrier_();
+  mailbox->protocol_at_us = event->at_us;
+  mailbox->protocol_event_type = event->event_type;
+  mailbox->protocol_frame_type = event->frame_type;
+  mailbox->protocol_len = len;
+  mailbox->protocol_reserved = 0u;
+  for (i = 0u; i < len; i++) {
+    mailbox->protocol_data[i] = event->data[i];
+  }
+  memory_barrier_();
+  mailbox->protocol_sequence = event->sequence;
+}
+
+uint8_t hcp2_lp_mailbox_read_protocol_event(const volatile hcp2_lp_mailbox_t *mailbox,
+                                            uint32_t *last_sequence, hcp2_lp_protocol_event_t *out) {
+  hcp2_lp_protocol_event_t snapshot;
+  uint32_t before;
+  uint32_t after;
+  uint8_t i;
+  uint8_t len;
+
+  if (mailbox == 0 || out == 0) {
+    return 0u;
+  }
+
+  before = mailbox->protocol_sequence;
+  if (before == 0u || (last_sequence != 0 && before == *last_sequence)) {
+    return 0u;
+  }
+  memory_barrier_();
+  snapshot.sequence = before;
+  snapshot.at_us = mailbox->protocol_at_us;
+  snapshot.event_type = mailbox->protocol_event_type;
+  snapshot.frame_type = mailbox->protocol_frame_type;
+  len = mailbox->protocol_len;
+  if (len > HCP2_MAX_FRAME_LEN) {
+    len = HCP2_MAX_FRAME_LEN;
+  }
+  snapshot.len = len;
+  snapshot.reserved = 0u;
+  for (i = 0u; i < len; i++) {
+    snapshot.data[i] = mailbox->protocol_data[i];
+  }
+  for (; i < HCP2_MAX_FRAME_LEN; i++) {
+    snapshot.data[i] = 0u;
+  }
+  memory_barrier_();
+  after = mailbox->protocol_sequence;
+  if (before == 0u || before != after) {
+    return 0u;
+  }
+
+  *out = snapshot;
+  if (last_sequence != 0) {
+    *last_sequence = snapshot.sequence;
+  }
+  return 1u;
 }
 
 uint8_t hcp2_lp_mailbox_read_state(const volatile hcp2_lp_mailbox_t *mailbox, hcp2_lp_state_snapshot_t *out) {

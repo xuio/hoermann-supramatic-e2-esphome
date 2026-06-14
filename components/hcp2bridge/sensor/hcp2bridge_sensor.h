@@ -91,6 +91,66 @@ class HCP2BridgeStopTriggerFireSensor : public HCP2BridgeDiagnosticSensorBase {
   const char *sensor_name_() const override { return "Stop Trigger Fires"; }
 };
 
+class HCP2BridgeHealthFlagsSensor : public HCP2BridgeDiagnosticSensorBase {
+ protected:
+  uint32_t read_value_() const override { return this->parent_->get_lp_health_flags(); }
+  const char *sensor_name_() const override { return "LP Health Flags"; }
+};
+
+class HCP2BridgeMaxRXFifoSensor : public HCP2BridgeDiagnosticSensorBase {
+ protected:
+  uint32_t read_value_() const override { return this->parent_->get_lp_max_rx_fifo_count(); }
+  const char *sensor_name_() const override { return "Max RX FIFO"; }
+};
+
+class HCP2BridgeMaxLoopSensor : public HCP2BridgeDiagnosticSensorBase {
+ protected:
+  uint32_t read_value_() const override { return this->parent_->get_lp_max_loop_us(); }
+  const char *sensor_name_() const override { return "Max Loop"; }
+};
+
+class HCP2BridgeMaxPollRXToScheduleSensor : public HCP2BridgeDiagnosticSensorBase {
+ protected:
+  uint32_t read_value_() const override { return this->parent_->get_lp_max_poll_rx_to_schedule_us(); }
+  const char *sensor_name_() const override { return "Max Poll RX To Schedule"; }
+};
+
+class HCP2BridgeMaxResponseScheduleToTXStartSensor : public HCP2BridgeDiagnosticSensorBase {
+ protected:
+  uint32_t read_value_() const override { return this->parent_->get_lp_max_response_schedule_to_tx_start_us(); }
+  const char *sensor_name_() const override { return "Max Response Schedule To TX Start"; }
+};
+
+class HCP2BridgeMaxResponseTXSensor : public HCP2BridgeDiagnosticSensorBase {
+ protected:
+  uint32_t read_value_() const override { return this->parent_->get_lp_max_response_tx_us(); }
+  const char *sensor_name_() const override { return "Max Response TX"; }
+};
+
+class HCP2BridgeLoopOverrunSensor : public HCP2BridgeDiagnosticSensorBase {
+ protected:
+  uint32_t read_value_() const override { return this->parent_->get_lp_loop_overrun_count(); }
+  const char *sensor_name_() const override { return "Loop Overruns"; }
+};
+
+class HCP2BridgeRXStarvationSensor : public HCP2BridgeDiagnosticSensorBase {
+ protected:
+  uint32_t read_value_() const override { return this->parent_->get_lp_rx_starvation_count(); }
+  const char *sensor_name_() const override { return "RX Starvations"; }
+};
+
+class HCP2BridgeStuckDESensor : public HCP2BridgeDiagnosticSensorBase {
+ protected:
+  uint32_t read_value_() const override { return this->parent_->get_lp_stuck_de_count(); }
+  const char *sensor_name_() const override { return "Stuck DE Recoveries"; }
+};
+
+class HCP2BridgeMailboxRepairSensor : public HCP2BridgeDiagnosticSensorBase {
+ protected:
+  uint32_t read_value_() const override { return this->parent_->get_lp_mailbox_repair_count(); }
+  const char *sensor_name_() const override { return "Mailbox Repairs"; }
+};
+
 class HCP2BridgeHPResetCountSensor : public HCP2BridgeDiagnosticSensorBase {
  protected:
   uint32_t read_value_() const override { return this->parent_->get_hp_reset_count(); }

@@ -13,9 +13,11 @@ repro receives the exact signature response, and this firmware's real
 LP-in-the-loop steady-state fixture passes with 200/200 replies and zero misses.
 The old GPIO bit-banged UART workaround was deliberately never added, and the
 Wokwi-specific LP-UART `reg_update` bypass remains removed. This LP-in-the-loop
-build is the primary no-hardware full-firmware gate. Phase 1 HIL remains the
-authority for physical LP-UART parity/timing, RS-485 electrical behavior,
-transceiver DE behavior, silicon reset behavior, and reset-time bus glitches.
+build is the primary no-hardware full-firmware gate, but the GitHub Actions
+Wokwi job is manual-only (`run_wokwi`) and does not run on normal push/PR CI.
+Phase 1 HIL remains the authority for physical LP-UART parity/timing, RS-485
+electrical behavior, transceiver DE behavior, silicon reset behavior, and
+reset-time bus glitches.
 
 Both modes use the fixed target pins:
 
@@ -145,6 +147,37 @@ uv run garage-hcp2-hil-load \
   --output captures/hcp2/hil-load-ping.json
 ```
 
+For longer hostile soaks, use the built-in preset. It starts a ping stream and
+an ESPHome native-API reconnect loop for every simulator run, then aggregates
+the worst latency and miss counters across repeats:
+
+```sh
+uv run garage-hcp2-hil-load \
+  --serial /dev/serial/by-id/usb-1a86_USB_Single_Serial_5ACC032762-if00 \
+  --preset hostile --esp-host 192.168.10.156 \
+  --cycles 2000 --repeat 3 --settle-s 2 \
+  --trace captures/hcp2/hil-load-hostile.jsonl \
+  --output captures/hcp2/hil-load-hostile.json
+```
+
+For 24h zero-miss proof runs, keep the serial path local to the NixOS bench,
+run at `--speed-factor 1`, skip the full per-poll trace, and enable both
+`--abort-on-miss` and a progress JSONL:
+
+```sh
+uv run garage-hcp2-hil-load \
+  --serial /dev/serial/by-id/usb-1a86_USB_Single_Serial_5ACC032762-if00 \
+  --preset hostile --esp-host 192.168.10.156 \
+  --speed-factor 1 --duration-hours 24 --abort-on-miss \
+  --progress-output captures/hcp2/soak-24h/progress.jsonl \
+  --output captures/hcp2/soak-24h/report.json
+```
+
+Use a detached `systemd-run` or `nohup` wrapper for the actual 24h run. The
+progress file is intentionally low-volume and fsynced after every snapshot so a
+failed or interrupted run still leaves the last completed poll index and miss
+counter.
+
 For LA correlation, the simulator can also write a per-poll JSONL trace. This is
 the easiest way to match a missed simulator poll to the corresponding DE window
 and UART frame on the logic analyzer:
@@ -238,24 +271,29 @@ The current connected LA wiring uses this mapping:
 
 ## Phase 1 HIL Results
 
-Latest v9 closeout on 2026-06-13 with mailbox ABI v3, LP stop-trigger support,
-and GPIO0/GPIO1 direction control:
+Last completed full closeout before the mailbox ABI v4 health-counter update:
+2026-06-13 with mailbox ABI v3, LP stop-trigger support, and GPIO0/GPIO1
+direction control:
 
-- Serial closeout: `runtime` 1000/1000 replies and `fault-recovery` 251/251
-  replies, zero misses.
-- LA closeout preset: 160/160 simulator replies, zero misses; LA electrical
-  verdict ok, decoded UART verdict ok, 158 decoded status frames, zero
-  status-counter gaps, zero TX transitions outside DE, zero /RE-high samples
-  outside DE, and `max_de_high_us ~= 4259`.
-- OTA/API-restart closeout preset: OTA upload while simulator traffic ran saw
-  500/500 replies with zero misses; API restart while simulator traffic ran saw
-  350/350 replies with zero misses. Both invoked commands exited 0.
+- `runtime`: 1000/1000 replies, zero misses.
+- `fault-recovery`: 251/251 replies, zero misses, fault injections recovered.
+- `la-runtime`: 160/160 simulator replies, zero misses; LA electrical verdict
+  ok, decoded UART verdict ok, 158 decoded status frames, zero status-counter
+  gaps, zero TX transitions outside DE, zero /RE-high samples outside DE, and
+  `max_de_high_us ~= 4260`.
+- `ota-upload`: OTA upload while simulator traffic ran saw 500/500 replies with
+  zero misses; the ESPHome upload exited 0.
+- `api-restart`: native-API restart while simulator traffic ran saw 350/350
+  replies with zero misses; the restart button command exited 0.
 
-`garage-hcp2-closeout --preset la` and `--preset ota-restart` now encode these
-repeatable checks. On the current NixOS bench, pre-seed the ESPHome
-`firmware.bin` and pass `--skip-esphome-compile` for the OTA preset, because
-PlatformIO's generic Linux penv helper cannot execute on NixOS without an
-extra compatibility layer.
+`garage-hcp2-closeout --preset full` encodes the basic, LA, OTA, and API-restart
+checks in one run. On the current NixOS bench, pre-seed the ESPHome
+`firmware.bin` and pass `--skip-esphome-compile`, because PlatformIO's generic
+Linux penv helper cannot execute on NixOS without an extra compatibility layer.
+The bench also needs `sigrok-cli` on `PATH`; use
+`--sigrok-cli /tmp/hcp2-la-work/.bin/sigrok-cli` or export
+`HCP2_SIGROK_CLI=/tmp/hcp2-la-work/.bin/sigrok-cli` when using the local Nix
+wrapper.
 
 Latest v8 closure on 2026-06-12 with GPIO0/GPIO1 direction control:
 

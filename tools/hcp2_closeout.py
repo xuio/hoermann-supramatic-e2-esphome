@@ -10,6 +10,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import threading
@@ -344,6 +345,41 @@ def run_la_verifier(step: dict[str, Any], output_dir: Path) -> dict[str, Any] | 
     return payload
 
 
+def apply_sigrok_cli(plan: dict[str, Any], *, sigrok_cli: str, override: bool = False) -> None:
+    for step in plan.get("steps", []):
+        la = step.get("la")
+        if not la:
+            continue
+        if override or "sigrok_cli" not in la:
+            la["sigrok_cli"] = sigrok_cli
+
+
+def prepare_plan(args: argparse.Namespace) -> dict[str, Any]:
+    plan = builtin_plan(args)
+    sigrok_cli_arg = getattr(args, "sigrok_cli", None)
+    sigrok_cli = sigrok_cli_arg or os.environ.get("HCP2_SIGROK_CLI") or "sigrok-cli"
+    apply_sigrok_cli(plan, sigrok_cli=sigrok_cli, override=sigrok_cli_arg is not None)
+    return plan
+
+
+def preflight_plan(plan: dict[str, Any]) -> None:
+    missing: list[str] = []
+    for step in plan.get("steps", []):
+        la = step.get("la")
+        if not la:
+            continue
+        sigrok_cli = str(la.get("sigrok_cli", "sigrok-cli"))
+        if shutil.which(sigrok_cli) is None:
+            missing.append(sigrok_cli)
+    if missing:
+        unique = ", ".join(sorted(set(missing)))
+        raise SystemExit(
+            "sigrok-cli preflight failed: could not execute "
+            f"{unique}. Install sigrok-cli, put it on PATH, set HCP2_SIGROK_CLI, "
+            "or pass --sigrok-cli /path/to/sigrok-cli."
+        )
+
+
 def run_simulation_step(serial: str, step: dict[str, Any], output_dir: Path) -> dict[str, Any]:
     name = str(step.get("name", "step"))
     cycles = int(step.get("cycles", 1000))
@@ -581,6 +617,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fail-fast", action="store_true")
     parser.add_argument("--print-template", action="store_true", help="Print a minimal plan template and exit")
     parser.add_argument("--api-restart", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--sigrok-cli",
+        help="sigrok-cli executable for LA presets; defaults to HCP2_SIGROK_CLI or sigrok-cli on PATH",
+    )
     parser.add_argument("--esp-host", default=os.environ.get("HCP2_ESP_HOST", "supramatic-4-dev.local"))
     parser.add_argument("--esp-device", default=os.environ.get("HCP2_ESP_DEVICE"))
     parser.add_argument("--esp-api-port", type=int, default=int(os.environ.get("ESPHOME_API_PORT", "6053")))
@@ -608,13 +648,14 @@ def main(argv: list[str] | None = None) -> int:
         args.esp_device = args.esp_host
     if args.api_restart:
         return invoke_api_restart(args)
+    plan = prepare_plan(args)
     if args.print_template:
-        print(json.dumps(builtin_plan(args), indent=2, sort_keys=True))
+        print(json.dumps(plan, indent=2, sort_keys=True))
         return 0
     if not args.serial:
         parser.error("--serial is required unless --api-restart is used")
 
-    plan = builtin_plan(args)
+    preflight_plan(plan)
     report = run_plan(args.serial, plan, args.output_dir, fail_fast=args.fail_fast)
     text = json.dumps(report, indent=2, sort_keys=True) + "\n"
     if args.output:

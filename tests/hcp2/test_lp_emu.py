@@ -59,10 +59,21 @@ OFF_STOP_TRIGGER_DEADLINE_US = 92
 OFF_STOP_TRIGGER_TARGET_POSITION = 96
 OFF_STOP_TRIGGER_ARMED = 97
 OFF_STOP_TRIGGER_FIRE_COUNT = 98
+OFF_HEALTH_FLAGS = 100
+OFF_MAX_RX_FIFO_COUNT = 102
+OFF_MAX_LOOP_US = 104
+OFF_LOOP_OVERRUN_COUNT = 108
+OFF_RX_STARVATION_COUNT = 112
+OFF_STUCK_DE_COUNT = 116
+OFF_MAILBOX_REPAIR_COUNT = 120
+OFF_MAX_POLL_RX_TO_SCHEDULE_US = 124
+OFF_MAX_RESPONSE_SCHEDULE_TO_TX_START_US = 128
+OFF_MAX_RESPONSE_TX_US = 132
 
 COMMAND_OPEN = 1
 COMMAND_RESULT_EXECUTED = 1
 COMMAND_RESULT_EXPIRED = 2
+HEALTH_FLAG_MAILBOX_REPAIR = 0x0008
 
 
 def require_emulator() -> LPEmulator:
@@ -129,6 +140,40 @@ def test_lp_emulator_mailbox_and_hp_reboot_when_built() -> None:
     command_result = emu.command("open")
     assert command_result.startswith("OK")
     assert emu.report()["unmodeled_mmio"] == []
+
+
+def test_lp_emulator_health_counters_have_headroom_on_normal_poll() -> None:
+    emu = require_emulator()
+    emu.boot()
+    emu.write_uart(bytes.fromhex("02179CB900089C410002043E030000EBCC"))
+    assert emu.run_until(lambda: read_u32(emu, OFF_POLLS_ANSWERED) > 0, instruction_budget=4_000_000)
+
+    assert read_u32(emu, OFF_MAX_LOOP_US) > 0
+    assert read_u32(emu, OFF_LOOP_OVERRUN_COUNT) == 0
+    assert read_u32(emu, OFF_TX_ABORT_COUNT) == 0
+    assert read_u32(emu, OFF_STUCK_DE_COUNT) == 0
+    assert read_u32(emu, OFF_MAX_RESPONSE_SCHEDULE_TO_TX_START_US) >= 4200
+    assert read_u32(emu, OFF_MAX_RESPONSE_TX_US) > 0
+
+
+def test_lp_emulator_repairs_mailbox_header_without_clearing_session() -> None:
+    emu = require_emulator()
+    emu.boot()
+    write_u32(emu, OFF_COMMAND_EPOCH, 0xAABBCCDD)
+    before_repairs = read_u32(emu, OFF_MAILBOX_REPAIR_COUNT)
+
+    write_u16(emu, OFF_ABI_VERSION, MAILBOX_ABI_VERSION + 1)
+    assert emu.reload_decision(emu.heartbeat() - 1, emu.heartbeat()) == "reload"
+
+    assert emu.run_until(
+        lambda: read_u16(emu, OFF_ABI_VERSION) == MAILBOX_ABI_VERSION
+        and read_u32(emu, OFF_MAILBOX_REPAIR_COUNT) > before_repairs,
+        instruction_budget=1_000_000,
+    )
+    assert read_u32(emu, OFF_COMMAND_EPOCH) == 0xAABBCCDD
+    assert read_u32(emu, OFF_MAGIC) == MAILBOX_MAGIC
+    assert read_u32(emu, OFF_FIRMWARE_VERSION) == MAILBOX_FIRMWARE_VERSION
+    assert read_u16(emu, OFF_HEALTH_FLAGS) & HEALTH_FLAG_MAILBOX_REPAIR
 
 
 def test_lp_emulator_reload_decision_rejects_stale_or_incompatible_mailbox() -> None:

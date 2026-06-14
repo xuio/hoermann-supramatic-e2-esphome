@@ -107,7 +107,7 @@ class HostProcessTransport:
 
 
 class PtyHostTransport(HostProcessTransport):
-    def __init__(self, response_delay_us: int = 4500, slave_id: int = 2) -> None:
+    def __init__(self, response_delay_us: int = 4200, slave_id: int = 2) -> None:
         build_host_responder()
         master_fd, slave_fd = pty.openpty()
         _set_raw(master_fd)
@@ -133,7 +133,7 @@ class PtyHostTransport(HostProcessTransport):
 
 
 class SocketPairHostTransport(HostProcessTransport):
-    def __init__(self, response_delay_us: int = 4500, slave_id: int = 2) -> None:
+    def __init__(self, response_delay_us: int = 4200, slave_id: int = 2) -> None:
         build_host_responder()
         parent, child = socket.socketpair()
         parent.setblocking(False)

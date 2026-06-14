@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import random
 import time
 from dataclasses import dataclass, field
@@ -40,7 +41,43 @@ class SimulationReport:
     button_observations: dict[str, int] = field(default_factory=dict)
     verdict: str = "ok"
     latencies_ms: list[float] = field(default_factory=list)
+    latency_sum_ms: float = 0.0
+    latency_min_seen_ms: float | None = None
+    latency_max_seen_ms: float | None = None
+    elapsed_s: float | None = None
     notes: list[str] = field(default_factory=list)
+
+    def record_latency(self, latency_ms: float) -> None:
+        self.latencies_ms.append(latency_ms)
+        self.latency_sum_ms += latency_ms
+        if self.latency_min_seen_ms is None or latency_ms < self.latency_min_seen_ms:
+            self.latency_min_seen_ms = latency_ms
+        if self.latency_max_seen_ms is None or latency_ms > self.latency_max_seen_ms:
+            self.latency_max_seen_ms = latency_ms
+
+    def progress_dict(self) -> dict[str, object]:
+        samples = len(self.latencies_ms)
+        return {
+            "polls_sent": self.polls_sent,
+            "replies": self.replies,
+            "misses": self.misses,
+            "consecutive_misses": self.consecutive_misses,
+            "max_consecutive_misses": self.max_consecutive_misses,
+            "scan_ok": self.scan_ok,
+            "command_replies": self.command_replies,
+            "fault_checks": self.fault_checks,
+            "fault_recoveries": self.fault_recoveries,
+            "fault_unexpected_responses": self.fault_unexpected_responses,
+            "ignored_responses": self.ignored_responses,
+            "button_observations": self.button_observations,
+            "latency_samples": samples,
+            "latency_min_ms": self.latency_min_seen_ms,
+            "latency_mean_ms": (self.latency_sum_ms / samples) if samples else None,
+            "latency_max_ms": self.latency_max_seen_ms,
+            "elapsed_s": self.elapsed_s,
+            "verdict": self.verdict,
+            "notes": self.notes,
+        }
 
     def as_dict(self) -> dict[str, object]:
         latencies = sorted(self.latencies_ms)
@@ -57,10 +94,11 @@ class SimulationReport:
             "fault_unexpected_responses": self.fault_unexpected_responses,
             "ignored_responses": self.ignored_responses,
             "button_observations": self.button_observations,
-            "latency_min_ms": latencies[0] if latencies else None,
-            "latency_mean_ms": (sum(latencies) / len(latencies)) if latencies else None,
+            "latency_min_ms": self.latency_min_seen_ms,
+            "latency_mean_ms": (self.latency_sum_ms / len(latencies)) if latencies else None,
             "latency_p99_ms": percentile(latencies, 99) if latencies else None,
-            "latency_max_ms": latencies[-1] if latencies else None,
+            "latency_max_ms": self.latency_max_seen_ms,
+            "elapsed_s": self.elapsed_s,
             "verdict": self.verdict,
             "notes": self.notes,
         }
@@ -83,6 +121,15 @@ def percentile(sorted_values: list[float], pct: int) -> float | None:
     return sorted_values[low] * (1.0 - weight) + sorted_values[high] * weight
 
 
+def cycles_for_duration_hours(duration_hours: float, speed_factor: float) -> int:
+    if duration_hours <= 0:
+        raise ValueError("duration must be positive")
+    if speed_factor <= 0:
+        raise ValueError("speed factor must be positive")
+    cycle_s = STEADY_CYCLE_US / 1_000_000.0
+    return max(1, math.ceil((duration_hours * 3600.0 / cycle_s) * speed_factor))
+
+
 class SupraMaticSimulator:
     def __init__(
         self,
@@ -95,12 +142,19 @@ class SupraMaticSimulator:
         rng_seed: int = 0x5A17,
         expected_buttons: set[str] | None = None,
         trace_path: Path | None = None,
+        abort_on_first_miss: bool = False,
+        progress_path: Path | None = None,
+        progress_interval_s: float = 60.0,
+        progress_fsync: bool = True,
     ) -> None:
         self.transport = transport
         self.slave_id = slave_id
         self.speed_factor = speed_factor
         self.missed_poll_threshold = missed_poll_threshold
         self.response_timeout_s = response_timeout_s
+        self.abort_on_first_miss = abort_on_first_miss
+        self.progress_interval_s = progress_interval_s
+        self.progress_fsync = progress_fsync
         self.rng = random.Random(rng_seed)
         self.expected_buttons = expected_buttons or set()
         self.rx_buffer = bytearray()
@@ -110,11 +164,19 @@ class SupraMaticSimulator:
         if trace_path is not None:
             trace_path.parent.mkdir(parents=True, exist_ok=True)
             self.trace_file = trace_path.open("w", encoding="utf-8")
+        self.progress_file: TextIO | None = None
+        self.last_progress_s: float | None = None
+        if progress_path is not None:
+            progress_path.parent.mkdir(parents=True, exist_ok=True)
+            self.progress_file = progress_path.open("w", encoding="utf-8")
 
     def close(self) -> None:
         if self.trace_file is not None:
             self.trace_file.close()
             self.trace_file = None
+        if self.progress_file is not None:
+            self.progress_file.close()
+            self.progress_file = None
 
     def trace(self, event: str, **fields: object) -> None:
         if self.trace_file is None:
@@ -126,6 +188,39 @@ class SupraMaticSimulator:
         }
         self.trace_file.write(json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n")
         self.trace_file.flush()
+
+    def progress(
+        self,
+        event: str,
+        *,
+        cycle: int | None = None,
+        cycles: int | None = None,
+        duration_s: float | None = None,
+        force: bool = False,
+    ) -> None:
+        if self.progress_file is None:
+            return
+        now = time.monotonic()
+        if (
+            not force
+            and self.progress_interval_s > 0
+            and self.last_progress_s is not None
+            and now - self.last_progress_s < self.progress_interval_s
+        ):
+            return
+        record = {
+            "t_s": now - self.trace_start_s,
+            "event": event,
+            "cycle": cycle,
+            "cycles": cycles,
+            "duration_s": duration_s,
+            **self.report.progress_dict(),
+        }
+        self.progress_file.write(json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n")
+        self.progress_file.flush()
+        if self.progress_fsync:
+            os.fsync(self.progress_file.fileno())
+        self.last_progress_s = now
 
     def scaled_sleep(self, gap_us: int, jitter: bool = False) -> None:
         factor = self.rng.uniform(0.25, 1.75) if jitter else 1.0
@@ -176,18 +271,40 @@ class SupraMaticSimulator:
                 del self.rx_buffer[0]
         return None
 
-    def run(self, cycles: int, faults: set[str] | None = None, command: str | None = None) -> SimulationReport:
+    def run(
+        self,
+        cycles: int,
+        faults: set[str] | None = None,
+        command: str | None = None,
+        *,
+        duration_s: float | None = None,
+    ) -> SimulationReport:
         faults = faults or set()
+        deadline_s = time.monotonic() + duration_s if duration_s is not None else None
+        self.progress("start", cycle=0, cycles=cycles, duration_s=duration_s, force=True)
         self.run_bus_scan()
+        self.progress("bus_scan", cycle=0, cycles=cycles, duration_s=duration_s, force=True)
         if not self.report.scan_ok:
             self.report.verdict = "scan-failed"
+            self.report.elapsed_s = time.monotonic() - self.trace_start_s
+            self.progress("final", cycle=0, cycles=cycles, duration_s=duration_s, force=True)
             return self.report
 
-        for cycle in range(cycles):
+        cycle = 0
+        while True:
+            if self.report.verdict != "ok":
+                break
+            if deadline_s is None:
+                if cycle >= cycles:
+                    break
+            elif time.monotonic() >= deadline_s:
+                break
             if self.report.consecutive_misses >= self.missed_poll_threshold:
                 self.report.verdict = "error-04"
                 break
             self.run_cycle(cycle, faults=faults, command=command)
+            cycle += 1
+            self.progress("progress", cycle=cycle, cycles=cycles, duration_s=duration_s)
 
         missing_buttons = sorted(button for button in self.expected_buttons if button not in self.report.button_observations)
         if self.report.verdict == "ok" and missing_buttons:
@@ -213,6 +330,8 @@ class SupraMaticSimulator:
                     )
             else:
                 self.report.notes.append("pty/socketpair simulation does not model parity, baud tolerance, or wire timing")
+        self.report.elapsed_s = time.monotonic() - self.trace_start_s
+        self.progress("final", cycle=self.report.polls_sent, cycles=cycles, duration_s=duration_s, force=True)
         return self.report
 
     def run_bus_scan(self) -> None:
@@ -226,8 +345,9 @@ class SupraMaticSimulator:
         )
         if frame == protocol.SCAN_RESPONSE:
             self.report.scan_ok = True
-            self.report.latencies_ms.append((time.monotonic() - start) * 1000.0)
-            self.trace("bus_scan_rx", response=frame.hex(), latency_ms=(time.monotonic() - start) * 1000.0)
+            latency_ms = (time.monotonic() - start) * 1000.0
+            self.report.record_latency(latency_ms)
+            self.trace("bus_scan_rx", response=frame.hex(), latency_ms=latency_ms)
         else:
             self.report.notes.append(f"bus scan failed: {frame.hex() if frame else 'timeout'}")
             self.trace("bus_scan_miss", response=frame.hex() if frame else None)
@@ -253,6 +373,8 @@ class SupraMaticSimulator:
             self.run_light_command(0x02, enabled=True)
 
         self.send_status_poll(counter, split="split" in faults)
+        if self.report.verdict != "ok":
+            return
         self.scaled_sleep(POLL_TO_NEXT_BROADCAST_GAP_US, jitter="jitter" in faults)
 
     def broadcast_for_cycle(self, cycle: int, command: str | None) -> BroadcastState:
@@ -282,7 +404,7 @@ class SupraMaticSimulator:
             if button is not None:
                 self.report.button_observations[button] = self.report.button_observations.get(button, 0) + 1
             latency_ms = (time.monotonic() - start) * 1000.0
-            self.report.latencies_ms.append(latency_ms)
+            self.report.record_latency(latency_ms)
             self.report.replies += 1
             self.report.consecutive_misses = 0
             self.trace(
@@ -305,6 +427,11 @@ class SupraMaticSimulator:
                 poll_index=self.report.polls_sent,
                 consecutive_misses=self.report.consecutive_misses,
             )
+            if self.abort_on_first_miss and self.report.verdict == "ok":
+                self.report.verdict = "missed-poll"
+                self.report.notes.append(
+                    f"aborted after first missed status poll at poll_index={self.report.polls_sent}"
+                )
 
     def run_light_command(self, counter: int, *, enabled: bool) -> None:
         request = protocol.light_command(counter, enabled, self.slave_id)

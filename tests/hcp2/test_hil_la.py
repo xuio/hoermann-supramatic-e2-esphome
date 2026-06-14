@@ -10,6 +10,7 @@ from tools.hcp2_hil_la import (
     build_sigrok_capture_command,
     decode_uart_windows,
     load_samples,
+    summarize_response_latencies,
     summarize_decoded_uart,
     verify_samples,
 )
@@ -67,6 +68,55 @@ def uart_8e1_multi_frame_rows(frames: list[bytes], *, start_s: float = 0.001) ->
 def status_response(counter: int) -> bytes:
     payload = bytes([0x02, 0x17, 0x10, counter & 0xFF, 0x00, 0x03, 0x01] + [0x00] * 12)
     return protocol.append_crc(payload)
+
+
+def uart_8e1_signal_rows(
+    frame: bytes,
+    *,
+    signal: str,
+    start_s: float,
+    de_start_s: float | None = None,
+    de_end_s: float | None = None,
+    baud: int = 57600,
+) -> list[tuple[float, int, int, int, int]]:
+    bit_s = 1.0 / baud
+    levels = {"de": 0, "re": 0, "tx": 1, "rx": 1}
+    rows: list[tuple[float, int, int, int, int]] = []
+
+    def append(time_s: float) -> None:
+        rows.append((time_s, levels["de"], levels["re"], levels["tx"], levels["rx"]))
+
+    append(max(0.0, start_s - 0.0002))
+    if de_start_s is not None:
+        levels["de"] = 1
+        append(de_start_s)
+
+    def append_if_changed(time_s: float, level: int) -> None:
+        if levels[signal] == level:
+            return
+        levels[signal] = level
+        append(time_s)
+
+    time_s = start_s
+    for byte in frame:
+        append_if_changed(time_s, 0)
+        time_s += bit_s
+        ones = 0
+        for bit in range(8):
+            level = (byte >> bit) & 1
+            ones += level
+            append_if_changed(time_s, level)
+            time_s += bit_s
+        append_if_changed(time_s, ones & 1)
+        time_s += bit_s
+        append_if_changed(time_s, 1)
+        time_s += bit_s
+
+    if de_end_s is not None:
+        levels["de"] = 0
+        append(de_end_s)
+    append(time_s + 0.0002)
+    return rows
 
 
 def test_logic_analyzer_report_accepts_bounded_de_window(tmp_path: Path) -> None:
@@ -229,6 +279,71 @@ def test_logic_analyzer_verify_combines_electrical_and_uart_verdict(tmp_path: Pa
     assert report["electrical"]["verdict"] == "ok"
     assert report["uart"]["verdict"] == "ok"
     assert report["uart"]["status_counter_gap_count"] == 0
+
+
+def test_logic_analyzer_correlates_poll_to_response_latency(tmp_path: Path) -> None:
+    capture = tmp_path / "latency.csv"
+    poll = protocol.status_poll(0)
+    response = status_response(0)
+    baud = 57600
+    bit_s = 1.0 / baud
+    frame_bits = 11
+    poll_start_s = 0.001
+    poll_end_s = poll_start_s + len(poll) * frame_bits * bit_s
+    de_start_s = poll_end_s + 0.0042
+    tx_start_s = de_start_s + 0.000020
+    response_end_s = tx_start_s + len(response) * frame_bits * bit_s
+    de_end_s = response_end_s + 0.00025
+    rows = (
+        uart_8e1_signal_rows(poll, signal="rx", start_s=poll_start_s)
+        + uart_8e1_signal_rows(response, signal="tx", start_s=tx_start_s, de_start_s=de_start_s, de_end_s=de_end_s)
+    )
+    rows.sort(key=lambda row: row[0])
+    write_csv(capture, rows)
+
+    samples = load_samples(capture, {"de": "de", "re": "re", "tx": "tx", "rx": "rx"})
+    report = summarize_response_latencies(samples)
+
+    assert report["verdict"] == "ok"
+    assert report["matched_status_pairs"] == 1
+    assert abs(report["poll_end_to_de_assert"]["max_us"] - 4200.0) < 2.0
+    assert abs(report["poll_end_to_first_byte"]["max_us"] - 4220.0) < 2.0
+    assert report["poll_end_to_response_end"]["max_us"] > report["poll_end_to_first_byte"]["max_us"]
+
+
+def test_logic_analyzer_latency_uses_nearest_prior_poll_for_reused_counter(tmp_path: Path) -> None:
+    capture = tmp_path / "latency-reused-counter.csv"
+    poll = protocol.status_poll(7)
+    response = status_response(7)
+    baud = 57600
+    bit_s = 1.0 / baud
+    frame_bits = 11
+    poll1_start_s = 0.001
+    poll2_start_s = 0.050
+    poll2_end_s = poll2_start_s + len(poll) * frame_bits * bit_s
+    de_start_s = poll2_end_s + 0.0042
+    tx_start_s = de_start_s + 0.000020
+    response_end_s = tx_start_s + len(response) * frame_bits * bit_s
+    rows = (
+        uart_8e1_signal_rows(poll, signal="rx", start_s=poll1_start_s)
+        + uart_8e1_signal_rows(poll, signal="rx", start_s=poll2_start_s)
+        + uart_8e1_signal_rows(
+            response,
+            signal="tx",
+            start_s=tx_start_s,
+            de_start_s=de_start_s,
+            de_end_s=response_end_s + 0.00025,
+        )
+    )
+    rows.sort(key=lambda row: row[0])
+    write_csv(capture, rows)
+
+    samples = load_samples(capture, {"de": "de", "re": "re", "tx": "tx", "rx": "rx"})
+    report = summarize_response_latencies(samples)
+
+    assert report["verdict"] == "ok"
+    assert report["matched_status_pairs"] == 1
+    assert abs(report["poll_end_to_de_assert"]["max_us"] - 4200.0) < 2.0
 
 
 def test_logic_analyzer_verify_rejects_undersampled_uart_capture(tmp_path: Path) -> None:

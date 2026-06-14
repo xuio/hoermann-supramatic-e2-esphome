@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "hcp2_engine.h"
 #include "hcp2_frame.h"
 
 #ifdef __cplusplus
@@ -15,8 +16,8 @@ extern "C" {
 #define HCP2_LP_MAILBOX_ADDR (HCP2_LP_SRAM_BASE + HCP2_LP_MAILBOX_OFFSET)
 
 #define HCP2_LP_MAILBOX_MAGIC 0x32435048u
-#define HCP2_LP_MAILBOX_ABI_VERSION 3u
-#define HCP2_LP_FIRMWARE_VERSION 0x00000009u
+#define HCP2_LP_MAILBOX_ABI_VERSION 6u
+#define HCP2_LP_FIRMWARE_VERSION 0x0000000Du
 #define HCP2_LP_TRACE_CAPACITY 32u
 
 #define HCP2_LP_TRACE_BOOT 1u
@@ -31,6 +32,12 @@ extern "C" {
 #define HCP2_LP_TRACE_COLLISION 10u
 #define HCP2_LP_TRACE_WDT 11u
 #define HCP2_LP_TRACE_STOP_TRIGGER 12u
+#define HCP2_LP_TRACE_HEALTH 13u
+
+#define HCP2_LP_HEALTH_FLAG_LOOP_OVERRUN 0x0001u
+#define HCP2_LP_HEALTH_FLAG_RX_STARVATION 0x0002u
+#define HCP2_LP_HEALTH_FLAG_STUCK_DE 0x0004u
+#define HCP2_LP_HEALTH_FLAG_MAILBOX_REPAIR 0x0008u
 
 typedef enum {
   HCP2_LP_COMMAND_NONE = 0,
@@ -61,6 +68,16 @@ typedef struct {
   uint16_t event;
   uint16_t value;
 } hcp2_lp_trace_entry_t;
+
+typedef struct {
+  uint32_t sequence;
+  uint32_t at_us;
+  uint8_t event_type;
+  uint8_t frame_type;
+  uint8_t len;
+  uint8_t reserved;
+  uint8_t data[HCP2_MAX_FRAME_LEN];
+} hcp2_lp_protocol_event_t;
 
 typedef struct {
   uint8_t target_position;
@@ -129,10 +146,27 @@ typedef struct {
   volatile uint8_t stop_trigger_target_position;
   volatile uint8_t stop_trigger_armed;
   volatile uint16_t stop_trigger_fire_count;
+  volatile uint16_t health_flags;
+  volatile uint16_t max_rx_fifo_count;
+  volatile uint32_t max_loop_us;
+  volatile uint32_t loop_overrun_count;
+  volatile uint32_t rx_starvation_count;
+  volatile uint32_t stuck_de_count;
+  volatile uint32_t mailbox_repair_count;
+  volatile uint32_t max_poll_rx_to_schedule_us;
+  volatile uint32_t max_response_schedule_to_tx_start_us;
+  volatile uint32_t max_response_tx_us;
+  volatile uint32_t protocol_sequence;
+  volatile uint32_t protocol_at_us;
+  volatile uint8_t protocol_event_type;
+  volatile uint8_t protocol_frame_type;
+  volatile uint8_t protocol_len;
+  volatile uint8_t protocol_reserved;
+  volatile uint8_t protocol_data[HCP2_MAX_FRAME_LEN];
   volatile uint32_t trace_head;
   volatile uint32_t trace_tail;
   hcp2_lp_trace_entry_t trace[HCP2_LP_TRACE_CAPACITY];
-  uint8_t reserved1[148];
+  uint8_t reserved1[68];
 } hcp2_lp_mailbox_t;
 
 #define HCP2_LP_MAILBOX_SIZE ((uint16_t) sizeof(hcp2_lp_mailbox_t))
@@ -174,16 +208,55 @@ HCP2_STATIC_ASSERT(offsetof(hcp2_lp_mailbox_t, stop_trigger_armed) == 97u,
                    hcp2_lp_mailbox_stop_trigger_armed_offset);
 HCP2_STATIC_ASSERT(offsetof(hcp2_lp_mailbox_t, stop_trigger_fire_count) == 98u,
                    hcp2_lp_mailbox_stop_trigger_fire_count_offset);
-HCP2_STATIC_ASSERT(offsetof(hcp2_lp_mailbox_t, trace) == 108u, hcp2_lp_mailbox_trace_offset);
+HCP2_STATIC_ASSERT(offsetof(hcp2_lp_mailbox_t, health_flags) == 100u, hcp2_lp_mailbox_health_flags_offset);
+HCP2_STATIC_ASSERT(offsetof(hcp2_lp_mailbox_t, max_rx_fifo_count) == 102u,
+                   hcp2_lp_mailbox_max_rx_fifo_offset);
+HCP2_STATIC_ASSERT(offsetof(hcp2_lp_mailbox_t, max_loop_us) == 104u, hcp2_lp_mailbox_max_loop_offset);
+HCP2_STATIC_ASSERT(offsetof(hcp2_lp_mailbox_t, loop_overrun_count) == 108u,
+                   hcp2_lp_mailbox_loop_overrun_offset);
+HCP2_STATIC_ASSERT(offsetof(hcp2_lp_mailbox_t, rx_starvation_count) == 112u,
+                   hcp2_lp_mailbox_rx_starvation_offset);
+HCP2_STATIC_ASSERT(offsetof(hcp2_lp_mailbox_t, stuck_de_count) == 116u,
+                   hcp2_lp_mailbox_stuck_de_offset);
+HCP2_STATIC_ASSERT(offsetof(hcp2_lp_mailbox_t, mailbox_repair_count) == 120u,
+                   hcp2_lp_mailbox_mailbox_repair_offset);
+HCP2_STATIC_ASSERT(offsetof(hcp2_lp_mailbox_t, max_poll_rx_to_schedule_us) == 124u,
+                   hcp2_lp_mailbox_max_poll_rx_to_schedule_offset);
+HCP2_STATIC_ASSERT(offsetof(hcp2_lp_mailbox_t, max_response_schedule_to_tx_start_us) == 128u,
+                   hcp2_lp_mailbox_max_response_schedule_to_tx_start_offset);
+HCP2_STATIC_ASSERT(offsetof(hcp2_lp_mailbox_t, max_response_tx_us) == 132u,
+                   hcp2_lp_mailbox_max_response_tx_offset);
+HCP2_STATIC_ASSERT(offsetof(hcp2_lp_mailbox_t, protocol_sequence) == 136u,
+                   hcp2_lp_mailbox_protocol_sequence_offset);
+HCP2_STATIC_ASSERT(offsetof(hcp2_lp_mailbox_t, protocol_at_us) == 140u,
+                   hcp2_lp_mailbox_protocol_at_offset);
+HCP2_STATIC_ASSERT(offsetof(hcp2_lp_mailbox_t, protocol_event_type) == 144u,
+                   hcp2_lp_mailbox_protocol_event_type_offset);
+HCP2_STATIC_ASSERT(offsetof(hcp2_lp_mailbox_t, protocol_data) == 148u,
+                   hcp2_lp_mailbox_protocol_data_offset);
+HCP2_STATIC_ASSERT(offsetof(hcp2_lp_mailbox_t, trace_head) == 180u,
+                   hcp2_lp_mailbox_trace_head_offset);
+HCP2_STATIC_ASSERT(offsetof(hcp2_lp_mailbox_t, trace) == 188u, hcp2_lp_mailbox_trace_offset);
 
 void hcp2_lp_mailbox_init(volatile hcp2_lp_mailbox_t *mailbox);
+void hcp2_lp_mailbox_repair_header(volatile hcp2_lp_mailbox_t *mailbox);
 void hcp2_lp_mailbox_publish_state(volatile hcp2_lp_mailbox_t *mailbox, const hcp2_drive_status_t *state,
                                    uint32_t now_us);
 void hcp2_lp_mailbox_publish_counters(volatile hcp2_lp_mailbox_t *mailbox, uint32_t now_us, uint32_t polls_seen,
                                       uint32_t polls_answered, uint32_t tx_abort_count,
                                       uint32_t collision_count, uint32_t max_de_hold_us,
                                       uint32_t last_poll_us, uint32_t crc_error_count,
-                                      uint32_t rx_error_count);
+                                      uint32_t rx_error_count, uint32_t max_loop_us,
+                                      uint32_t loop_overrun_count, uint32_t rx_starvation_count,
+                                      uint32_t stuck_de_count, uint32_t mailbox_repair_count,
+                                      uint16_t health_flags, uint16_t max_rx_fifo_count,
+                                      uint32_t max_poll_rx_to_schedule_us,
+                                      uint32_t max_response_schedule_to_tx_start_us,
+                                      uint32_t max_response_tx_us);
+void hcp2_lp_mailbox_publish_protocol_event(volatile hcp2_lp_mailbox_t *mailbox,
+                                            const hcp2_protocol_event_t *event);
+uint8_t hcp2_lp_mailbox_read_protocol_event(const volatile hcp2_lp_mailbox_t *mailbox,
+                                            uint32_t *last_sequence, hcp2_lp_protocol_event_t *out);
 uint8_t hcp2_lp_mailbox_read_state(const volatile hcp2_lp_mailbox_t *mailbox, hcp2_lp_state_snapshot_t *out);
 void hcp2_lp_mailbox_send_command(volatile hcp2_lp_mailbox_t *mailbox, uint32_t epoch, uint32_t sequence,
                                   hcp2_lp_command_id_t command_id, uint8_t argument, uint32_t deadline_us);

@@ -41,6 +41,30 @@ HCP2BridgeRXErrorSensor = hcp2bridge_ns.class_("HCP2BridgeRXErrorSensor", sensor
 HCP2BridgeStopTriggerFireSensor = hcp2bridge_ns.class_(
     "HCP2BridgeStopTriggerFireSensor", sensor.Sensor, cg.PollingComponent
 )
+HCP2BridgeHealthFlagsSensor = hcp2bridge_ns.class_(
+    "HCP2BridgeHealthFlagsSensor", sensor.Sensor, cg.PollingComponent
+)
+HCP2BridgeMaxRXFifoSensor = hcp2bridge_ns.class_("HCP2BridgeMaxRXFifoSensor", sensor.Sensor, cg.PollingComponent)
+HCP2BridgeMaxLoopSensor = hcp2bridge_ns.class_("HCP2BridgeMaxLoopSensor", sensor.Sensor, cg.PollingComponent)
+HCP2BridgeMaxPollRXToScheduleSensor = hcp2bridge_ns.class_(
+    "HCP2BridgeMaxPollRXToScheduleSensor", sensor.Sensor, cg.PollingComponent
+)
+HCP2BridgeMaxResponseScheduleToTXStartSensor = hcp2bridge_ns.class_(
+    "HCP2BridgeMaxResponseScheduleToTXStartSensor", sensor.Sensor, cg.PollingComponent
+)
+HCP2BridgeMaxResponseTXSensor = hcp2bridge_ns.class_(
+    "HCP2BridgeMaxResponseTXSensor", sensor.Sensor, cg.PollingComponent
+)
+HCP2BridgeLoopOverrunSensor = hcp2bridge_ns.class_(
+    "HCP2BridgeLoopOverrunSensor", sensor.Sensor, cg.PollingComponent
+)
+HCP2BridgeRXStarvationSensor = hcp2bridge_ns.class_(
+    "HCP2BridgeRXStarvationSensor", sensor.Sensor, cg.PollingComponent
+)
+HCP2BridgeStuckDESensor = hcp2bridge_ns.class_("HCP2BridgeStuckDESensor", sensor.Sensor, cg.PollingComponent)
+HCP2BridgeMailboxRepairSensor = hcp2bridge_ns.class_(
+    "HCP2BridgeMailboxRepairSensor", sensor.Sensor, cg.PollingComponent
+)
 HCP2BridgeHPResetCountSensor = hcp2bridge_ns.class_(
     "HCP2BridgeHPResetCountSensor", sensor.Sensor, cg.PollingComponent
 )
@@ -61,14 +85,24 @@ CONF_HP_PANIC_RESETS = "hp_panic_resets"
 CONF_HP_RESETS = "hp_resets"
 CONF_HP_WDT_RESETS = "hp_wdt_resets"
 CONF_LAST_POLL_AGE = "last_poll_age"
+CONF_LOOP_OVERRUNS = "loop_overruns"
 CONF_LP_HEARTBEAT = "lp_heartbeat"
+CONF_LP_HEALTH_FLAGS = "lp_health_flags"
 CONF_LP_RESETS = "lp_resets"
+CONF_MAILBOX_REPAIRS = "mailbox_repairs"
 CONF_MAX_DE_HOLD = "max_de_hold"
+CONF_MAX_LOOP = "max_loop"
+CONF_MAX_POLL_RX_TO_SCHEDULE = "max_poll_rx_to_schedule"
+CONF_MAX_RESPONSE_SCHEDULE_TO_TX_START = "max_response_schedule_to_tx_start"
+CONF_MAX_RESPONSE_TX = "max_response_tx"
+CONF_MAX_RX_FIFO = "max_rx_fifo"
 CONF_MISSED_POLLS = "missed_polls"
 CONF_POLLS_ANSWERED = "polls_answered"
 CONF_POLLS_SEEN = "polls_seen"
 CONF_RX_ERRORS = "rx_errors"
+CONF_RX_STARVATIONS = "rx_starvations"
 CONF_STOP_TRIGGER_FIRES = "stop_trigger_fires"
+CONF_STUCK_DE_RECOVERIES = "stuck_de_recoveries"
 CONF_TX_ABORTS = "tx_aborts"
 
 
@@ -96,6 +130,58 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_CRC_ERRORS): counter_schema(HCP2BridgeCRCErrorSensor),
         cv.Optional(CONF_RX_ERRORS): counter_schema(HCP2BridgeRXErrorSensor),
         cv.Optional(CONF_STOP_TRIGGER_FIRES): counter_schema(HCP2BridgeStopTriggerFireSensor),
+        cv.Optional(CONF_LP_HEALTH_FLAGS): sensor.sensor_schema(
+            HCP2BridgeHealthFlagsSensor,
+            unit_of_measurement=UNIT_EMPTY,
+            accuracy_decimals=0,
+            state_class=STATE_CLASS_MEASUREMENT,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+            icon="mdi:alert-outline",
+        ).extend(cv.polling_component_schema("10s")),
+        cv.Optional(CONF_MAX_RX_FIFO): sensor.sensor_schema(
+            HCP2BridgeMaxRXFifoSensor,
+            unit_of_measurement=UNIT_EMPTY,
+            accuracy_decimals=0,
+            state_class=STATE_CLASS_MEASUREMENT,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+            icon=ICON_COUNTER,
+        ).extend(cv.polling_component_schema("10s")),
+        cv.Optional(CONF_MAX_LOOP): sensor.sensor_schema(
+            HCP2BridgeMaxLoopSensor,
+            unit_of_measurement="us",
+            accuracy_decimals=0,
+            state_class=STATE_CLASS_MEASUREMENT,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+            icon=ICON_TIMER,
+        ).extend(cv.polling_component_schema("10s")),
+        cv.Optional(CONF_MAX_POLL_RX_TO_SCHEDULE): sensor.sensor_schema(
+            HCP2BridgeMaxPollRXToScheduleSensor,
+            unit_of_measurement="us",
+            accuracy_decimals=0,
+            state_class=STATE_CLASS_MEASUREMENT,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+            icon=ICON_TIMER,
+        ).extend(cv.polling_component_schema("10s")),
+        cv.Optional(CONF_MAX_RESPONSE_SCHEDULE_TO_TX_START): sensor.sensor_schema(
+            HCP2BridgeMaxResponseScheduleToTXStartSensor,
+            unit_of_measurement="us",
+            accuracy_decimals=0,
+            state_class=STATE_CLASS_MEASUREMENT,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+            icon=ICON_TIMER,
+        ).extend(cv.polling_component_schema("10s")),
+        cv.Optional(CONF_MAX_RESPONSE_TX): sensor.sensor_schema(
+            HCP2BridgeMaxResponseTXSensor,
+            unit_of_measurement="us",
+            accuracy_decimals=0,
+            state_class=STATE_CLASS_MEASUREMENT,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+            icon=ICON_TIMER,
+        ).extend(cv.polling_component_schema("10s")),
+        cv.Optional(CONF_LOOP_OVERRUNS): counter_schema(HCP2BridgeLoopOverrunSensor),
+        cv.Optional(CONF_RX_STARVATIONS): counter_schema(HCP2BridgeRXStarvationSensor),
+        cv.Optional(CONF_STUCK_DE_RECOVERIES): counter_schema(HCP2BridgeStuckDESensor),
+        cv.Optional(CONF_MAILBOX_REPAIRS): counter_schema(HCP2BridgeMailboxRepairSensor, ICON_CHIP),
         cv.Optional(CONF_HP_RESETS): counter_schema(HCP2BridgeHPResetCountSensor, ICON_CHIP),
         cv.Optional(CONF_HP_PANIC_RESETS): counter_schema(HCP2BridgeHPPanicResetSensor, ICON_CHIP),
         cv.Optional(CONF_HP_WDT_RESETS): counter_schema(HCP2BridgeHPWDTResetSensor, ICON_CHIP),
@@ -139,6 +225,16 @@ async def to_code(config):
     await _new_sensor(config, CONF_CRC_ERRORS, parent)
     await _new_sensor(config, CONF_RX_ERRORS, parent)
     await _new_sensor(config, CONF_STOP_TRIGGER_FIRES, parent)
+    await _new_sensor(config, CONF_LP_HEALTH_FLAGS, parent)
+    await _new_sensor(config, CONF_MAX_RX_FIFO, parent)
+    await _new_sensor(config, CONF_MAX_LOOP, parent)
+    await _new_sensor(config, CONF_MAX_POLL_RX_TO_SCHEDULE, parent)
+    await _new_sensor(config, CONF_MAX_RESPONSE_SCHEDULE_TO_TX_START, parent)
+    await _new_sensor(config, CONF_MAX_RESPONSE_TX, parent)
+    await _new_sensor(config, CONF_LOOP_OVERRUNS, parent)
+    await _new_sensor(config, CONF_RX_STARVATIONS, parent)
+    await _new_sensor(config, CONF_STUCK_DE_RECOVERIES, parent)
+    await _new_sensor(config, CONF_MAILBOX_REPAIRS, parent)
     await _new_sensor(config, CONF_HP_RESETS, parent)
     await _new_sensor(config, CONF_HP_PANIC_RESETS, parent)
     await _new_sensor(config, CONF_HP_WDT_RESETS, parent)

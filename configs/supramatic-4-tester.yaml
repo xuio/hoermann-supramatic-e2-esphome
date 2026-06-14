@@ -1,6 +1,6 @@
 substitutions:
-  name: "supramatic-4-dev"
-  friendly_name: "Garage Door HCP2 Dev"
+  name: "supramatic-4-tester"
+  friendly_name: "Garage Door HCP2 Tester"
   hcp2_rx_pin: GPIO4
   hcp2_tx_pin: GPIO5
   hcp2_de_pin: GPIO0
@@ -18,9 +18,6 @@ esp32:
     version: 5.5.4
     sdkconfig_options:
       CONFIG_UART_ISR_IN_IRAM: "y"
-      # HCP2 continuity policy: planned OTA/restart uses esp_restart, but HP
-      # crash/task-WDT recovery must not reset the bus pins while the LP core is
-      # answering the motor.
       CONFIG_ESP_SYSTEM_PANIC_PRINT_REBOOT: "n"
       CONFIG_ESP_SYSTEM_PANIC_PRINT_HALT: "y"
       CONFIG_ESP_TASK_WDT_EN: "y"
@@ -37,18 +34,18 @@ logger:
   hardware_uart: USB_SERIAL_JTAG
 
 wifi:
-  ssid: !secret wifi_ssid_supramatic_4_dev
-  password: !secret wifi_password_supramatic_4_dev
+  ssid: !secret wifi_ssid_supramatic_4_tester
+  password: !secret wifi_password_supramatic_4_tester
   reboot_timeout: 0s
 
 api:
   reboot_timeout: 0s
   encryption:
-    key: !secret api_key_supramatic_4_dev
+    key: !secret api_key_supramatic_4_tester
 
 ota:
   - platform: esphome
-    password: !secret ota_password_supramatic_4_dev
+    password: !secret ota_password_supramatic_4_tester
 
 safe_mode:
   disabled: false
@@ -57,7 +54,7 @@ safe_mode:
   reboot_timeout: 10min
 
 hcp2bridge:
-  id: hcp2_dev
+  id: hcp2_tester
   rx_pin: ${hcp2_rx_pin}
   tx_pin: ${hcp2_tx_pin}
   de_pin: ${hcp2_de_pin}
@@ -68,25 +65,41 @@ hcp2bridge:
   response_delay: 4200us
   button_press_duration: 100ms
   hp_fallback: false
+  http_debug_port: 8080
+  protocol_log: true
 
 cover:
   - platform: hcp2bridge
-    hcp2bridge_id: hcp2_dev
+    hcp2bridge_id: hcp2_tester
     name: "${friendly_name}"
     device_class: garage
 
 light:
   - platform: hcp2bridge
-    hcp2bridge_id: hcp2_dev
+    hcp2bridge_id: hcp2_tester
     name: "${friendly_name} Light"
 
 button:
   - platform: restart
     name: "${friendly_name} Restart"
+  - platform: hcp2bridge
+    hcp2bridge_id: hcp2_tester
+    open:
+      name: "${friendly_name} Open Command"
+    close:
+      name: "${friendly_name} Close Command"
+    stop:
+      name: "${friendly_name} Stop Command"
+    half:
+      name: "${friendly_name} Half Command"
+    vent:
+      name: "${friendly_name} Vent Command"
+    light:
+      name: "${friendly_name} Light Command"
 
 sensor:
   - platform: hcp2bridge
-    hcp2bridge_id: hcp2_dev
+    hcp2bridge_id: hcp2_tester
     lp_heartbeat:
       name: "${friendly_name} LP Heartbeat"
     lp_resets:
@@ -144,7 +157,7 @@ binary_sensor:
   - platform: status
     name: "${friendly_name} ESPHome Status"
   - platform: hcp2bridge
-    hcp2bridge_id: hcp2_dev
+    hcp2bridge_id: hcp2_tester
     got_valid_broadcast:
       name: "${friendly_name} Valid HCP2 Broadcast"
     moving:

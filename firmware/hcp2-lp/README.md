@@ -21,11 +21,14 @@ Important limits:
 - The LP project reserves 16,320 bytes of LP SRAM. The mailbox occupies a fixed
   512-byte window at `0x50002000`; the ISS map checker asserts linked LP
   sections stay below it and the stack keeps headroom above it.
+- The LP loop sleeps for 75 us between iterations. The HCP2 engine schedules
+  status responses 4.2 ms after a valid poll, which stays inside the observed
+  OEM 3.97-5.92 ms response window while keeping margin above the fastest trace.
 - The HP app only reloads the LP blob when the mailbox ABI/version is wrong or
   live heartbeat proves the LP responder is stale. Poll counters are diagnostics;
   an isolated missed poll must never trigger an HP-driven LP reload.
 
-The mailbox ABI is currently version 3. In addition to the state seqlock and
+The mailbox ABI is currently version 6. In addition to the state seqlock and
 command epoch/sequence fields, it publishes:
 
 - command deadlines and an ack result (`executed`, `expired`, `unknown`,
@@ -33,8 +36,10 @@ command epoch/sequence fields, it publishes:
 - an armed stop-trigger block (`epoch`, target position, hard TTL) so the LP can
   press stop once if the HP dies during a goto-position move.
 - LP time, status polls seen/answered, last-poll time, CRC/RX errors, TX aborts,
-  collisions, maximum DE hold time, LP reset count, stop-trigger fire count, and
-  trace events for HIL/logic-analyzer correlation.
+  collisions, maximum DE hold time, LP reset count, stop-trigger fire count,
+  loop/RX health counters, LP-side response timing maxima, reserved protocol-
+  event snapshot fields in the mailbox ABI, and trace events for HP RAM logging
+  plus HIL/logic-analyzer correlation.
 
 The LP UART port treats DE as a bounded safety signal. It loops until all bytes
 are accepted by the 16-byte FIFO, holds DE for the full 57600 8E1 frame time

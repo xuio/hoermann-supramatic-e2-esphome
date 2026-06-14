@@ -42,7 +42,7 @@ hcp2bridge:
   uart_num: 1
   slave_id: 2
   device_signature: "00000205043010FFA855"
-  response_delay: 4500us
+  response_delay: 4200us
   button_press_duration: 100ms
   hp_fallback: false
   # Wokwi mirrors the passing IDF bring-up path with the IDF default LP-UART

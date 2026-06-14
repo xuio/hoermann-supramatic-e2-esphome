@@ -16,15 +16,18 @@ No. The intended design is one ESP32 plus an RS-485 adapter. The RS-485 adapter 
 
 Series 4 / HCP2 support is under development for a separate ESP32-C6 target. The current
 codebase includes a protocol core, simulator, LP-core firmware, Wokwi full-firmware
-harness, dual-ISS mailbox harness, and ESPHome component skeleton. It is still
+harness, dual-ISS mailbox harness, and an ESPHome tester image with explicit command
+buttons and RAM protocol logging. It is still
 simulation-first and bench-only: Wokwi is the primary no-hardware full-firmware gate on
-the fixed ESP32-C6 native LP-UART backend, the local ISS covers deterministic
+the fixed ESP32-C6 native LP-UART backend, but its GitHub Actions job is manual-only
+(`run_wokwi`) and does not run on normal push/PR CI. The local ISS covers deterministic
 mailbox/FIFO/MMIO checks, and the first ESP32-C6 plus USB-RS485 HIL bench now passes
 polling, fault, command, CPU-only reset, OTA, API restart, and Wi-Fi disruption
 scenarios. Intermediate position moves now arm an LP-core stop trigger so the LP can
 press stop if the HP side dies mid-move. The remaining known unsafe case is USB serial
 flashing / download-mode reset while attached to the bus; real-motor testing must use
 OTA-only operation or physically isolate the transceiver during serial flashing.
+See [HCP2 Series 4 tester image](hcp2-series4-tester.md) for the current tester flow.
 
 BlueSecur cloud/app integrations are out of scope.
 

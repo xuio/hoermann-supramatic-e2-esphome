@@ -44,8 +44,8 @@ LP_SRAM_MAP_SIZE = 0x10000
 MAILBOX_ADDR = 0x50002000
 MAILBOX_SIZE = 512
 MAILBOX_MAGIC = 0x32435048
-MAILBOX_ABI_VERSION = 3
-MAILBOX_FIRMWARE_VERSION = 9
+MAILBOX_ABI_VERSION = 6
+MAILBOX_FIRMWARE_VERSION = 13
 
 LP_UART_BASE = 0x600B1400
 LP_UART_FIFO = LP_UART_BASE + 0x00
@@ -739,6 +739,24 @@ class LPEmulator:
             "mailbox_crc_error_count": _read_u32(self.uc, MAILBOX_ADDR + 80),
             "mailbox_rx_error_count": _read_u32(self.uc, MAILBOX_ADDR + 84),
             "mailbox_stop_trigger_fire_count": struct.unpack("<H", self.uc.mem_read(MAILBOX_ADDR + 98, 2))[0],
+            "mailbox_health_flags": struct.unpack("<H", self.uc.mem_read(MAILBOX_ADDR + 100, 2))[0],
+            "mailbox_max_rx_fifo_count": struct.unpack("<H", self.uc.mem_read(MAILBOX_ADDR + 102, 2))[0],
+            "mailbox_max_loop_us": _read_u32(self.uc, MAILBOX_ADDR + 104),
+            "mailbox_loop_overrun_count": _read_u32(self.uc, MAILBOX_ADDR + 108),
+            "mailbox_rx_starvation_count": _read_u32(self.uc, MAILBOX_ADDR + 112),
+            "mailbox_stuck_de_count": _read_u32(self.uc, MAILBOX_ADDR + 116),
+            "mailbox_repair_count": _read_u32(self.uc, MAILBOX_ADDR + 120),
+            "mailbox_max_poll_rx_to_schedule_us": _read_u32(self.uc, MAILBOX_ADDR + 124),
+            "mailbox_max_response_schedule_to_tx_start_us": _read_u32(self.uc, MAILBOX_ADDR + 128),
+            "mailbox_max_response_tx_us": _read_u32(self.uc, MAILBOX_ADDR + 132),
+            "mailbox_protocol_sequence": _read_u32(self.uc, MAILBOX_ADDR + 136),
+            "mailbox_protocol_at_us": _read_u32(self.uc, MAILBOX_ADDR + 140),
+            "mailbox_protocol_event_type": self.uc.mem_read(MAILBOX_ADDR + 144, 1)[0],
+            "mailbox_protocol_frame_type": self.uc.mem_read(MAILBOX_ADDR + 145, 1)[0],
+            "mailbox_protocol_len": self.uc.mem_read(MAILBOX_ADDR + 146, 1)[0],
+            "mailbox_protocol_hex": self.uc.mem_read(
+                MAILBOX_ADDR + 148, min(self.uc.mem_read(MAILBOX_ADDR + 146, 1)[0], 32)
+            ).hex().upper(),
             "de_events": self.de_events[:20],
             "re_events": self.re_events[:20],
             "gpio_writes": self.gpio_writes[:40],

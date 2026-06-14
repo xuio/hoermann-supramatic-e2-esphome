@@ -11,6 +11,7 @@ Use `configs/supramatic-e2.yaml` for the normal Waveshare ESP32-S3-ETH PoE garag
 - `supramatic-e2-monitor-idle-tx.yaml`: monitor that holds adapter TTL RX idle-high
 - `supramatic-e2-proxy.yaml`: TCP RS-485 proxy
 - `supramatic-4-dev.yaml`: ESP32-C6 HCP2 development firmware for simulation and bench bring-up
+- `supramatic-4-tester.yaml`: ESP32-C6 HCP2 tester firmware with command buttons and HTTP protocol logging
 - `supramatic-4-wokwi.yaml`: minimal ESP32-C6 HCP2 firmware for the Wokwi ESPHome gate
 - `secrets.example.yaml`: template used by `uv run garage-init-secrets`
 
@@ -27,6 +28,14 @@ For the Series 4 / HCP2 development target:
 ```bash
 uv run esphome config configs/supramatic-4-dev.yaml
 uv run esphome compile configs/supramatic-4-dev.yaml
+uv run esphome config configs/supramatic-4-tester.yaml
+uv run esphome compile configs/supramatic-4-tester.yaml
 uv run esphome config configs/supramatic-4-wokwi.yaml
 uv run esphome compile configs/supramatic-4-wokwi.yaml
 ```
+
+Use `supramatic-4-tester.yaml` for an external SupraMatic Series 4 tester. It
+expects HCP2 LP-UART on GPIO4/GPIO5 and RS-485 DE `/RE` on GPIO0/GPIO1. Once the
+transceiver is connected to the motor bus, update by ESPHome OTA only; do not
+USB-serial flash while attached. Field-test steps and support-bundle collection
+are in [docs/hcp2-series4-tester.md](../docs/hcp2-series4-tester.md).

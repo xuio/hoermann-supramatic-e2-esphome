@@ -61,15 +61,18 @@ This is an unofficial reverse-engineered integration. Treat it as a careful buil
 Support for **Hörmann Series 4 / HCP2 / UAP1-HCP** drives is under active development
 for a separate **ESP32-C6** target. The HCP2 protocol core, simulator, LP-core firmware,
 Wokwi full-firmware harness, dual-ISS mailbox harness, and ESPHome component skeleton are
-in-tree. The path is still simulation-first and bench-only: Wokwi is the primary
-no-hardware full-firmware gate on the fixed ESP32-C6 native LP-UART backend, the local
-ISS covers deterministic mailbox/FIFO/MMIO checks, and the first ESP32-C6 plus USB-RS485
-HIL bench now passes polling, fault, command, CPU-only reset, OTA, API restart, and
-Wi-Fi disruption scenarios. Intermediate position moves now arm an LP-core stop trigger
-so the LP can press stop if the HP side dies mid-move. The remaining known unsafe case
-is USB serial flashing / download-mode reset while attached to the bus; real-motor
-testing must use OTA-only operation or physically isolate the transceiver during serial
-flashing.
+in-tree. A dedicated Series 4 tester image exposes all known commands and a RAM-only
+protocol log/support-bundle path for remote debugging. The path is still simulation-first
+and bench-first: Wokwi is the primary
+no-hardware full-firmware gate on the fixed ESP32-C6 native LP-UART backend, but its
+GitHub Actions job is manual-only (`run_wokwi`) and does not run on normal push/PR CI.
+The local ISS covers deterministic mailbox/FIFO/MMIO checks, and the first ESP32-C6 plus
+USB-RS485 HIL bench now passes polling, fault, command, CPU-only reset, OTA, API restart,
+and Wi-Fi disruption scenarios. Intermediate position moves now arm an LP-core stop
+trigger so the LP can press stop if the HP side dies mid-move. The remaining known
+unsafe case is USB serial flashing / download-mode reset while attached to the bus;
+real-motor testing must use OTA-only operation or physically isolate the transceiver
+during serial flashing.
 
 ## Safety First
 
@@ -178,6 +181,7 @@ Primary files:
 - [configs/supramatic-e2.yaml](configs/supramatic-e2.yaml): main Ethernet/PoE firmware
 - [configs/supramatic-e2-minimal.yaml](configs/supramatic-e2-minimal.yaml): safer minimal bring-up config
 - [configs/supramatic-4-dev.yaml](configs/supramatic-4-dev.yaml): ESP32-C6 HCP2 simulation/bench development firmware
+- [configs/supramatic-4-tester.yaml](configs/supramatic-4-tester.yaml): ESP32-C6 HCP2 Series 4 tester image with command buttons and RAM protocol logging
 - [configs/supramatic-e2-proxy.yaml](configs/supramatic-e2-proxy.yaml): RS-485 network proxy/debug mode
 - [configs/supramatic-e2-monitor.yaml](configs/supramatic-e2-monitor.yaml): read-only HTTP monitor firmware
 - [docs/FAQ.md](docs/FAQ.md): common hardware, protocol, and Home Assistant questions
@@ -197,6 +201,7 @@ Primary files:
 - [HTTP monitor mode](docs/http-monitor-mode.md)
 - [RS-485 proxy mode](docs/proxy-mode.md)
 - [Persistent protocol log](docs/persistent-protocol-log.md)
+- [HCP2 Series 4 tester image](docs/hcp2-series4-tester.md)
 - [Python tools and visual calibration workflow](tools/README.md)
 - [FAQ](docs/FAQ.md)
 - [Release checklist](docs/release-checklist.md)

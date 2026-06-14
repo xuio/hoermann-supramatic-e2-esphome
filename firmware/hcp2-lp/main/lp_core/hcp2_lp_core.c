@@ -21,10 +21,14 @@
 #define HCP2_LP_UART_BAUD 57600u
 #define HCP2_LP_UART_BITS_PER_BYTE 11u
 #define HCP2_LP_CPU_CYCLES_PER_US 20u
-#define HCP2_LP_LOOP_US 100u
+#define HCP2_LP_LOOP_US 75u
 #define HCP2_LP_RX_CHUNK 16u
 #define HCP2_LP_TX_DEADMAN_US 8000u
 #define HCP2_LP_TX_TAIL_MARGIN_US 250u
+#define HCP2_LP_LOOP_OVERRUN_US 7000u
+#define HCP2_LP_DE_STUCK_US 9000u
+#define HCP2_LP_RX_STUCK_LOW_US 5000u
+#define HCP2_LP_RX_FIFO_STARVATION_LEVEL 15u
 #define HCP2_LP_WDT_WKEY 0x50D83AA1u
 #define HCP2_LP_WDT_STAGE_RESET_CPU 2u
 #define HCP2_LP_WDT_RESET_LENGTH_800_NS 5u
@@ -39,6 +43,18 @@ static uint32_t max_de_hold_us;
 static uint32_t last_status_poll_count;
 static uint32_t last_status_poll_us;
 static uint32_t rx_error_count;
+static uint8_t de_enabled;
+static uint32_t de_asserted_us;
+static uint8_t rx_line_seen_high;
+static uint32_t rx_low_since_us;
+static uint8_t rx_fifo_starvation_latched;
+static uint16_t health_flags;
+static uint16_t max_rx_fifo_count;
+static uint32_t max_loop_us;
+static uint32_t loop_overrun_count;
+static uint32_t rx_starvation_count;
+static uint32_t stuck_de_count;
+static uint32_t mailbox_repair_count;
 #if CONFIG_HCP2_BRINGUP_LP_WDT_ENABLE
 static uint32_t lp_wdt_stall_after_us;
 #endif
@@ -71,8 +87,22 @@ static void trace_(uint16_t event, uint16_t value) {
   }
 }
 
+static uint64_t cycle_count_(void) {
+  uint32_t high_before;
+  uint32_t low;
+  uint32_t high_after;
+
+  do {
+    high_before = RV_READ_CSR(mcycleh);
+    low = RV_READ_CSR(mcycle);
+    high_after = RV_READ_CSR(mcycleh);
+  } while (high_before != high_after);
+
+  return ((uint64_t) high_before << 32) | low;
+}
+
 __attribute__((noinline)) uint32_t hcp2_lp_now_us(void) {
-  return RV_READ_CSR(mcycle) / HCP2_LP_CPU_CYCLES_PER_US;
+  return (uint32_t) (cycle_count_() / HCP2_LP_CPU_CYCLES_PER_US);
 }
 
 static uint32_t port_now_us_(void *user) {
@@ -140,6 +170,10 @@ static uint8_t lp_uart_txfifo_count_(void) {
   return (uint8_t) ((reg_read_(LP_UART_STATUS_REG) >> LP_UART_TXFIFO_CNT_S) & LP_UART_TXFIFO_CNT_V);
 }
 
+static uint8_t lp_uart_rxfifo_count_(void) {
+  return (uint8_t) ((reg_read_(LP_UART_STATUS_REG) >> LP_UART_RXFIFO_CNT_S) & LP_UART_RXFIFO_CNT_V);
+}
+
 static uint8_t lp_uart_tx_some_(const uint8_t *data, uint8_t len) {
   uint8_t count = lp_uart_txfifo_count_();
   uint8_t available;
@@ -186,16 +220,70 @@ static void flush_stale_uart_rx_(void) {
   } while (received > 0);
 }
 
+static void repair_mailbox_header_if_needed_(void) {
+  volatile hcp2_lp_mailbox_t *mailbox = mailbox_();
+
+  if (mailbox->magic == HCP2_LP_MAILBOX_MAGIC &&
+      mailbox->abi_version == HCP2_LP_MAILBOX_ABI_VERSION &&
+      mailbox->struct_size == HCP2_LP_MAILBOX_SIZE &&
+      mailbox->firmware_version == HCP2_LP_FIRMWARE_VERSION) {
+    return;
+  }
+
+  hcp2_lp_mailbox_repair_header(mailbox);
+  mailbox_repair_count++;
+  health_flags = (uint16_t) (health_flags | HCP2_LP_HEALTH_FLAG_MAILBOX_REPAIR);
+  trace_(HCP2_LP_TRACE_HEALTH, 0xA000u);
+}
+
+static void sample_rx_fifo_health_(void) {
+  const uint8_t count = lp_uart_rxfifo_count_();
+
+  if (count > max_rx_fifo_count) {
+    max_rx_fifo_count = count;
+  }
+  if (count >= HCP2_LP_RX_FIFO_STARVATION_LEVEL) {
+    if (!rx_fifo_starvation_latched) {
+      rx_fifo_starvation_latched = 1u;
+      rx_starvation_count++;
+      health_flags = (uint16_t) (health_flags | HCP2_LP_HEALTH_FLAG_RX_STARVATION);
+      trace_(HCP2_LP_TRACE_HEALTH, (uint16_t) (0xB000u | count));
+    }
+  } else if (count < (HCP2_LP_RX_FIFO_STARVATION_LEVEL - 1u)) {
+    rx_fifo_starvation_latched = 0u;
+  }
+}
+
+static void check_de_deadman_(uint32_t now) {
+  if (!de_enabled) {
+    return;
+  }
+  if (!time_reached_(now, de_asserted_us + HCP2_LP_DE_STUCK_US)) {
+    return;
+  }
+
+  stuck_de_count++;
+  health_flags = (uint16_t) (health_flags | HCP2_LP_HEALTH_FLAG_STUCK_DE);
+  trace_(HCP2_LP_TRACE_HEALTH, 0xD000u);
+  ulp_lp_core_gpio_set_level(HCP2_LP_RE_IO, 0u);
+  ulp_lp_core_gpio_set_level(HCP2_LP_DE_IO, 0u);
+  de_enabled = 0u;
+  trace_(HCP2_LP_TRACE_DE, 0u);
+}
+
 static void port_de_set_(void *user, uint8_t enabled) {
   (void) user;
   if (enabled) {
     flush_stale_uart_rx_();
     ulp_lp_core_gpio_set_level(HCP2_LP_DE_IO, 1u);
     ulp_lp_core_gpio_set_level(HCP2_LP_RE_IO, 1u);
+    de_enabled = 1u;
+    de_asserted_us = port_now_us_(NULL);
   } else {
     flush_stale_uart_rx_();
     ulp_lp_core_gpio_set_level(HCP2_LP_RE_IO, 0u);
     ulp_lp_core_gpio_set_level(HCP2_LP_DE_IO, 0u);
+    de_enabled = 0u;
   }
   trace_(HCP2_LP_TRACE_DE, enabled ? 1u : 0u);
 }
@@ -293,14 +381,31 @@ static void handle_mailbox_command_(void) {
   }
 }
 
-static void trace_rx_gpio_(void) {
+static void trace_rx_gpio_(uint32_t now) {
   const uint8_t level = (uint8_t) (ulp_lp_core_gpio_get_level(HCP2_LP_UART_RX_IO) & 1u);
 
-  if (level == last_rx_gpio_level) {
+  if (level != last_rx_gpio_level) {
+    last_rx_gpio_level = level;
+    trace_(HCP2_LP_TRACE_GPIO_RX, level);
+  }
+  if (level != 0u) {
+    rx_line_seen_high = 1u;
+  }
+  if (!rx_line_seen_high) {
     return;
   }
-  last_rx_gpio_level = level;
-  trace_(HCP2_LP_TRACE_GPIO_RX, level);
+  if (level == 0u) {
+    if (rx_low_since_us == 0u) {
+      rx_low_since_us = now;
+    } else if (time_reached_(now, rx_low_since_us + HCP2_LP_RX_STUCK_LOW_US)) {
+      rx_low_since_us = now;
+      rx_starvation_count++;
+      health_flags = (uint16_t) (health_flags | HCP2_LP_HEALTH_FLAG_RX_STARVATION);
+      trace_(HCP2_LP_TRACE_HEALTH, 0xB100u);
+    }
+  } else {
+    rx_low_since_us = 0u;
+  }
 }
 
 #if CONFIG_HCP2_BRINGUP_WOKWI_LP_TX_PROBE
@@ -321,6 +426,7 @@ static void drain_uart_(void) {
   int i;
 
   do {
+    sample_rx_fifo_health_();
     received = lp_core_uart_read_bytes(HCP2_LP_UART_PORT, rx, sizeof(rx), 0);
     if (received > 0) {
       for (i = 0; i < received; i++) {
@@ -332,6 +438,7 @@ static void drain_uart_(void) {
       trace_(HCP2_LP_TRACE_RX_ERROR, (uint16_t) (reg_read_(LP_UART_INT_RAW_REG) & 0xFFFFu));
     }
   } while (received > 0);
+  sample_rx_fifo_health_();
 }
 
 static uint8_t stop_trigger_crossed_(const hcp2_drive_status_t *status, uint8_t target_position) {
@@ -414,8 +521,10 @@ int main(void) {
 
   init_();
   while (1) {
+    const uint32_t loop_start_us = port_now_us_(NULL);
     mailbox->heartbeat++;
-    trace_rx_gpio_();
+    repair_mailbox_header_if_needed_();
+    trace_rx_gpio_(loop_start_us);
     drain_uart_();
     if (engine.status_polls_received != last_status_poll_count) {
       last_status_poll_count = engine.status_polls_received;
@@ -428,9 +537,24 @@ int main(void) {
     handle_mailbox_command_();
     hcp2_engine_poll(&engine);
     hcp2_lp_mailbox_publish_state(mailbox, hcp2_engine_drive_status(&engine), port_now_us_(NULL));
+    check_de_deadman_(port_now_us_(NULL));
+    const uint32_t loop_active_us = port_now_us_(NULL) - loop_start_us;
+    if (loop_active_us > max_loop_us) {
+      max_loop_us = loop_active_us;
+    }
+    if (loop_active_us > HCP2_LP_LOOP_OVERRUN_US) {
+      loop_overrun_count++;
+      health_flags = (uint16_t) (health_flags | HCP2_LP_HEALTH_FLAG_LOOP_OVERRUN);
+      trace_(HCP2_LP_TRACE_HEALTH, (uint16_t) (0xC000u | (loop_active_us & 0x0FFFu)));
+    }
     hcp2_lp_mailbox_publish_counters(mailbox, port_now_us_(NULL), engine.status_polls_received,
                                      engine.status_responses_sent, tx_abort_count, collision_count, max_de_hold_us,
-                                     last_status_poll_us, engine.crc_errors, engine.rx_errors + rx_error_count);
+                                     last_status_poll_us, engine.crc_errors, engine.rx_errors + rx_error_count,
+                                     max_loop_us, loop_overrun_count, rx_starvation_count, stuck_de_count,
+                                     mailbox_repair_count, health_flags, max_rx_fifo_count,
+                                     engine.max_status_poll_rx_to_schedule_us,
+                                     engine.max_status_response_schedule_to_tx_start_us,
+                                     engine.max_status_response_tx_us);
 #if CONFIG_HCP2_BRINGUP_LP_WDT_ENABLE
     lp_wdt_poll_();
 #endif

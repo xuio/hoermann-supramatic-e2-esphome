@@ -3,6 +3,8 @@ from __future__ import annotations
 from argparse import Namespace
 from pathlib import Path
 
+import pytest
+
 from tools import hcp2_closeout
 
 
@@ -19,19 +21,36 @@ def closeout_args(tmp_path: Path, **overrides: object) -> Namespace:
         "secrets_file": tmp_path / "secrets.yaml",
         "esphome_config": Path("configs/supramatic-4-dev.yaml"),
         "skip_esphome_compile": False,
+        "sigrok_cli": None,
     }
     defaults.update(overrides)
     return Namespace(**defaults)
 
 
 def test_closeout_la_preset_contains_logic_analyzer_verdict_step(tmp_path: Path) -> None:
-    plan = hcp2_closeout.builtin_plan(closeout_args(tmp_path, preset="la"))
+    plan = hcp2_closeout.prepare_plan(closeout_args(tmp_path, preset="la"))
 
     assert [step["name"] for step in plan["steps"]] == ["la-runtime"]
     la = plan["steps"][0]["la"]
     assert la["channels"] == "tx=D1,de=D3,re=D5,rx=D7"
     assert la["allow_re_high_during_de"] is True
     assert la["min_status_frames"] > 0
+    assert la["sigrok_cli"] == "sigrok-cli"
+
+
+def test_closeout_la_preset_accepts_sigrok_cli_override(tmp_path: Path) -> None:
+    plan = hcp2_closeout.prepare_plan(closeout_args(tmp_path, preset="la", sigrok_cli="/tmp/sigrok-cli"))
+
+    assert plan["steps"][0]["la"]["sigrok_cli"] == "/tmp/sigrok-cli"
+
+
+def test_closeout_preflight_reports_missing_sigrok_cli(tmp_path: Path) -> None:
+    plan = hcp2_closeout.prepare_plan(
+        closeout_args(tmp_path, preset="la", sigrok_cli="/definitely/missing/sigrok-cli")
+    )
+
+    with pytest.raises(SystemExit, match="sigrok-cli preflight failed"):
+        hcp2_closeout.preflight_plan(plan)
 
 
 def test_closeout_ota_restart_preset_records_commands_without_plaintext_api_key(tmp_path: Path) -> None:
