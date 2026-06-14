@@ -94,9 +94,11 @@ run still leaves poll/reply/miss counters if the SSH session or runner dies.
 ## HCP2 Series 4 Tester Bundles
 
 The Series 4 tester image exposes RAM-only debug endpoints on port `80`, with
-the browser page streaming the live log over `ws://.../hcp2_log/ws`. Prepare a
-fresh logging window before reproducing an issue, then stop and collect the
-bundle:
+the browser page streaming the live log over `ws://.../hcp2_log/ws`. The
+browser page's `Download JSON` button exports its own bounded frontend cache
+(newest 10 minutes / 1 MiB); the support-bundle tool still downloads the ESP RAM
+ring directly. Prepare a fresh logging window before reproducing an issue, then
+stop and collect the bundle:
 
 ```bash
 uv run garage-hcp2-support-bundle --host supramatic-4-tester.local --action start

@@ -1196,10 +1196,12 @@ pre{white-space:pre-wrap;overflow:auto;max-height:48vh;background:#020617;border
   <button onclick="controlLog('clear')">Clear</button>
   <button onclick="refreshLog()">Refresh Log</button>
   <button onclick="connectLogStream()">Reconnect Stream</button>
-  <a class="button" href="/hcp2_log" download="hcp2-log.ndjson">Download NDJSON</a>
-  <a class="button" href="/hcp2_log.bin" download="hcp2-log.bin">Download Raw</a>
+  <button onclick="downloadCachedLog()">Download JSON</button>
+  <a class="button" href="/hcp2_log" download="hcp2-log.ndjson">Device NDJSON</a>
+  <a class="button" href="/hcp2_log.bin" download="hcp2-log.bin">Device Raw</a>
   <div id="logSummary" class="muted"></div>
   <div id="logStream" class="muted">stream disconnected</div>
+  <div id="logCache" class="muted">cache empty</div>
   <pre id="log"></pre>
 </section>
 <section class="panel" style="margin-top:12px">
@@ -1214,8 +1216,12 @@ const $=id=>document.getElementById(id);
 let logSocket=null;
 let logReconnectTimer=null;
 let logLines=[];
+let logCache=[];
+let logCacheBytes=0;
 let refreshBusy=false;
-const maxLogLines=300;
+const maxVisibleLogLines=300;
+const maxCacheAgeMs=10*60*1000;
+const maxCacheBytes=1024*1024;
 function row(k,v){return `<div class="row"><span class="key">${k}</span><span class="value">${v??''}</span></div>`}
 function setRows(id,items){$(id).innerHTML=items.map(([k,v])=>row(k,v)).join('')}
 async function getJson(path){const r=await fetch(path,{cache:'no-store'});const t=await r.text();try{return JSON.parse(t)}catch(e){throw new Error(path+' returned non-JSON')}}
@@ -1265,6 +1271,7 @@ async function refresh(){
       ['overwritten records',p.overwritten_records]
     ]);
     $('logSummary').textContent=`log ${p.enabled?'enabled':'disabled'}, ${p.used||0}/${p.capacity||0} bytes, overwritten ${p.overwritten_records||0} records`;
+    updateLogCacheSummary();
   }catch(e){
     $('verdict').className='status unknown';
     $('verdict').textContent='debug fetch failed';
@@ -1273,22 +1280,54 @@ async function refresh(){
     refreshBusy=false;
   }
 }
+function resetLogCache(){logCache=[];logCacheBytes=0;updateLogCacheSummary()}
+function pruneLogCache(now=Date.now()){
+  const minMs=now-maxCacheAgeMs;
+  while(logCache.length&&(logCache[0].received_ms<minMs||logCacheBytes>maxCacheBytes)){
+    const removed=logCache.shift();
+    logCacheBytes-=removed.bytes||0;
+  }
+  if(logCacheBytes<0)logCacheBytes=0;
+}
+function updateLogCacheSummary(){
+  pruneLogCache();
+  const kb=(logCacheBytes/1024).toFixed(1);
+  const oldest=logCache[0]?.received_at||'none';
+  const newest=logCache[logCache.length-1]?.received_at||'none';
+  $('logCache').textContent=`browser cache ${logCache.length} records, ${kb} KiB, newest 10 min / 1 MiB, ${oldest} to ${newest}`;
+}
+function cacheLogLine(line,receivedMs=Date.now()){
+  if(!line)return;
+  let entry=null;
+  try{entry=JSON.parse(line)}catch(e){}
+  const record={received_at:new Date(receivedMs).toISOString(),received_ms:receivedMs,bytes:line.length,raw:line};
+  if(entry&&typeof entry==='object')record.entry=entry;else record.parse_error=true;
+  logCache.push(record);
+  logCacheBytes+=record.bytes;
+  pruneLogCache(receivedMs);
+}
 function renderLog(){const el=$('log');el.textContent=logLines.join('\n');el.scrollTop=el.scrollHeight}
-function appendLogText(text){
-  for(const line of text.split('\n')){if(line)logLines.push(line)}
-  if(logLines.length>maxLogLines)logLines=logLines.slice(logLines.length-maxLogLines);
+function appendLogText(text,replace=false){
+  const now=Date.now();
+  if(replace){logLines=[];resetLogCache()}
+  for(const line of text.split('\n')){
+    if(!line)continue;
+    logLines.push(line);
+    cacheLogLine(line,now);
+  }
+  if(logLines.length>maxVisibleLogLines)logLines=logLines.slice(logLines.length-maxVisibleLogLines);
   renderLog();
+  updateLogCacheSummary();
 }
 async function controlLog(action){
   await fetch('/hcp2_log/'+action,{cache:'no-store'});
   await refresh();
-  if(action==='clear'){logLines=[];renderLog()}else await refreshLog();
+  if(action==='clear'){logLines=[];resetLogCache();renderLog()}else await refreshLog();
 }
 async function refreshLog(){
   const r=await fetch('/hcp2_log',{cache:'no-store'});
   const text=await r.text();
-  logLines=text.split('\n').filter(Boolean).slice(-maxLogLines);
-  renderLog();
+  appendLogText(text,true);
 }
 function connectLogStream(){
   if(logReconnectTimer){clearTimeout(logReconnectTimer);logReconnectTimer=null}
@@ -1305,6 +1344,29 @@ function connectLogStream(){
     $('logStream').textContent='stream disconnected; reconnecting';
     logReconnectTimer=setTimeout(connectLogStream,2000);
   };
+}
+function cachedLogExport(){
+  pruneLogCache();
+  return {
+    format:'hcp2-debug-log-cache-v1',
+    exported_at:new Date().toISOString(),
+    source:location.host,
+    cache:{record_count:logCache.length,bytes:logCacheBytes,max_age_ms:maxCacheAgeMs,max_bytes:maxCacheBytes},
+    records:logCache.map(({received_ms,bytes,...record})=>record)
+  };
+}
+function downloadCachedLog(){
+  const payload=JSON.stringify(cachedLogExport(),null,2);
+  const blob=new Blob([payload],{type:'application/json'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  const stamp=new Date().toISOString().replace(/[:.]/g,'-');
+  a.href=url;
+  a.download=`hcp2-debug-log-${stamp}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
 async function loadRaw(path){const data=await getJson(path);$('raw').textContent=JSON.stringify(data,null,2)}
 setInterval(refresh,5000);

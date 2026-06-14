@@ -82,6 +82,12 @@ frames when the HP fallback responder is active.
 Open `http://supramatic-4-tester.local/` in a browser for the interactive
 debug page. It shows continuity health, core counters, RAM-log controls, a live
 WebSocket log stream, and raw JSON views without writing anything to flash.
+The page keeps its own bounded browser-side cache of the live stream. The
+`Download JSON` button exports that frontend cache as a structured JSON file
+with receive timestamps, raw lines, and parsed log objects. To keep browser RAM
+bounded, the cache keeps only the newest 10 minutes and at most 1 MiB. The
+`Device NDJSON` and `Device Raw` links still download the ESP's current RAM ring
+buffer directly.
 
 Raw endpoints:
 
