@@ -80,8 +80,8 @@ transitions, LP trace breadcrumbs (`rx`, `tx`, `de`, errors), and full protocol
 frames when the HP fallback responder is active.
 
 Open `http://supramatic-4-tester.local/` in a browser for the interactive
-debug page. It shows continuity health, core counters, RAM-log controls, log
-tail, and raw JSON views without writing anything to flash.
+debug page. It shows continuity health, core counters, RAM-log controls, a live
+WebSocket log stream, and raw JSON views without writing anything to flash.
 
 Raw endpoints:
 
@@ -94,6 +94,7 @@ Raw endpoints:
 - `http://supramatic-4-tester.local/hcp2_log/clear`
 - `http://supramatic-4-tester.local/hcp2_log`
 - `http://supramatic-4-tester.local/hcp2_log.bin`
+- `ws://supramatic-4-tester.local/hcp2_log/ws`
 
 For a reproducible issue, start a fresh RAM log immediately before reproducing
 the problem:

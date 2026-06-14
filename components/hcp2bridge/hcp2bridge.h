@@ -134,18 +134,26 @@ class HCP2Bridge : public Component {
   void maybe_setup_http_debug_server_();
   void http_debug_accept_client_();
   void http_debug_service_pending_client_();
-  void http_debug_handle_request_(std::unique_ptr<socket::Socket> client, const std::string &request_line);
+  void http_debug_service_log_ws_();
+  void http_debug_handle_request_(std::unique_ptr<socket::Socket> client, const std::string &request);
   void http_debug_send_response_(std::unique_ptr<socket::Socket> client, const char *status, const char *content_type,
                                  const std::string &body);
   void http_debug_send_log_binary_response_(std::unique_ptr<socket::Socket> client);
+  void http_debug_upgrade_log_ws_(std::unique_ptr<socket::Socket> client, const std::string &request);
+  bool http_debug_send_ws_text_(socket::Socket *client, const std::string &payload, uint32_t timeout_ms);
+  std::string http_debug_header_value_(const std::string &request, const char *name);
   bool http_debug_write_all_(socket::Socket *client, const std::string &payload, uint32_t timeout_ms);
-  std::string http_debug_path_from_request_line_(const std::string &request_line);
+  bool http_debug_request_complete_() const;
+  std::string http_debug_path_from_request_(const std::string &request);
   std::string http_debug_index_html_();
   std::string http_debug_health_json_();
   std::string http_debug_stats_json_();
   std::string http_debug_support_json_();
   std::string protocol_log_summary_json_() const;
   std::string protocol_log_body_();
+  std::string protocol_log_body_since_(uint32_t cursor_seq, uint32_t *next_cursor_seq, size_t max_bytes);
+  uint32_t protocol_log_next_seq_snapshot_() const;
+  static uint32_t protocol_log_line_seq_(const std::string &line);
   void protocol_log_clear_();
   void protocol_log_append_line_(const std::string &line, bool force = false);
   void protocol_log_discard_oldest_line_locked_();
@@ -265,10 +273,13 @@ class HCP2Bridge : public Component {
   mutable portMUX_TYPE protocol_log_mux_ = portMUX_INITIALIZER_UNLOCKED;
   std::unique_ptr<socket::ListenSocket> http_debug_server_;
   std::unique_ptr<socket::Socket> http_debug_pending_client_;
-  char http_debug_request_buffer_[256]{};
+  std::unique_ptr<socket::Socket> http_debug_log_ws_client_;
+  char http_debug_request_buffer_[1024]{};
   size_t http_debug_request_buffer_len_{0};
   uint32_t http_debug_pending_client_started_ms_{0};
   uint32_t http_debug_next_setup_ms_{0};
+  uint32_t http_debug_log_ws_next_seq_{0};
+  uint32_t http_debug_log_ws_last_send_ms_{0};
 #endif
 };
 

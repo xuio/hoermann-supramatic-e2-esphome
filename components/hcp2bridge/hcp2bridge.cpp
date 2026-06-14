@@ -3,6 +3,7 @@
 #include "hcp2_lp_blob.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
@@ -24,6 +25,8 @@ extern "C" {
 #include "esp_timer.h"
 #include "hal/uart_types.h"
 #include "lp_core_uart.h"
+#include "mbedtls/base64.h"
+#include "mbedtls/sha1.h"
 #include "ulp_lp_core.h"
 #endif
 
@@ -47,7 +50,26 @@ static constexpr uint32_t HCP2BRIDGE_OBSTRUCTION_LATCH_MS = 10000;
 static constexpr uint32_t HCP2BRIDGE_HTTP_SETUP_DELAY_MS = 5000;
 static constexpr uint32_t HCP2BRIDGE_HTTP_SETUP_RETRY_MS = 5000;
 static constexpr uint32_t HCP2BRIDGE_HTTP_PENDING_TIMEOUT_MS = 3000;
+static constexpr uint32_t HCP2BRIDGE_HTTP_WS_SEND_INTERVAL_MS = 100;
+static constexpr size_t HCP2BRIDGE_HTTP_WS_MAX_CHUNK_BYTES = 4096;
 static constexpr uint32_t HCP2BRIDGE_MAX_DE_HIGH_US = 9000;
+static constexpr const char *HCP2BRIDGE_WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+
+static bool hcp2_ascii_iequals(const std::string &left, const char *right) {
+  if (right == nullptr) {
+    return left.empty();
+  }
+  const size_t right_len = std::strlen(right);
+  if (left.size() != right_len) {
+    return false;
+  }
+  for (size_t i = 0; i < left.size(); i++) {
+    if (std::tolower((unsigned char) left[i]) != std::tolower((unsigned char) right[i])) {
+      return false;
+    }
+  }
+  return true;
+}
 
 #ifdef USE_ESP32
 RTC_DATA_ATTR static uint32_t hcp2_hp_reset_count;
@@ -97,6 +119,7 @@ void HCP2Bridge::loop() {
     this->maybe_setup_http_debug_server_();
     this->http_debug_accept_client_();
     this->http_debug_service_pending_client_();
+    this->http_debug_service_log_ws_();
   }
 #endif
 
@@ -858,6 +881,70 @@ std::string HCP2Bridge::protocol_log_body_() {
   return body;
 }
 
+uint32_t HCP2Bridge::protocol_log_next_seq_snapshot_() const {
+  uint32_t next_seq;
+  portENTER_CRITICAL(&this->protocol_log_mux_);
+  next_seq = this->protocol_log_next_seq_;
+  portEXIT_CRITICAL(&this->protocol_log_mux_);
+  return next_seq;
+}
+
+uint32_t HCP2Bridge::protocol_log_line_seq_(const std::string &line) {
+  static constexpr const char PREFIX[] = "{\"seq\":";
+  static constexpr size_t PREFIX_LEN = sizeof(PREFIX) - 1u;
+  if (line.size() <= PREFIX_LEN || line.compare(0, PREFIX_LEN, PREFIX) != 0) {
+    return 0;
+  }
+  uint32_t value = 0;
+  for (size_t i = PREFIX_LEN; i < line.size(); i++) {
+    const char c = line[i];
+    if (c < '0' || c > '9') {
+      break;
+    }
+    value = value * 10u + (uint32_t) (c - '0');
+  }
+  return value;
+}
+
+std::string HCP2Bridge::protocol_log_body_since_(uint32_t cursor_seq, uint32_t *next_cursor_seq, size_t max_bytes) {
+  std::string body;
+  std::string line;
+  uint32_t next_seq = 1;
+  uint32_t last_sent_seq = 0;
+
+  portENTER_CRITICAL(&this->protocol_log_mux_);
+  next_seq = this->protocol_log_next_seq_;
+  if (next_seq < cursor_seq) {
+    cursor_seq = 1;
+  }
+  line.reserve(256);
+  for (size_t i = 0; i < this->protocol_log_used_; i++) {
+    const size_t index = (this->protocol_log_start_ + i) % this->PROTOCOL_LOG_CAPACITY;
+    const char c = (char) this->protocol_log_buffer_[index];
+    if (c != '\n') {
+      line.push_back(c);
+      continue;
+    }
+    const uint32_t seq = protocol_log_line_seq_(line);
+    if (seq >= cursor_seq) {
+      const size_t needed = line.size() + 1u;
+      if (!body.empty() && body.size() + needed > max_bytes) {
+        break;
+      }
+      body += line;
+      body.push_back('\n');
+      last_sent_seq = seq;
+    }
+    line.clear();
+  }
+  portEXIT_CRITICAL(&this->protocol_log_mux_);
+
+  if (next_cursor_seq != nullptr) {
+    *next_cursor_seq = last_sent_seq != 0u ? last_sent_seq + 1u : next_seq;
+  }
+  return body;
+}
+
 std::string HCP2Bridge::http_debug_health_json_() {
   const bool lp_mode = !this->hp_fallback_;
   const uint32_t polls_seen = this->get_lp_poll_count();
@@ -1108,10 +1195,11 @@ pre{white-space:pre-wrap;overflow:auto;max-height:48vh;background:#020617;border
   <button onclick="controlLog('stop')">Stop</button>
   <button onclick="controlLog('clear')">Clear</button>
   <button onclick="refreshLog()">Refresh Log</button>
+  <button onclick="connectLogStream()">Reconnect Stream</button>
   <a class="button" href="/hcp2_log" download="hcp2-log.ndjson">Download NDJSON</a>
   <a class="button" href="/hcp2_log.bin" download="hcp2-log.bin">Download Raw</a>
-  <label><input id="autoLog" type="checkbox"> auto-refresh log</label>
   <div id="logSummary" class="muted"></div>
+  <div id="logStream" class="muted">stream disconnected</div>
   <pre id="log"></pre>
 </section>
 <section class="panel" style="margin-top:12px">
@@ -1123,6 +1211,10 @@ pre{white-space:pre-wrap;overflow:auto;max-height:48vh;background:#020617;border
 </section>
 <script>
 const $=id=>document.getElementById(id);
+let logSocket=null;
+let logReconnectTimer=null;
+let logLines=[];
+const maxLogLines=300;
 function row(k,v){return `<div class="row"><span class="key">${k}</span><span class="value">${v??''}</span></div>`}
 function setRows(id,items){$(id).innerHTML=items.map(([k,v])=>row(k,v)).join('')}
 async function getJson(path){const r=await fetch(path,{cache:'no-store'});const t=await r.text();try{return JSON.parse(t)}catch(e){throw new Error(path+' returned non-JSON')}}
@@ -1175,11 +1267,43 @@ async function refresh(){
     $('reasons').textContent=e.message;
   }
 }
-async function controlLog(action){await fetch('/hcp2_log/'+action,{cache:'no-store'});await refresh();if(action!=='clear')await refreshLog();else $('log').textContent=''}
-async function refreshLog(){const r=await fetch('/hcp2_log',{cache:'no-store'});const text=await r.text();$('log').textContent=text.split('\n').slice(-200).join('\n')}
+function renderLog(){const el=$('log');el.textContent=logLines.join('\n');el.scrollTop=el.scrollHeight}
+function appendLogText(text){
+  for(const line of text.split('\n')){if(line)logLines.push(line)}
+  if(logLines.length>maxLogLines)logLines=logLines.slice(logLines.length-maxLogLines);
+  renderLog();
+}
+async function controlLog(action){
+  await fetch('/hcp2_log/'+action,{cache:'no-store'});
+  await refresh();
+  if(action==='clear'){logLines=[];renderLog()}else await refreshLog();
+}
+async function refreshLog(){
+  const r=await fetch('/hcp2_log',{cache:'no-store'});
+  const text=await r.text();
+  logLines=text.split('\n').filter(Boolean).slice(-maxLogLines);
+  renderLog();
+}
+function connectLogStream(){
+  if(logReconnectTimer){clearTimeout(logReconnectTimer);logReconnectTimer=null}
+  if(logSocket){logSocket.onclose=null;logSocket.close();logSocket=null}
+  const scheme=location.protocol==='https:'?'wss':'ws';
+  const ws=new WebSocket(`${scheme}://${location.host}/hcp2_log/ws`);
+  logSocket=ws;
+  $('logStream').textContent='stream connecting';
+  ws.onopen=()=>{$('logStream').textContent='stream connected'};
+  ws.onmessage=event=>appendLogText(event.data);
+  ws.onerror=()=>{try{ws.close()}catch(e){}};
+  ws.onclose=()=>{
+    if(logSocket===ws)logSocket=null;
+    $('logStream').textContent='stream disconnected; reconnecting';
+    logReconnectTimer=setTimeout(connectLogStream,2000);
+  };
+}
 async function loadRaw(path){const data=await getJson(path);$('raw').textContent=JSON.stringify(data,null,2)}
-setInterval(()=>{refresh();if($('autoLog').checked)refreshLog()},5000);
+setInterval(refresh,5000);
 refresh();
+refreshLog().finally(connectLogStream);
 </script>
 </body>
 </html>)HTML";
@@ -1296,23 +1420,21 @@ void HCP2Bridge::http_debug_service_pending_client_() {
     if (read_len > 0) {
       for (ssize_t i = 0; i < read_len; i++) {
         const char c = buffer[i];
-        if (c == '\r') {
-          continue;
-        }
-        if (c == '\n') {
-          this->http_debug_request_buffer_[this->http_debug_request_buffer_len_] = '\0';
-          std::string request_line(this->http_debug_request_buffer_, this->http_debug_request_buffer_len_);
-          auto client = std::move(this->http_debug_pending_client_);
-          this->http_debug_request_buffer_len_ = 0;
-          this->http_debug_handle_request_(std::move(client), request_line);
-          return;
-        }
         if (this->http_debug_request_buffer_len_ < sizeof(this->http_debug_request_buffer_) - 1u) {
           this->http_debug_request_buffer_[this->http_debug_request_buffer_len_++] = c;
+          if (this->http_debug_request_complete_()) {
+            this->http_debug_request_buffer_[this->http_debug_request_buffer_len_] = '\0';
+            std::string request(this->http_debug_request_buffer_, this->http_debug_request_buffer_len_);
+            auto client = std::move(this->http_debug_pending_client_);
+            this->http_debug_request_buffer_len_ = 0;
+            this->http_debug_handle_request_(std::move(client), request);
+            return;
+          }
         } else {
-          this->http_debug_send_response_(std::move(this->http_debug_pending_client_), "414 URI Too Long",
-                                          "text/plain; charset=utf-8", "request line too long\n");
+          auto client = std::move(this->http_debug_pending_client_);
           this->http_debug_request_buffer_len_ = 0;
+          this->http_debug_send_response_(std::move(client), "414 URI Too Long",
+                                          "text/plain; charset=utf-8", "request headers too long\n");
           return;
         }
       }
@@ -1332,12 +1454,77 @@ void HCP2Bridge::http_debug_service_pending_client_() {
   }
 }
 
+bool HCP2Bridge::http_debug_request_complete_() const {
+  if (this->http_debug_request_buffer_len_ >= 4u) {
+    for (size_t i = 3; i < this->http_debug_request_buffer_len_; i++) {
+      if (this->http_debug_request_buffer_[i - 3u] == '\r' && this->http_debug_request_buffer_[i - 2u] == '\n' &&
+          this->http_debug_request_buffer_[i - 1u] == '\r' && this->http_debug_request_buffer_[i] == '\n') {
+        return true;
+      }
+    }
+  }
+  if (this->http_debug_request_buffer_len_ >= 2u) {
+    for (size_t i = 1; i < this->http_debug_request_buffer_len_; i++) {
+      if (this->http_debug_request_buffer_[i - 1u] == '\n' && this->http_debug_request_buffer_[i] == '\n') {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+void HCP2Bridge::http_debug_service_log_ws_() {
+  if (this->http_debug_log_ws_client_ == nullptr) {
+    return;
+  }
+
+  if (this->http_debug_log_ws_client_->ready()) {
+    while (true) {
+      char buffer[96];
+      ssize_t read_len = this->http_debug_log_ws_client_->read(buffer, sizeof(buffer));
+      if (read_len > 0) {
+        continue;
+      }
+      if (read_len == 0) {
+        this->http_debug_log_ws_client_.reset();
+        return;
+      }
+      if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        break;
+      }
+      this->http_debug_log_ws_client_.reset();
+      return;
+    }
+  }
+
+  const uint32_t now_ms = millis();
+  if (this->http_debug_log_ws_last_send_ms_ != 0 &&
+      now_ms - this->http_debug_log_ws_last_send_ms_ < HCP2BRIDGE_HTTP_WS_SEND_INTERVAL_MS) {
+    return;
+  }
+  uint32_t next_cursor = this->http_debug_log_ws_next_seq_;
+  const std::string body =
+      this->protocol_log_body_since_(this->http_debug_log_ws_next_seq_, &next_cursor, HCP2BRIDGE_HTTP_WS_MAX_CHUNK_BYTES);
+  this->http_debug_log_ws_next_seq_ = next_cursor;
+  this->http_debug_log_ws_last_send_ms_ = now_ms;
+  if (body.empty()) {
+    return;
+  }
+  if (!this->http_debug_send_ws_text_(this->http_debug_log_ws_client_.get(), body, 25)) {
+    this->http_debug_log_ws_client_.reset();
+  }
+}
+
 void HCP2Bridge::http_debug_handle_request_(std::unique_ptr<socket::Socket> client,
-                                            const std::string &request_line) {
-  const std::string path = this->http_debug_path_from_request_line_(request_line);
+                                            const std::string &request) {
+  const std::string path = this->http_debug_path_from_request_(request);
   if (path.empty()) {
     this->http_debug_send_response_(std::move(client), "400 Bad Request", "text/plain; charset=utf-8",
                                     "bad request\n");
+    return;
+  }
+  if (path == "/hcp2_log/ws") {
+    this->http_debug_upgrade_log_ws_(std::move(client), request);
     return;
   }
   if (path == "/" || path == "/index.html") {
@@ -1377,6 +1564,10 @@ void HCP2Bridge::http_debug_handle_request_(std::unique_ptr<socket::Socket> clie
   if (path == "/hcp2_log/clear") {
     this->protocol_log_clear_();
     this->protocol_log_append_control_("clear");
+    if (this->http_debug_log_ws_client_ != nullptr) {
+      this->http_debug_log_ws_next_seq_ = 1;
+      this->http_debug_log_ws_last_send_ms_ = 0;
+    }
     this->http_debug_send_response_(std::move(client), "200 OK", "application/json",
                                     this->protocol_log_summary_json_());
     return;
@@ -1391,6 +1582,91 @@ void HCP2Bridge::http_debug_handle_request_(std::unique_ptr<socket::Socket> clie
     return;
   }
   this->http_debug_send_response_(std::move(client), "404 Not Found", "text/plain; charset=utf-8", "not found\n");
+}
+
+void HCP2Bridge::http_debug_upgrade_log_ws_(std::unique_ptr<socket::Socket> client, const std::string &request) {
+  const std::string upgrade = this->http_debug_header_value_(request, "Upgrade");
+  const std::string key = this->http_debug_header_value_(request, "Sec-WebSocket-Key");
+  if (!hcp2_ascii_iequals(upgrade, "websocket") || key.empty()) {
+    this->http_debug_send_response_(std::move(client), "400 Bad Request", "text/plain; charset=utf-8",
+                                    "bad websocket upgrade\n");
+    return;
+  }
+
+  std::string accept_source = key;
+  accept_source += HCP2BRIDGE_WEBSOCKET_GUID;
+  unsigned char digest[20];
+  unsigned char encoded[32];
+  size_t encoded_len = 0;
+  if (mbedtls_sha1((const unsigned char *) accept_source.data(), accept_source.size(), digest) != 0 ||
+      mbedtls_base64_encode(encoded, sizeof(encoded), &encoded_len, digest, sizeof(digest)) != 0) {
+    this->http_debug_send_response_(std::move(client), "500 Internal Server Error", "text/plain; charset=utf-8",
+                                    "websocket handshake failed\n");
+    return;
+  }
+
+  std::string response = "HTTP/1.1 101 Switching Protocols\r\n";
+  response += "Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ";
+  response.append((const char *) encoded, encoded_len);
+  response += "\r\nAccess-Control-Allow-Origin: *\r\n\r\n";
+  if (!this->http_debug_write_all_(client.get(), response, 1000)) {
+    return;
+  }
+
+  this->http_debug_log_ws_client_.reset();
+  this->http_debug_log_ws_client_ = std::move(client);
+  this->http_debug_log_ws_next_seq_ = this->protocol_log_next_seq_snapshot_();
+  this->http_debug_log_ws_last_send_ms_ = 0;
+  ESP_LOGI(TAG, "HCP2 HTTP debug log WebSocket connected");
+}
+
+bool HCP2Bridge::http_debug_send_ws_text_(socket::Socket *client, const std::string &payload, uint32_t timeout_ms) {
+  if (client == nullptr || payload.empty() || payload.size() > 65535u) {
+    return false;
+  }
+  std::string frame;
+  frame.reserve(payload.size() + 4u);
+  frame.push_back((char) 0x81);
+  if (payload.size() <= 125u) {
+    frame.push_back((char) payload.size());
+  } else {
+    frame.push_back((char) 126);
+    frame.push_back((char) ((payload.size() >> 8u) & 0xFFu));
+    frame.push_back((char) (payload.size() & 0xFFu));
+  }
+  frame += payload;
+  return this->http_debug_write_all_(client, frame, timeout_ms);
+}
+
+std::string HCP2Bridge::http_debug_header_value_(const std::string &request, const char *name) {
+  size_t line_start = 0;
+  while (line_start < request.size()) {
+    size_t line_end = request.find('\n', line_start);
+    if (line_end == std::string::npos) {
+      line_end = request.size();
+    }
+    size_t trimmed_end = line_end;
+    if (trimmed_end > line_start && request[trimmed_end - 1u] == '\r') {
+      trimmed_end--;
+    }
+    const size_t colon = request.find(':', line_start);
+    if (colon != std::string::npos && colon < trimmed_end) {
+      const std::string header_name = request.substr(line_start, colon - line_start);
+      if (hcp2_ascii_iequals(header_name, name)) {
+        size_t value_start = colon + 1u;
+        while (value_start < trimmed_end && (request[value_start] == ' ' || request[value_start] == '\t')) {
+          value_start++;
+        }
+        while (trimmed_end > value_start &&
+               (request[trimmed_end - 1u] == ' ' || request[trimmed_end - 1u] == '\t')) {
+          trimmed_end--;
+        }
+        return request.substr(value_start, trimmed_end - value_start);
+      }
+    }
+    line_start = line_end + 1u;
+  }
+  return "";
 }
 
 void HCP2Bridge::http_debug_send_response_(std::unique_ptr<socket::Socket> client, const char *status,
@@ -1433,16 +1709,16 @@ bool HCP2Bridge::http_debug_write_all_(socket::Socket *client, const std::string
   return true;
 }
 
-std::string HCP2Bridge::http_debug_path_from_request_line_(const std::string &request_line) {
-  const size_t first_space = request_line.find(' ');
+std::string HCP2Bridge::http_debug_path_from_request_(const std::string &request) {
+  const size_t first_space = request.find(' ');
   if (first_space == std::string::npos) {
     return "";
   }
-  const size_t second_space = request_line.find(' ', first_space + 1);
+  const size_t second_space = request.find(' ', first_space + 1);
   if (second_space == std::string::npos || second_space <= first_space + 1) {
     return "";
   }
-  std::string path = request_line.substr(first_space + 1, second_space - first_space - 1);
+  std::string path = request.substr(first_space + 1, second_space - first_space - 1);
   const size_t query = path.find('?');
   if (query != std::string::npos) {
     path.resize(query);
