@@ -50,10 +50,10 @@ static constexpr uint32_t HCP2BRIDGE_OBSTRUCTION_LATCH_MS = 10000;
 static constexpr uint32_t HCP2BRIDGE_HTTP_SETUP_DELAY_MS = 5000;
 static constexpr uint32_t HCP2BRIDGE_HTTP_SETUP_RETRY_MS = 5000;
 static constexpr uint32_t HCP2BRIDGE_HTTP_PENDING_TIMEOUT_MS = 3000;
-static constexpr uint32_t HCP2BRIDGE_HTTP_RESPONSE_TIMEOUT_MS = 150;
-static constexpr uint32_t HCP2BRIDGE_HTTP_LARGE_RESPONSE_TIMEOUT_MS = 750;
-static constexpr uint32_t HCP2BRIDGE_HTTP_WS_HANDSHAKE_TIMEOUT_MS = 100;
-static constexpr uint32_t HCP2BRIDGE_HTTP_WS_WRITE_TIMEOUT_MS = 5;
+static constexpr uint32_t HCP2BRIDGE_HTTP_RESPONSE_TIMEOUT_MS = 500;
+static constexpr uint32_t HCP2BRIDGE_HTTP_LARGE_RESPONSE_TIMEOUT_MS = 1500;
+static constexpr uint32_t HCP2BRIDGE_HTTP_WS_HANDSHAKE_TIMEOUT_MS = 500;
+static constexpr uint32_t HCP2BRIDGE_HTTP_WS_WRITE_TIMEOUT_MS = 25;
 static constexpr uint32_t HCP2BRIDGE_HTTP_WS_SEND_INTERVAL_MS = 250;
 static constexpr uint32_t HCP2BRIDGE_HTTP_WS_HEALTH_INTERVAL_MS = 500;
 static constexpr size_t HCP2BRIDGE_HTTP_REQUEST_READ_BUDGET_BYTES = 256;
@@ -1293,6 +1293,7 @@ std::string HCP2Bridge::http_debug_index_html_() {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>HCP2 Bridge Debug</title>
+<link rel="icon" href="data:,">
 <style>
 :root{color-scheme:light dark;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#111827;color:#e5e7eb}
 body{margin:0;padding:18px;line-height:1.35}
@@ -1357,17 +1358,34 @@ let logCache=[];
 let logCacheBytes=0;
 let refreshBusy=false;
 let lastHealthStreamMs=0;
+let lastHealthOkMs=0;
+let logReconnectDelayMs=1000;
 let logRenderQueued=false;
 const maxVisibleLogLines=300;
 const maxCacheAgeMs=10*60*1000;
 const maxCacheBytes=1024*1024;
 function row(k,v){return `<div class="row"><span class="key">${k}</span><span class="value">${v??''}</span></div>`}
 function setRows(id,items){$(id).innerHTML=items.map(([k,v])=>row(k,v)).join('')}
-async function getJson(path){const r=await fetch(path,{cache:'no-store'});const t=await r.text();try{return JSON.parse(t)}catch(e){throw new Error(path+' returned non-JSON')}}
+function sleep(ms){return new Promise(resolve=>setTimeout(resolve,ms))}
+async function getJson(path,attempts=3){
+  let lastError=null;
+  for(let attempt=0;attempt<attempts;attempt++){
+    try{
+      const r=await fetch(path,{cache:'no-store'});
+      const t=await r.text();
+      try{return JSON.parse(t)}catch(e){throw new Error(`${path} returned ${r.status}: ${t.slice(0,48)||'non-JSON'}`)}
+    }catch(e){
+      lastError=e;
+      if(attempt+1<attempts)await sleep(150*(attempt+1));
+    }
+  }
+  throw lastError||new Error(path+' unavailable');
+}
 function applyHealth(health,source='http'){
   const stats=health.stats||{};
   const ok=health.verdict==='ok';
   if(source==='stream')lastHealthStreamMs=Date.now();
+  lastHealthOkMs=Date.now();
   $('verdict').className='status '+(ok?'ok':'fail');
   $('verdict').textContent=ok?'continuity ok':'continuity problem';
   $('updated').textContent=' updated '+new Date().toLocaleTimeString()+` via ${source}`;
@@ -1420,8 +1438,11 @@ async function refresh(){
     const health=await getJson('/health');
     applyHealth(health,'http');
   }catch(e){
-    $('verdict').className='status unknown';
-    $('verdict').textContent='debug fetch failed';
+    if(!lastHealthOkMs){
+      $('verdict').className='status unknown';
+      $('verdict').textContent='debug fetch failed';
+    }
+    $('updated').textContent=' last fetch failed '+new Date().toLocaleTimeString();
     $('reasons').textContent=e.message;
   }finally{
     refreshBusy=false;
@@ -1491,7 +1512,7 @@ function connectLogStream(){
   const ws=new WebSocket(`${scheme}://${location.host}/hcp2_log/ws`);
   logSocket=ws;
   $('logStream').textContent='stream connecting';
-  ws.onopen=()=>{$('logStream').textContent='stream connected'};
+  ws.onopen=()=>{$('logStream').textContent='stream connected';logReconnectDelayMs=1000};
   ws.onmessage=event=>{
     let message=null;
     try{message=JSON.parse(event.data)}catch(e){}
@@ -1508,8 +1529,10 @@ function connectLogStream(){
   ws.onerror=()=>{try{ws.close()}catch(e){}};
   ws.onclose=()=>{
     if(logSocket===ws)logSocket=null;
-    $('logStream').textContent='stream disconnected; reconnecting';
-    logReconnectTimer=setTimeout(connectLogStream,2000);
+    const delay=logReconnectDelayMs;
+    logReconnectDelayMs=Math.min(logReconnectDelayMs*2,10000);
+    $('logStream').textContent=`stream disconnected; reconnecting in ${Math.round(delay/1000)}s`;
+    logReconnectTimer=setTimeout(connectLogStream,delay);
   };
 }
 function cachedLogExport(){
@@ -1784,6 +1807,10 @@ void HCP2Bridge::http_debug_handle_request_(std::unique_ptr<socket::Socket> clie
   if (path == "/" || path == "/index.html") {
     this->http_debug_send_response_(std::move(client), "200 OK", "text/html; charset=utf-8",
                                     this->http_debug_index_html_());
+    return;
+  }
+  if (path == "/favicon.ico") {
+    this->http_debug_send_response_(std::move(client), "204 No Content", "image/x-icon", "");
     return;
   }
   if (path == "/stats") {
