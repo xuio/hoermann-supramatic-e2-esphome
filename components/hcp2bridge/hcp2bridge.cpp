@@ -1060,10 +1060,126 @@ std::string HCP2Bridge::http_debug_support_json_() {
 }
 
 std::string HCP2Bridge::http_debug_index_html_() {
-  return "<!doctype html><html><head><meta charset=\"utf-8\"><title>HCP2 Bridge</title></head><body>"
-         "<h1>HCP2 Bridge</h1><p><a href=\"/health\">health</a> <a href=\"/stats\">stats</a> "
-         "<a href=\"/support\">support</a> "
-         "<a href=\"/hcp2_log\">hcp2 log</a> <a href=\"/hcp2_log.bin\">hcp2 log raw</a></p></body></html>";
+  return R"HTML(<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HCP2 Bridge Debug</title>
+<style>
+:root{color-scheme:light dark;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#111827;color:#e5e7eb}
+body{margin:0;padding:18px;line-height:1.35}
+h1{font-size:22px;margin:0 0 12px}
+h2{font-size:15px;margin:0 0 10px;color:#cbd5e1}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
+.panel{border:1px solid #334155;border-radius:8px;background:#0f172a;padding:12px}
+.status{display:inline-flex;align-items:center;gap:8px;border-radius:999px;padding:7px 10px;font-weight:700}
+.ok{background:#064e3b;color:#d1fae5}.fail{background:#7f1d1d;color:#fee2e2}.unknown{background:#374151;color:#f3f4f6}
+.row{display:flex;justify-content:space-between;gap:12px;border-bottom:1px solid #1f2937;padding:5px 0;font-size:13px}
+.row:last-child{border-bottom:0}
+.key{color:#94a3b8}.value{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;text-align:right}
+button,a.button{display:inline-block;margin:0 6px 8px 0;border:1px solid #475569;border-radius:6px;background:#1e293b;color:#e5e7eb;padding:7px 10px;text-decoration:none;cursor:pointer}
+button:hover,a.button:hover{background:#334155}
+label{font-size:13px;color:#cbd5e1}
+pre{white-space:pre-wrap;overflow:auto;max-height:48vh;background:#020617;border:1px solid #1f2937;border-radius:6px;padding:10px;font-size:12px}
+.muted{color:#94a3b8;font-size:12px}
+.reasons{margin-top:8px;color:#fecaca;font-size:13px}
+</style>
+</head>
+<body>
+<h1>HCP2 Bridge Debug</h1>
+<div class="panel">
+  <span id="verdict" class="status unknown">loading</span>
+  <span id="updated" class="muted"></span>
+  <div id="reasons" class="reasons"></div>
+</div>
+<div class="grid" style="margin-top:12px">
+  <section class="panel"><h2>Continuity</h2><div id="continuity"></div></section>
+  <section class="panel"><h2>Door</h2><div id="door"></div></section>
+  <section class="panel"><h2>Counters</h2><div id="counters"></div></section>
+  <section class="panel"><h2>Timing</h2><div id="timing"></div></section>
+</div>
+<section class="panel" style="margin-top:12px">
+  <h2>RAM Protocol Log</h2>
+  <button onclick="controlLog('start')">Start</button>
+  <button onclick="controlLog('stop')">Stop</button>
+  <button onclick="controlLog('clear')">Clear</button>
+  <button onclick="refreshLog()">Refresh Log</button>
+  <a class="button" href="/hcp2_log" download="hcp2-log.ndjson">Download NDJSON</a>
+  <a class="button" href="/hcp2_log.bin" download="hcp2-log.bin">Download Raw</a>
+  <label><input id="autoLog" type="checkbox"> auto-refresh log</label>
+  <div id="logSummary" class="muted"></div>
+  <pre id="log"></pre>
+</section>
+<section class="panel" style="margin-top:12px">
+  <h2>Raw JSON</h2>
+  <button onclick="loadRaw('/health')">Health</button>
+  <button onclick="loadRaw('/stats')">Stats</button>
+  <button onclick="loadRaw('/support')">Support</button>
+  <pre id="raw"></pre>
+</section>
+<script>
+const $=id=>document.getElementById(id);
+function row(k,v){return `<div class="row"><span class="key">${k}</span><span class="value">${v??''}</span></div>`}
+function setRows(id,items){$(id).innerHTML=items.map(([k,v])=>row(k,v)).join('')}
+async function getJson(path){const r=await fetch(path,{cache:'no-store'});const t=await r.text();try{return JSON.parse(t)}catch(e){throw new Error(path+' returned non-JSON')}}
+async function refresh(){
+  try{
+    const [health,stats]=await Promise.all([getJson('/health'),getJson('/stats')]);
+    const ok=health.verdict==='ok';
+    $('verdict').className='status '+(ok?'ok':'fail');
+    $('verdict').textContent=ok?'continuity ok':'continuity problem';
+    $('updated').textContent=' updated '+new Date().toLocaleTimeString();
+    $('reasons').textContent=(health.reasons&&health.reasons.length)?'Reasons: '+health.reasons.join(', '):'';
+    const c=health.checks||{};
+    setRows('continuity',[
+      ['safe for OTA/restart',health.safe_for_ota_restart],
+      ['bus online',c.bus_online],
+      ['LP seen',c.lp_seen],
+      ['valid broadcast',c.valid_broadcast],
+      ['last poll age ms',c.last_poll_age_ms],
+      ['missed polls',c.missed_polls],
+      ['health flags',c.health_flags]
+    ]);
+    setRows('door',[
+      ['state',stats.state],
+      ['position',Number(stats.position).toFixed(3)],
+      ['mode',stats.mode],
+      ['uptime ms',stats.uptime_ms]
+    ]);
+    setRows('counters',[
+      ['polls seen',stats.polls_seen],
+      ['polls answered',stats.polls_answered],
+      ['crc errors',stats.crc_errors],
+      ['rx errors',stats.rx_errors],
+      ['tx aborts',stats.tx_aborts],
+      ['collisions',stats.collisions],
+      ['LP resets',stats.lp_resets],
+      ['HP resets',stats.hp_resets]
+    ]);
+    const p=stats.protocol_log||{};
+    setRows('timing',[
+      ['max DE hold us',c.max_de_hold_us],
+      ['log mode',p.mode],
+      ['log used bytes',p.used],
+      ['log capacity',p.capacity],
+      ['overwritten records',p.overwritten_records]
+    ]);
+    $('logSummary').textContent=`log ${p.enabled?'enabled':'disabled'}, ${p.used||0}/${p.capacity||0} bytes, overwritten ${p.overwritten_records||0} records`;
+  }catch(e){
+    $('verdict').className='status unknown';
+    $('verdict').textContent='debug fetch failed';
+    $('reasons').textContent=e.message;
+  }
+}
+async function controlLog(action){await fetch('/hcp2_log/'+action,{cache:'no-store'});await refresh();if(action!=='clear')await refreshLog();else $('log').textContent=''}
+async function refreshLog(){const r=await fetch('/hcp2_log',{cache:'no-store'});const text=await r.text();$('log').textContent=text.split('\n').slice(-200).join('\n')}
+async function loadRaw(path){const data=await getJson(path);$('raw').textContent=JSON.stringify(data,null,2)}
+setInterval(()=>{refresh();if($('autoLog').checked)refreshLog()},5000);
+refresh();
+</script>
+</body>
+</html>)HTML";
 }
 
 void HCP2Bridge::setup_http_debug_server_() {

@@ -79,7 +79,11 @@ It contains command queue/execution events, state changes, LP health
 transitions, LP trace breadcrumbs (`rx`, `tx`, `de`, errors), and full protocol
 frames when the HP fallback responder is active.
 
-Endpoints:
+Open `http://supramatic-4-tester.local:8080/` in a browser for the interactive
+debug page. It shows continuity health, core counters, RAM-log controls, log
+tail, and raw JSON views without writing anything to flash.
+
+Raw endpoints:
 
 - `http://supramatic-4-tester.local:8080/health`
 - `http://supramatic-4-tester.local:8080/preflight`
