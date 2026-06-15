@@ -2,9 +2,25 @@ name: Firmware Builds
 
 on:
   pull_request:
+    paths:
+      - ".github/workflows/firmware-build.yml"
+      - "components/**"
+      - "configs/**"
+      - "firmware/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "tools/init_secrets.py"
   push:
     branches:
       - main
+    paths:
+      - ".github/workflows/firmware-build.yml"
+      - "components/**"
+      - "configs/**"
+      - "firmware/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "tools/init_secrets.py"
   workflow_dispatch:
 
 permissions:
