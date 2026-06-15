@@ -123,19 +123,26 @@ jobs:
           artifact="hcp2-supramatic-4-tester"
           artifact_dir="firmware-artifacts/${artifact}"
           short_sha="$(printf '%s' "$GITHUB_SHA" | cut -c1-12)"
+          factory_asset="${artifact}-firmware.factory-${short_sha}.bin"
+          ota_asset="${artifact}-firmware.ota-${short_sha}.bin"
+          build_manifest_asset="${artifact}-manifest-${short_sha}.txt"
+          web_manifest_asset="${artifact}-web-flasher-manifest-${short_sha}.json"
+          checksum_asset="SHA256SUMS-${short_sha}.txt"
+          bundle_asset="${artifact}-${short_sha}.zip"
           test -d "$artifact_dir"
 
-          for file in firmware.factory.bin firmware.ota.bin manifest.txt; do
-            test -f "$artifact_dir/$file"
-            cp "$artifact_dir/$file" "release-assets/${artifact}-${file}"
-          done
+          test -f "$artifact_dir/firmware.factory.bin"
+          test -f "$artifact_dir/firmware.ota.bin"
+          test -f "$artifact_dir/manifest.txt"
+          cp "$artifact_dir/firmware.factory.bin" "release-assets/${factory_asset}"
+          cp "$artifact_dir/firmware.ota.bin" "release-assets/${ota_asset}"
+          cp "$artifact_dir/manifest.txt" "release-assets/${build_manifest_asset}"
 
           python3 - <<PY
           import json
           import os
           from pathlib import Path
 
-          artifact = "${artifact}"
           base_url = f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/releases/download/firmware-latest"
           manifest = {
               "name": "Garage Door HCP2 Tester",
@@ -147,34 +154,34 @@ jobs:
                       "improv": True,
                       "parts": [
                           {
-                              "path": f"{base_url}/{artifact}-firmware.factory.bin",
+                              "path": f"{base_url}/${factory_asset}",
                               "offset": 0,
                           }
                       ],
                   }
               ],
           }
-          Path(f"release-assets/{artifact}-web-flasher-manifest.json").write_text(
+          Path("release-assets/${web_manifest_asset}").write_text(
               json.dumps(manifest, indent=2) + "\n",
               encoding="utf-8",
           )
           PY
 
           bundle_dir="$(mktemp -d)"
-          cp "release-assets/${artifact}-firmware.factory.bin" "$bundle_dir/"
-          cp "release-assets/${artifact}-firmware.ota.bin" "$bundle_dir/"
-          cp "release-assets/${artifact}-manifest.txt" "$bundle_dir/"
-          cp "release-assets/${artifact}-web-flasher-manifest.json" "$bundle_dir/"
+          cp "release-assets/${factory_asset}" "$bundle_dir/"
+          cp "release-assets/${ota_asset}" "$bundle_dir/"
+          cp "release-assets/${build_manifest_asset}" "$bundle_dir/"
+          cp "release-assets/${web_manifest_asset}" "$bundle_dir/"
           (
             cd "$bundle_dir"
-            sha256sum * > SHA256SUMS
-            zip -qr "${GITHUB_WORKSPACE}/release-assets/${artifact}-${short_sha}.zip" .
+            sha256sum * > "${checksum_asset}"
+            zip -qr "${GITHUB_WORKSPACE}/release-assets/${bundle_asset}" .
           )
           rm -rf "$bundle_dir"
 
           (
             cd release-assets
-            sha256sum * > SHA256SUMS
+            sha256sum * > "${checksum_asset}"
           )
 
           cat > release-notes.md <<EOF
@@ -182,13 +189,13 @@ jobs:
 
           Public direct downloads for the HCP2 Series 4 tester:
 
-          - Easy flash image: \`hcp2-supramatic-4-tester-firmware.factory.bin\`
+          - Easy flash image: \`${factory_asset}\`
             (merged ESP32-C6 image, flash at offset \`0x0\`)
-          - ESP Web Tools manifest: \`hcp2-supramatic-4-tester-web-flasher-manifest.json\`
-          - OTA image: \`hcp2-supramatic-4-tester-firmware.ota.bin\`
-          - Build manifest: \`hcp2-supramatic-4-tester-manifest.txt\`
-          - Commit bundle: \`${artifact}-${short_sha}.zip\`
-          - Checksums: \`SHA256SUMS\`
+          - ESP Web Tools manifest: \`${web_manifest_asset}\`
+          - OTA image: \`${ota_asset}\`
+          - Build manifest: \`${build_manifest_asset}\`
+          - Commit bundle: \`${bundle_asset}\`
+          - Checksums: \`${checksum_asset}\`
 
           This public tester image does not bake in a shared ESPHome API encryption
           key. ESPHome starts in its first-adoption mode and stores a per-device
