@@ -115,11 +115,15 @@ uv run garage-init-secrets
 This creates `configs/secrets.yaml` with a valid ESPHome API encryption key, OTA password, and proxy token. The file is private and intentionally ignored by git. To intentionally regenerate existing secrets, run `uv run garage-init-secrets --force`.
 
 GitHub Actions also builds firmware artifacts automatically on push, pull request, and
-manual dispatch. The `Firmware Builds` workflow produces the HCP1 production image
-(`hcp1-supramatic-e2`) and the HCP2 Series 4 tester image
-(`hcp2-supramatic-4-tester`). The HCP2 tester image supports ESPHome Improv over
-USB serial and a fallback setup portal, so Wi-Fi credentials can be provisioned after
-flashing a prebuilt image. The HCP2 debug UI only opens after station Wi-Fi is connected.
+manual dispatch. The newest successful `main` build is published as a public GitHub
+Release at
+[releases/latest](https://github.com/xuio/hoermann-supramatic-e2-esphome/releases/latest).
+It contains the HCP1 production image (`hcp1-supramatic-e2`) and the HCP2 Series 4
+tester image (`hcp2-supramatic-4-tester`). Public prebuilt images include public
+ESPHome API/OTA credentials in `public-credentials.txt`; build locally for private
+credentials. The HCP2 tester image supports ESPHome Improv over USB serial and a
+fallback setup portal, so Wi-Fi credentials can be provisioned after flashing a
+prebuilt image. The HCP2 debug UI only opens after station Wi-Fi is connected.
 
 Validate and compile:
 
