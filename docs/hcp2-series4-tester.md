@@ -94,7 +94,7 @@ the live view starts from the current stream position. The page keeps its own
 bounded browser-side cache of the live stream. The `Download JSON` button
 exports that frontend cache as a structured JSON file with receive timestamps,
 raw lines, and parsed log objects. To keep browser RAM bounded, the cache keeps
-only the newest 10 minutes and at most 1 MiB. `Refresh Log`, `Device NDJSON`,
+only the newest 30 minutes and at most 100 MiB. `Refresh Log`, `Device NDJSON`,
 and `Device Raw` still download the ESP's current RAM ring buffer directly when
 you request them.
 

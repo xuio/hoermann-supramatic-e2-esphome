@@ -41,11 +41,11 @@ UART_BYTE_CYCLES = round(LP_CLOCK_HZ * UART_BITS_PER_BYTE / UART_BAUD)
 
 LP_SRAM_BASE = 0x50000000
 LP_SRAM_MAP_SIZE = 0x10000
-MAILBOX_ADDR = 0x50002000
-MAILBOX_SIZE = 512
+MAILBOX_ADDR = 0x50002400
+MAILBOX_SIZE = 1280
 MAILBOX_MAGIC = 0x32435048
-MAILBOX_ABI_VERSION = 6
-MAILBOX_FIRMWARE_VERSION = 13
+MAILBOX_ABI_VERSION = 7
+MAILBOX_FIRMWARE_VERSION = 14
 
 LP_UART_BASE = 0x600B1400
 LP_UART_FIFO = LP_UART_BASE + 0x00
@@ -757,6 +757,8 @@ class LPEmulator:
             "mailbox_protocol_hex": self.uc.mem_read(
                 MAILBOX_ADDR + 148, min(self.uc.mem_read(MAILBOX_ADDR + 146, 1)[0], 32)
             ).hex().upper(),
+            "mailbox_protocol_head": _read_u32(self.uc, MAILBOX_ADDR + 180),
+            "mailbox_protocol_tail": _read_u32(self.uc, MAILBOX_ADDR + 184),
             "de_events": self.de_events[:20],
             "re_events": self.re_events[:20],
             "gpio_writes": self.gpio_writes[:40],

@@ -480,8 +480,8 @@ static void test_mailbox_layout_and_reload_decision(void) {
   hcp2_lp_health_sample_t after;
 
   hcp2_lp_mailbox_init(&mailbox);
-  assert(HCP2_LP_MAILBOX_ADDR == 0x50002000u);
-  assert(sizeof(mailbox) == 512u);
+  assert(HCP2_LP_MAILBOX_ADDR == 0x50002400u);
+  assert(sizeof(mailbox) == 1280u);
   assert(mailbox.magic == HCP2_LP_MAILBOX_MAGIC);
   assert(mailbox.abi_version == HCP2_LP_MAILBOX_ABI_VERSION);
   assert(mailbox.struct_size == HCP2_LP_MAILBOX_SIZE);
@@ -587,6 +587,8 @@ static void test_mailbox_protocol_event(void) {
   hcp2_lp_mailbox_publish_protocol_event(&mailbox, &event);
 
   assert(mailbox.protocol_sequence == 7u);
+  assert(mailbox.protocol_head == 7u);
+  assert(mailbox.protocol_tail == 7u);
   assert(hcp2_lp_mailbox_read_protocol_event(&mailbox, &last_sequence, &snapshot));
   assert(snapshot.sequence == 7u);
   assert(snapshot.at_us == 123456u);
@@ -598,7 +600,27 @@ static void test_mailbox_protocol_event(void) {
   assert(snapshot.data[2] == 0x10u);
   assert(!hcp2_lp_mailbox_read_protocol_event(&mailbox, &last_sequence, &snapshot));
 
-  mailbox.protocol_sequence = 0u;
+  mailbox.protocol_head = 0u;
+  assert(!hcp2_lp_mailbox_read_protocol_event(&mailbox, &last_sequence, &snapshot));
+
+  hcp2_lp_mailbox_init(&mailbox);
+  last_sequence = 0u;
+  for (uint32_t sequence = 1u; sequence <= HCP2_LP_PROTOCOL_EVENT_CAPACITY + 3u; sequence++) {
+    event.sequence = sequence;
+    event.at_us = 1000u + sequence;
+    event.data[2] = (uint8_t) sequence;
+    hcp2_lp_mailbox_publish_protocol_event(&mailbox, &event);
+  }
+  assert(mailbox.protocol_head == HCP2_LP_PROTOCOL_EVENT_CAPACITY + 3u);
+  assert(mailbox.protocol_tail == 4u);
+  assert(hcp2_lp_mailbox_read_protocol_event(&mailbox, &last_sequence, &snapshot));
+  assert(snapshot.sequence == 4u);
+  assert(snapshot.data[2] == 4u);
+  for (uint32_t sequence = 5u; sequence <= HCP2_LP_PROTOCOL_EVENT_CAPACITY + 3u; sequence++) {
+    assert(hcp2_lp_mailbox_read_protocol_event(&mailbox, &last_sequence, &snapshot));
+    assert(snapshot.sequence == sequence);
+    assert(snapshot.data[2] == (uint8_t) sequence);
+  }
   assert(!hcp2_lp_mailbox_read_protocol_event(&mailbox, &last_sequence, &snapshot));
 }
 

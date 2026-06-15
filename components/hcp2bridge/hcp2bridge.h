@@ -136,8 +136,9 @@ class HCP2Bridge : public Component {
   void maybe_setup_http_debug_server_();
   void http_debug_accept_client_();
   void http_debug_service_pending_client_();
-  void http_debug_service_log_ws_();
-  void http_debug_handle_request_(std::unique_ptr<socket::Socket> client, const std::string &request);
+	  void http_debug_service_log_ws_();
+	  void http_debug_close_log_ws_(const char *reason);
+	  void http_debug_handle_request_(std::unique_ptr<socket::Socket> client, const std::string &request);
   void http_debug_send_response_(std::unique_ptr<socket::Socket> client, const char *status, const char *content_type,
                                  const std::string &body);
   void http_debug_send_log_binary_response_(std::unique_ptr<socket::Socket> client);
@@ -286,9 +287,17 @@ class HCP2Bridge : public Component {
   size_t http_debug_request_buffer_len_{0};
   uint32_t http_debug_pending_client_started_ms_{0};
   uint32_t http_debug_next_setup_ms_{0};
-  uint32_t http_debug_log_ws_next_seq_{0};
-  uint32_t http_debug_log_ws_last_send_ms_{0};
-  uint32_t http_debug_log_ws_last_status_ms_{0};
+	  uint32_t http_debug_log_ws_next_seq_{0};
+	  uint32_t http_debug_log_ws_last_send_ms_{0};
+	  uint32_t http_debug_log_ws_last_status_ms_{0};
+	  uint32_t http_debug_log_ws_connect_count_{0};
+	  uint32_t http_debug_log_ws_disconnect_count_{0};
+	  uint32_t http_debug_log_ws_reject_count_{0};
+	  uint32_t http_debug_log_ws_peer_close_count_{0};
+	  uint32_t http_debug_log_ws_read_fail_count_{0};
+	  uint32_t http_debug_log_ws_write_fail_count_{0};
+	  int http_debug_log_ws_last_errno_{0};
+	  const char *http_debug_log_ws_last_close_reason_{"none"};
 #endif
 };
 

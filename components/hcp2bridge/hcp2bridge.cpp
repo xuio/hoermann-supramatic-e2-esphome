@@ -53,7 +53,7 @@ static constexpr uint32_t HCP2BRIDGE_HTTP_PENDING_TIMEOUT_MS = 3000;
 static constexpr uint32_t HCP2BRIDGE_HTTP_RESPONSE_TIMEOUT_MS = 500;
 static constexpr uint32_t HCP2BRIDGE_HTTP_LARGE_RESPONSE_TIMEOUT_MS = 1500;
 static constexpr uint32_t HCP2BRIDGE_HTTP_WS_HANDSHAKE_TIMEOUT_MS = 500;
-static constexpr uint32_t HCP2BRIDGE_HTTP_WS_WRITE_TIMEOUT_MS = 25;
+static constexpr uint32_t HCP2BRIDGE_HTTP_WS_WRITE_TIMEOUT_MS = 150;
 static constexpr uint32_t HCP2BRIDGE_HTTP_WS_SEND_INTERVAL_MS = 250;
 static constexpr uint32_t HCP2BRIDGE_HTTP_WS_HEALTH_INTERVAL_MS = 500;
 static constexpr size_t HCP2BRIDGE_HTTP_REQUEST_READ_BUDGET_BYTES = 256;
@@ -847,15 +847,18 @@ void HCP2Bridge::protocol_log_append_lp_trace_overflow_(uint32_t dropped) {
 
 void HCP2Bridge::drain_lp_protocol_event_() {
   hcp2_lp_protocol_event_t event{};
+  uint32_t drained = 0;
   if (this->lp_supervisor_.mailbox == nullptr) {
     return;
   }
-  if (hcp2_lp_mailbox_read_protocol_event(this->lp_supervisor_.mailbox, &this->last_lp_protocol_sequence_,
-                                          &event) == 0u) {
-    return;
+
+  while (drained < HCP2_LP_PROTOCOL_EVENT_CAPACITY &&
+         hcp2_lp_mailbox_read_protocol_event(this->lp_supervisor_.mailbox, &this->last_lp_protocol_sequence_,
+                                             &event) != 0u) {
+    this->protocol_log_append_protocol_event_(event.at_us, event.event_type, event.frame_type, event.data, event.len,
+                                              "lp");
+    drained++;
   }
-  this->protocol_log_append_protocol_event_(event.at_us, event.event_type, event.frame_type, event.data, event.len,
-                                            "lp");
 }
 
 void HCP2Bridge::drain_lp_trace_() {
@@ -872,12 +875,10 @@ void HCP2Bridge::drain_lp_trace_() {
     cursor = tail;
   }
   if (cursor < tail) {
-    this->protocol_log_append_lp_trace_overflow_(tail - cursor);
     cursor = tail;
   }
   if ((head - cursor) > HCP2_LP_TRACE_CAPACITY) {
     const uint32_t next_cursor = head - HCP2_LP_TRACE_CAPACITY;
-    this->protocol_log_append_lp_trace_overflow_(next_cursor - cursor);
     cursor = next_cursor;
   }
 
@@ -895,7 +896,6 @@ void HCP2Bridge::drain_lp_trace_() {
     drained++;
   }
   if (cursor < head) {
-    this->protocol_log_append_lp_trace_overflow_(head - cursor);
     cursor = head;
   }
   this->last_lp_trace_head_ = cursor;
@@ -1276,6 +1276,25 @@ std::string HCP2Bridge::http_debug_stats_json_() {
   json += std::to_string(this->get_hp_reset_count());
   json += ",\"protocol_log\":";
   json += this->protocol_log_summary_json_();
+  json += ",\"websocket\":{\"connected\":";
+  json += (this->http_debug_log_ws_client_ != nullptr ? "true" : "false");
+  json += ",\"connects\":";
+  json += std::to_string(this->http_debug_log_ws_connect_count_);
+  json += ",\"disconnects\":";
+  json += std::to_string(this->http_debug_log_ws_disconnect_count_);
+  json += ",\"rejects\":";
+  json += std::to_string(this->http_debug_log_ws_reject_count_);
+  json += ",\"peer_closes\":";
+  json += std::to_string(this->http_debug_log_ws_peer_close_count_);
+  json += ",\"read_failures\":";
+  json += std::to_string(this->http_debug_log_ws_read_fail_count_);
+  json += ",\"write_failures\":";
+  json += std::to_string(this->http_debug_log_ws_write_fail_count_);
+  json += ",\"last_errno\":";
+  json += std::to_string(this->http_debug_log_ws_last_errno_);
+  json += ",\"last_close_reason\":\"";
+  json += this->http_debug_log_ws_last_close_reason_;
+  json += "\"}";
   json += "}";
   return json;
 }
@@ -1355,7 +1374,8 @@ h2{font-size:15px;margin:0 0 10px;color:#cbd5e1}
 button,a.button{display:inline-block;margin:0 6px 8px 0;border:1px solid #475569;border-radius:6px;background:#1e293b;color:#e5e7eb;padding:7px 10px;text-decoration:none;cursor:pointer}
 button:hover,a.button:hover{background:#334155}
 label{font-size:13px;color:#cbd5e1}
-pre{white-space:pre-wrap;overflow:auto;max-height:48vh;background:#020617;border:1px solid #1f2937;border-radius:6px;padding:10px;font-size:12px}
+	pre{white-space:pre-wrap;overflow:auto;max-height:48vh;background:#020617;border:1px solid #1f2937;border-radius:6px;padding:10px;font-size:12px}
+	#log{height:60vh;max-height:none;overflow-anchor:none}
 .muted{color:#94a3b8;font-size:12px}
 .reasons{margin-top:8px;color:#fecaca;font-size:13px}
 </style>
@@ -1382,7 +1402,7 @@ pre{white-space:pre-wrap;overflow:auto;max-height:48vh;background:#020617;border
   <button onclick="controlLog('stop')">Stop</button>
   <button onclick="controlLog('clear')">Clear</button>
   <button onclick="refreshLog()">Refresh Log</button>
-  <button onclick="connectLogStream()">Reconnect Stream</button>
+	  <button onclick="connectLogStream(true)">Reconnect Stream</button>
   <button onclick="downloadCachedLog()">Download JSON</button>
   <a class="button" href="/hcp2_log" download="hcp2-log.ndjson">Device NDJSON</a>
   <a class="button" href="/hcp2_log.bin" download="hcp2-log.bin">Device Raw</a>
@@ -1411,12 +1431,15 @@ let rawPath=null;
 let rawBusy=false;
 let lastHealthStreamMs=0;
 let lastHealthOkMs=0;
-let logReconnectDelayMs=1000;
-let logRenderQueued=false;
-let logSeenSeqs=new Set();
-const maxVisibleLogLines=300;
-const maxCacheAgeMs=10*60*1000;
-const maxCacheBytes=1024*1024;
+	let logReconnectDelayMs=1000;
+	let logRenderQueued=false;
+	let logSeenSeqs=new Set();
+	let logPendingAppend=[];
+	let logPendingReplace=null;
+	let logRenderStickToBottom=true;
+	const logStickThresholdPx=24;
+	const maxCacheAgeMs=30*60*1000;
+	const maxCacheBytes=100*1024*1024;
 function row(k,v){return `<div class="row"><span class="key">${k}</span><span class="value">${v??''}</span></div>`}
 function setRows(id,items){$(id).innerHTML=items.map(([k,v])=>row(k,v)).join('')}
 function label(k){return String(k).replaceAll('_',' ')}
@@ -1514,8 +1537,8 @@ function updateLogCacheSummary(){
   const kb=(logCacheBytes/1024).toFixed(1);
   const oldest=logCache[0]?.received_at||'none';
   const newest=logCache[logCache.length-1]?.received_at||'none';
-  $('logCache').textContent=`browser cache ${logCache.length} records, ${kb} KiB, newest 10 min / 1 MiB, ${oldest} to ${newest}`;
-}
+	  $('logCache').textContent=`visible ${logLines.length} lines; browser cache ${logCache.length} records, ${kb} KiB, newest 30 min / 100 MiB, ${oldest} to ${newest}`;
+	}
 function cacheLogLine(line,receivedMs=Date.now()){
   if(!line)return false;
   let entry=null;
@@ -1531,53 +1554,87 @@ function cacheLogLine(line,receivedMs=Date.now()){
   pruneLogCache(receivedMs);
   return true;
 }
-function renderLogNow(){const el=$('log');el.textContent=logLines.join('\n');el.scrollTop=el.scrollHeight}
-function renderLog(){
-  if(logRenderQueued)return;
-  logRenderQueued=true;
-  requestAnimationFrame(()=>{
-    logRenderQueued=false;
-    renderLogNow();
+	function logNearBottom(el=$('log')){return el.scrollHeight-el.scrollTop-el.clientHeight<=logStickThresholdPx}
+	function logDisplayHasContent(){
+	  return $('log').textContent.length>0||(logPendingReplace!==null&&logPendingReplace.length>0)||logPendingAppend.length>0;
+	}
+	function renderLogNow(){
+	  const el=$('log');
+	  const stick=logRenderStickToBottom&&logNearBottom(el);
+	  const scrollTop=el.scrollTop;
+	  if(logPendingReplace!==null){
+	    el.textContent=logPendingReplace;
+	    logPendingReplace=null;
+	  }
+	  if(logPendingAppend.length){
+	    el.appendChild(document.createTextNode(logPendingAppend.join('')));
+	    logPendingAppend=[];
+	  }
+	  if(stick)el.scrollTop=el.scrollHeight;else el.scrollTop=scrollTop;
+	}
+	function renderLog(stickToBottom=true){
+	  logRenderStickToBottom=logRenderStickToBottom&&stickToBottom;
+	  if(logRenderQueued)return;
+	  logRenderStickToBottom=stickToBottom;
+	  logRenderQueued=true;
+	  requestAnimationFrame(()=>{
+	    logRenderQueued=false;
+	    renderLogNow();
   });
 }
-function appendLogText(text,replace=false){
-  const now=Date.now();
-  if(replace){logLines=[];resetLogCache()}
-  let changed=replace;
-  for(const line of text.split('\n')){
-    if(!line)continue;
-    if(cacheLogLine(line,now)){
-      logLines.push(line);
-      changed=true;
-    }
-  }
-  if(logLines.length>maxVisibleLogLines)logLines=logLines.slice(logLines.length-maxVisibleLogLines);
-  if(changed)renderLog();
-  updateLogCacheSummary();
-}
+	function appendLogText(text,replace=false){
+	  const now=Date.now();
+	  const stickToBottom=replace||logNearBottom();
+	  if(replace){logLines=[];resetLogCache();logPendingAppend=[];logPendingReplace=''}
+	  let changed=replace;
+	  const newLines=[];
+	  for(const line of text.split('\n')){
+	    if(!line)continue;
+	    if(cacheLogLine(line,now)){
+	      logLines.push(line);
+	      newLines.push(line);
+	      changed=true;
+	    }
+	  }
+	  if(changed){
+	    if(replace){
+	      logPendingReplace=logLines.join('\n');
+	    }else if(newLines.length){
+	      const prefix=logDisplayHasContent()?'\n':'';
+	      logPendingAppend.push(prefix+newLines.join('\n'));
+	    }
+	    renderLog(stickToBottom);
+	  }
+	  updateLogCacheSummary();
+	}
 async function controlLog(action){
   await fetch('/hcp2_log/'+action,{cache:'no-store'});
   requestRefresh();
-  if(action==='clear'){logLines=[];resetLogCache();renderLog();await refreshLog(false)}else await refreshLog();
-}
-async function refreshLog(replace=true){
-  if(logLoadBusy)return;
-  logLoadBusy=true;
-  try{
+	  if(action==='clear'){logLines=[];logPendingAppend=[];logPendingReplace='';resetLogCache();renderLog(true);await refreshLog(false)}else await refreshLog();
+	}
+	async function refreshLog(replace=true){
+	  if(logLoadBusy)return;
+	  logLoadBusy=true;
+	  try{
     const r=await fetch('/hcp2_log',{cache:'no-store'});
     const text=await r.text();
     appendLogText(text,replace);
   }catch(e){
     $('logStream').textContent='log refresh failed: '+e.message;
   }finally{
-    logLoadBusy=false;
-  }
-}
-function connectLogStream(){
-  if(logReconnectTimer){clearTimeout(logReconnectTimer);logReconnectTimer=null}
-  if(logSocket){logSocket.onclose=null;logSocket.close();logSocket=null}
-  const scheme=location.protocol==='https:'?'wss':'ws';
-  const ws=new WebSocket(`${scheme}://${location.host}/hcp2_log/ws`);
+	    logLoadBusy=false;
+	  }
+	}
+	function closeLogStream(){
+	  if(logReconnectTimer){clearTimeout(logReconnectTimer);logReconnectTimer=null}
+	  if(logSocket){logSocket.onclose=null;try{logSocket.close()}catch(e){};logSocket=null}
+	}
+	function connectLogStream(replace=false){
+	  closeLogStream();
+	  lastHealthStreamMs=Date.now();
+	  const scheme=location.protocol==='https:'?'wss':'ws';
+	  const path=replace?'/hcp2_log/ws?replace=1':'/hcp2_log/ws';
+	  const ws=new WebSocket(`${scheme}://${location.host}${path}`);
   logSocket=ws;
   $('logStream').textContent='stream connecting';
   ws.onopen=()=>{$('logStream').textContent='stream connected';logReconnectDelayMs=1000;refreshLog(false)};
@@ -1600,10 +1657,11 @@ function connectLogStream(){
     const delay=logReconnectDelayMs;
     logReconnectDelayMs=Math.min(logReconnectDelayMs*2,10000);
     $('logStream').textContent=`stream disconnected; reconnecting in ${Math.round(delay/1000)}s`;
-    logReconnectTimer=setTimeout(connectLogStream,delay);
-  };
-}
-function cachedLogExport(){
+	    logReconnectTimer=setTimeout(()=>connectLogStream(false),delay);
+	  };
+	}
+	window.addEventListener('pagehide',closeLogStream);
+	function cachedLogExport(){
   pruneLogCache();
   return {
     format:'hcp2-debug-log-cache-v1',
@@ -1639,10 +1697,13 @@ async function refreshRaw(){
   }
 }
 async function loadRaw(path){rawPath=path;await refreshRaw()}
-setInterval(()=>{if(Date.now()-lastHealthStreamMs>2000)requestRefresh()},1000);
-setInterval(requestRefresh,5000);
+	setInterval(()=>{if(logSocket&&logSocket.readyState===WebSocket.CONNECTING)return;if(Date.now()-lastHealthStreamMs>2000)requestRefresh()},1000);
+	setInterval(()=>{if(!logSocket||logSocket.readyState!==WebSocket.OPEN)requestRefresh()},5000);
 setInterval(()=>{refreshRaw().catch(()=>{})},3000);
-async function init(){requestRefresh();connectLogStream()}
+	async function init(){
+	  connectLogStream();
+	  setTimeout(()=>{if((!logSocket||logSocket.readyState!==WebSocket.CONNECTING)&&Date.now()-lastHealthStreamMs>2000)requestRefresh()},2500);
+	}
 init();
 </script>
 </body>
@@ -1688,7 +1749,7 @@ void HCP2Bridge::setup_http_debug_server_() {
     this->http_debug_next_setup_ms_ = millis() + HCP2BRIDGE_HTTP_SETUP_RETRY_MS;
     return;
   }
-  err = this->http_debug_server_->listen(1);
+  err = this->http_debug_server_->listen(4);
   if (err != 0) {
     ESP_LOGW(TAG, "Failed to listen on HCP2 HTTP debug port %u: errno=%d, retrying", (unsigned int) this->http_debug_port_,
              errno);
@@ -1818,10 +1879,10 @@ bool HCP2Bridge::http_debug_request_complete_() const {
   return false;
 }
 
-void HCP2Bridge::http_debug_service_log_ws_() {
-  if (this->http_debug_log_ws_client_ == nullptr) {
-    return;
-  }
+	void HCP2Bridge::http_debug_service_log_ws_() {
+	  if (this->http_debug_log_ws_client_ == nullptr) {
+	    return;
+	  }
 
   if (this->http_debug_log_ws_client_->ready()) {
     size_t budget = HCP2BRIDGE_HTTP_WS_DRAIN_BUDGET_BYTES;
@@ -1833,28 +1894,34 @@ void HCP2Bridge::http_debug_service_log_ws_() {
         budget -= (size_t) read_len;
         continue;
       }
-      if (read_len == 0) {
-        this->http_debug_log_ws_client_.reset();
-        return;
-      }
-      if (errno == EAGAIN || errno == EWOULDBLOCK) {
-        break;
-      }
-      this->http_debug_log_ws_client_.reset();
-      return;
-    }
-  }
+	      if (read_len == 0) {
+	        this->http_debug_log_ws_peer_close_count_++;
+	        this->http_debug_log_ws_last_errno_ = 0;
+	        this->http_debug_close_log_ws_("peer_close");
+	        return;
+	      }
+	      if (errno == EAGAIN || errno == EWOULDBLOCK) {
+	        break;
+	      }
+	      this->http_debug_log_ws_read_fail_count_++;
+	      this->http_debug_log_ws_last_errno_ = errno;
+	      this->http_debug_close_log_ws_("read_error");
+	      return;
+	    }
+	  }
 
   const uint32_t now_ms = millis();
   if (this->http_debug_log_ws_last_status_ms_ == 0 ||
       now_ms - this->http_debug_log_ws_last_status_ms_ >= HCP2BRIDGE_HTTP_WS_HEALTH_INTERVAL_MS) {
     this->http_debug_log_ws_last_status_ms_ = now_ms;
-    if (!this->http_debug_send_ws_text_(this->http_debug_log_ws_client_.get(), this->http_debug_ws_health_json_(),
-                                        HCP2BRIDGE_HTTP_WS_WRITE_TIMEOUT_MS)) {
-      this->http_debug_log_ws_client_.reset();
-      return;
-    }
-  }
+	    if (!this->http_debug_send_ws_text_(this->http_debug_log_ws_client_.get(), this->http_debug_ws_health_json_(),
+	                                        HCP2BRIDGE_HTTP_WS_WRITE_TIMEOUT_MS)) {
+	      this->http_debug_log_ws_write_fail_count_++;
+	      this->http_debug_log_ws_last_errno_ = errno;
+	      this->http_debug_close_log_ws_("health_write_error");
+	      return;
+	    }
+	  }
 
   if (this->http_debug_log_ws_last_send_ms_ != 0 &&
       now_ms - this->http_debug_log_ws_last_send_ms_ < HCP2BRIDGE_HTTP_WS_SEND_INTERVAL_MS) {
@@ -1868,14 +1935,26 @@ void HCP2Bridge::http_debug_service_log_ws_() {
   if (body.empty()) {
     return;
   }
-  if (!this->http_debug_send_ws_text_(this->http_debug_log_ws_client_.get(), this->http_debug_ws_log_json_(body),
-                                      HCP2BRIDGE_HTTP_WS_WRITE_TIMEOUT_MS)) {
-    this->http_debug_log_ws_client_.reset();
-  }
-}
+	  if (!this->http_debug_send_ws_text_(this->http_debug_log_ws_client_.get(), this->http_debug_ws_log_json_(body),
+	                                      HCP2BRIDGE_HTTP_WS_WRITE_TIMEOUT_MS)) {
+	    this->http_debug_log_ws_write_fail_count_++;
+	    this->http_debug_log_ws_last_errno_ = errno;
+	    this->http_debug_close_log_ws_("log_write_error");
+	  }
+	}
 
-void HCP2Bridge::http_debug_handle_request_(std::unique_ptr<socket::Socket> client,
-                                            const std::string &request) {
+	void HCP2Bridge::http_debug_close_log_ws_(const char *reason) {
+	  if (this->http_debug_log_ws_client_ == nullptr) {
+	    return;
+	  }
+	  this->http_debug_log_ws_client_.reset();
+	  this->http_debug_log_ws_disconnect_count_++;
+	  this->http_debug_log_ws_last_close_reason_ = reason != nullptr ? reason : "unknown";
+	  ESP_LOGI(TAG, "HCP2 HTTP debug log WebSocket disconnected: %s", this->http_debug_log_ws_last_close_reason_);
+	}
+
+	void HCP2Bridge::http_debug_handle_request_(std::unique_ptr<socket::Socket> client,
+	                                            const std::string &request) {
   const std::string path = this->http_debug_path_from_request_(request);
   if (path.empty()) {
     this->http_debug_send_response_(std::move(client), "400 Bad Request", "text/plain; charset=utf-8",
@@ -1956,6 +2035,19 @@ void HCP2Bridge::http_debug_upgrade_log_ws_(std::unique_ptr<socket::Socket> clie
                                     "bad websocket upgrade\n");
     return;
   }
+  if (this->http_debug_log_ws_client_ != nullptr) {
+    const bool replace_existing = request.rfind("GET /hcp2_log/ws?replace=1 ", 0) == 0 ||
+                                  request.rfind("GET /hcp2_log/ws?replace=true ", 0) == 0;
+    if (replace_existing) {
+      this->http_debug_close_log_ws_("replaced");
+    } else {
+      this->http_debug_log_ws_reject_count_++;
+      this->http_debug_send_response_(std::move(client), "409 Conflict", "text/plain; charset=utf-8",
+                                      "log websocket already connected\n");
+      ESP_LOGW(TAG, "Rejected duplicate HCP2 HTTP debug log WebSocket");
+      return;
+    }
+  }
 
   std::string accept_source = key;
   accept_source += HCP2BRIDGE_WEBSOCKET_GUID;
@@ -1977,11 +2069,13 @@ void HCP2Bridge::http_debug_upgrade_log_ws_(std::unique_ptr<socket::Socket> clie
     return;
   }
 
-  this->http_debug_log_ws_client_.reset();
   this->http_debug_log_ws_client_ = std::move(client);
   this->http_debug_log_ws_next_seq_ = this->protocol_log_next_seq_snapshot_();
   this->http_debug_log_ws_last_send_ms_ = 0;
   this->http_debug_log_ws_last_status_ms_ = 0;
+  this->http_debug_log_ws_connect_count_++;
+  this->http_debug_log_ws_last_errno_ = 0;
+  this->http_debug_log_ws_last_close_reason_ = "none";
   ESP_LOGI(TAG, "HCP2 HTTP debug log WebSocket connected");
 }
 

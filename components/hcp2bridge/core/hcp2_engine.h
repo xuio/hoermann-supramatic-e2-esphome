@@ -10,11 +10,7 @@ extern "C" {
 #endif
 
 #ifndef HCP2_ENABLE_PROTOCOL_EVENTS
-#if defined(IS_ULP_COCPU)
-#define HCP2_ENABLE_PROTOCOL_EVENTS 0
-#else
 #define HCP2_ENABLE_PROTOCOL_EVENTS 1
-#endif
 #endif
 
 #define HCP2_DEFAULT_RESPONSE_DELAY_US 4200u

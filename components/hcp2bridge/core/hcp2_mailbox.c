@@ -111,6 +111,8 @@ void hcp2_lp_mailbox_publish_counters(volatile hcp2_lp_mailbox_t *mailbox, uint3
 
 void hcp2_lp_mailbox_publish_protocol_event(volatile hcp2_lp_mailbox_t *mailbox,
                                             const hcp2_protocol_event_t *event) {
+  volatile hcp2_lp_protocol_event_t *slot;
+  uint32_t sequence;
   uint8_t i;
   uint8_t len;
 
@@ -118,6 +120,7 @@ void hcp2_lp_mailbox_publish_protocol_event(volatile hcp2_lp_mailbox_t *mailbox,
     return;
   }
 
+  sequence = event->sequence;
   len = event->len;
   if (len > HCP2_MAX_FRAME_LEN) {
     len = HCP2_MAX_FRAME_LEN;
@@ -134,12 +137,42 @@ void hcp2_lp_mailbox_publish_protocol_event(volatile hcp2_lp_mailbox_t *mailbox,
     mailbox->protocol_data[i] = event->data[i];
   }
   memory_barrier_();
-  mailbox->protocol_sequence = event->sequence;
+  mailbox->protocol_sequence = sequence;
+
+  if (mailbox->protocol_tail == 0u || sequence < mailbox->protocol_tail) {
+    mailbox->protocol_tail = sequence;
+  }
+  if ((sequence - mailbox->protocol_tail + 1u) > HCP2_LP_PROTOCOL_EVENT_CAPACITY) {
+    mailbox->protocol_tail = sequence - HCP2_LP_PROTOCOL_EVENT_CAPACITY + 1u;
+  }
+
+  slot = &mailbox->protocol_events[(sequence - 1u) % HCP2_LP_PROTOCOL_EVENT_CAPACITY];
+  slot->sequence = 0u;
+  memory_barrier_();
+  slot->at_us = event->at_us;
+  slot->event_type = event->event_type;
+  slot->frame_type = event->frame_type;
+  slot->len = len;
+  slot->reserved = 0u;
+  for (i = 0u; i < len; i++) {
+    slot->data[i] = event->data[i];
+  }
+  for (; i < HCP2_MAX_FRAME_LEN; i++) {
+    slot->data[i] = 0u;
+  }
+  memory_barrier_();
+  slot->sequence = sequence;
+  memory_barrier_();
+  mailbox->protocol_head = sequence;
 }
 
 uint8_t hcp2_lp_mailbox_read_protocol_event(const volatile hcp2_lp_mailbox_t *mailbox,
                                             uint32_t *last_sequence, hcp2_lp_protocol_event_t *out) {
+  const volatile hcp2_lp_protocol_event_t *slot;
   hcp2_lp_protocol_event_t snapshot;
+  uint32_t head;
+  uint32_t tail;
+  uint32_t sequence;
   uint32_t before;
   uint32_t after;
   uint8_t i;
@@ -149,30 +182,50 @@ uint8_t hcp2_lp_mailbox_read_protocol_event(const volatile hcp2_lp_mailbox_t *ma
     return 0u;
   }
 
-  before = mailbox->protocol_sequence;
-  if (before == 0u || (last_sequence != 0 && before == *last_sequence)) {
+  head = mailbox->protocol_head;
+  if (head == 0u) {
+    return 0u;
+  }
+  tail = mailbox->protocol_tail;
+  if (tail == 0u || tail > head) {
+    tail = head;
+  }
+  sequence = tail;
+  if (last_sequence != 0 && *last_sequence != 0u) {
+    if (*last_sequence < tail || *last_sequence > head) {
+      sequence = tail;
+    } else if (*last_sequence >= head) {
+      return 0u;
+    } else {
+      sequence = *last_sequence + 1u;
+    }
+  }
+
+  slot = &mailbox->protocol_events[(sequence - 1u) % HCP2_LP_PROTOCOL_EVENT_CAPACITY];
+  before = slot->sequence;
+  if (before != sequence) {
     return 0u;
   }
   memory_barrier_();
-  snapshot.sequence = before;
-  snapshot.at_us = mailbox->protocol_at_us;
-  snapshot.event_type = mailbox->protocol_event_type;
-  snapshot.frame_type = mailbox->protocol_frame_type;
-  len = mailbox->protocol_len;
+  snapshot.sequence = sequence;
+  snapshot.at_us = slot->at_us;
+  snapshot.event_type = slot->event_type;
+  snapshot.frame_type = slot->frame_type;
+  len = slot->len;
   if (len > HCP2_MAX_FRAME_LEN) {
     len = HCP2_MAX_FRAME_LEN;
   }
   snapshot.len = len;
   snapshot.reserved = 0u;
   for (i = 0u; i < len; i++) {
-    snapshot.data[i] = mailbox->protocol_data[i];
+    snapshot.data[i] = slot->data[i];
   }
   for (; i < HCP2_MAX_FRAME_LEN; i++) {
     snapshot.data[i] = 0u;
   }
   memory_barrier_();
-  after = mailbox->protocol_sequence;
-  if (before == 0u || before != after) {
+  after = slot->sequence;
+  if (before == 0u || before != after || after != sequence) {
     return 0u;
   }
 

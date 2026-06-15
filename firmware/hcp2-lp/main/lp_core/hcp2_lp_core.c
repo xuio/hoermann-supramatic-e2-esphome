@@ -36,6 +36,7 @@
 static hcp2_engine_t engine;
 static uint32_t active_epoch;
 static uint32_t last_command_sequence;
+static uint32_t last_protocol_sequence;
 static uint8_t last_rx_gpio_level = 0xFFu;
 static uint32_t tx_abort_count;
 static uint32_t collision_count;
@@ -288,6 +289,14 @@ static void port_de_set_(void *user, uint8_t enabled) {
   trace_(HCP2_LP_TRACE_DE, enabled ? 1u : 0u);
 }
 
+static void publish_protocol_event_(void) {
+  hcp2_protocol_event_t event;
+
+  if (hcp2_engine_read_protocol_event(&engine, &last_protocol_sequence, &event)) {
+    hcp2_lp_mailbox_publish_protocol_event(mailbox_(), &event);
+  }
+}
+
 static void port_tx_(void *user, const uint8_t *data, uint8_t len) {
   uint8_t offset = 0u;
   const uint32_t start_us = port_now_us_(NULL);
@@ -432,6 +441,7 @@ static void drain_uart_(void) {
       for (i = 0; i < received; i++) {
         trace_(HCP2_LP_TRACE_RX, rx[i]);
         hcp2_engine_rx_byte(&engine, rx[i], HCP2_RX_OK);
+        publish_protocol_event_();
       }
     } else if (received < 0) {
       rx_error_count++;
@@ -537,6 +547,7 @@ int main(void) {
     handle_stop_trigger_();
     handle_mailbox_command_();
     hcp2_engine_poll(&engine);
+    publish_protocol_event_();
     hcp2_lp_mailbox_publish_state(mailbox, hcp2_engine_drive_status(&engine), port_now_us_(NULL));
     check_de_deadman_(port_now_us_(NULL));
     const uint32_t loop_active_us = port_now_us_(NULL) - loop_start_us;

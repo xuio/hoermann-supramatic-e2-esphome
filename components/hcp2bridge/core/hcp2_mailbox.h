@@ -12,12 +12,13 @@ extern "C" {
 
 #define HCP2_LP_SRAM_BASE 0x50000000u
 #define HCP2_LP_SRAM_SIZE 0x3FC0u
-#define HCP2_LP_MAILBOX_OFFSET 0x2000u
+#define HCP2_LP_MAILBOX_OFFSET 0x2400u
 #define HCP2_LP_MAILBOX_ADDR (HCP2_LP_SRAM_BASE + HCP2_LP_MAILBOX_OFFSET)
 
 #define HCP2_LP_MAILBOX_MAGIC 0x32435048u
-#define HCP2_LP_MAILBOX_ABI_VERSION 6u
-#define HCP2_LP_FIRMWARE_VERSION 0x0000000Du
+#define HCP2_LP_MAILBOX_ABI_VERSION 7u
+#define HCP2_LP_FIRMWARE_VERSION 0x0000000Eu
+#define HCP2_LP_PROTOCOL_EVENT_CAPACITY 16u
 #define HCP2_LP_TRACE_CAPACITY 32u
 
 #define HCP2_LP_TRACE_BOOT 1u
@@ -163,10 +164,13 @@ typedef struct {
   volatile uint8_t protocol_len;
   volatile uint8_t protocol_reserved;
   volatile uint8_t protocol_data[HCP2_MAX_FRAME_LEN];
+  volatile uint32_t protocol_head;
+  volatile uint32_t protocol_tail;
+  hcp2_lp_protocol_event_t protocol_events[HCP2_LP_PROTOCOL_EVENT_CAPACITY];
   volatile uint32_t trace_head;
   volatile uint32_t trace_tail;
   hcp2_lp_trace_entry_t trace[HCP2_LP_TRACE_CAPACITY];
-  uint8_t reserved1[68];
+  uint8_t reserved1[124];
 } hcp2_lp_mailbox_t;
 
 #define HCP2_LP_MAILBOX_SIZE ((uint16_t) sizeof(hcp2_lp_mailbox_t))
@@ -179,7 +183,7 @@ typedef struct {
 #define HCP2_STATIC_ASSERT(cond, msg) typedef char hcp2_static_assert_##msg[(cond) ? 1 : -1]
 #endif
 
-HCP2_STATIC_ASSERT(sizeof(hcp2_lp_mailbox_t) == 512u, hcp2_lp_mailbox_size_must_be_512);
+HCP2_STATIC_ASSERT(sizeof(hcp2_lp_mailbox_t) == 1280u, hcp2_lp_mailbox_size_must_be_1280);
 HCP2_STATIC_ASSERT(offsetof(hcp2_lp_mailbox_t, magic) == 0u, hcp2_lp_mailbox_magic_offset);
 HCP2_STATIC_ASSERT(offsetof(hcp2_lp_mailbox_t, heartbeat) == 12u, hcp2_lp_mailbox_heartbeat_offset);
 HCP2_STATIC_ASSERT(offsetof(hcp2_lp_mailbox_t, state_seq) == 16u, hcp2_lp_mailbox_state_seq_offset);
@@ -234,9 +238,15 @@ HCP2_STATIC_ASSERT(offsetof(hcp2_lp_mailbox_t, protocol_event_type) == 144u,
                    hcp2_lp_mailbox_protocol_event_type_offset);
 HCP2_STATIC_ASSERT(offsetof(hcp2_lp_mailbox_t, protocol_data) == 148u,
                    hcp2_lp_mailbox_protocol_data_offset);
-HCP2_STATIC_ASSERT(offsetof(hcp2_lp_mailbox_t, trace_head) == 180u,
+HCP2_STATIC_ASSERT(offsetof(hcp2_lp_mailbox_t, protocol_head) == 180u,
+                   hcp2_lp_mailbox_protocol_head_offset);
+HCP2_STATIC_ASSERT(offsetof(hcp2_lp_mailbox_t, protocol_tail) == 184u,
+                   hcp2_lp_mailbox_protocol_tail_offset);
+HCP2_STATIC_ASSERT(offsetof(hcp2_lp_mailbox_t, protocol_events) == 188u,
+                   hcp2_lp_mailbox_protocol_events_offset);
+HCP2_STATIC_ASSERT(offsetof(hcp2_lp_mailbox_t, trace_head) == 892u,
                    hcp2_lp_mailbox_trace_head_offset);
-HCP2_STATIC_ASSERT(offsetof(hcp2_lp_mailbox_t, trace) == 188u, hcp2_lp_mailbox_trace_offset);
+HCP2_STATIC_ASSERT(offsetof(hcp2_lp_mailbox_t, trace) == 900u, hcp2_lp_mailbox_trace_offset);
 
 void hcp2_lp_mailbox_init(volatile hcp2_lp_mailbox_t *mailbox);
 void hcp2_lp_mailbox_repair_header(volatile hcp2_lp_mailbox_t *mailbox);

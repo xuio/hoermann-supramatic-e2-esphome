@@ -72,7 +72,7 @@ CONFIG_SCHEMA = cv.All(
     .add_extra(cv.only_on_esp32),
     validate_esp_idf_framework,
     esp32.only_on_variant(supported=esp32.VARIANT_ESP32C6, msg_prefix="hcp2bridge"),
-    socket.consume_sockets(1, "hcp2bridge_http_debug"),
+    socket.consume_sockets(2, "hcp2bridge_http_debug"),
     socket.consume_sockets(1, "hcp2bridge_http_debug", socket.SocketType.TCP_LISTEN),
 )
 

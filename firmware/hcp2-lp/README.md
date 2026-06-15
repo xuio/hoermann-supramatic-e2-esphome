@@ -2,7 +2,7 @@
 
 This plain ESP-IDF project builds the ESP32-C6 LP-core responder blob used by
 Phase 0c. It embeds the portable `components/hcp2bridge/core` protocol engine
-and exposes only the fixed mailbox ABI at `0x50002000` to the HP side.
+and exposes only the fixed mailbox ABI at `0x50002400` to the HP side.
 
 Local build:
 
@@ -19,7 +19,7 @@ Important limits:
   is released. The LP port ignores local echo/noise during TX and flushes stale
   RX bytes before returning to receive parsing.
 - The LP project reserves 16,320 bytes of LP SRAM. The mailbox occupies a fixed
-  512-byte window at `0x50002000`; the ISS map checker asserts linked LP
+  1280-byte window at `0x50002400`; the ISS map checker asserts linked LP
   sections stay below it and the stack keeps headroom above it.
 - The LP loop sleeps for 75 us between iterations. The HCP2 engine schedules
   status responses 4.2 ms after a valid poll, which stays inside the observed
@@ -28,7 +28,7 @@ Important limits:
   live heartbeat proves the LP responder is stale. Poll counters are diagnostics;
   an isolated missed poll must never trigger an HP-driven LP reload.
 
-The mailbox ABI is currently version 6. In addition to the state seqlock and
+The mailbox ABI is currently version 7. In addition to the state seqlock and
 command epoch/sequence fields, it publishes:
 
 - command deadlines and an ack result (`executed`, `expired`, `unknown`,
@@ -37,9 +37,9 @@ command epoch/sequence fields, it publishes:
   press stop once if the HP dies during a goto-position move.
 - LP time, status polls seen/answered, last-poll time, CRC/RX errors, TX aborts,
   collisions, maximum DE hold time, LP reset count, stop-trigger fire count,
-  loop/RX health counters, LP-side response timing maxima, reserved protocol-
-  event snapshot fields in the mailbox ABI, and trace events for HP RAM logging
-  plus HIL/logic-analyzer correlation.
+  loop/RX health counters, LP-side response timing maxima, a protocol-event
+  ring for HP RAM packet logging, and trace events for HIL/logic-analyzer
+  correlation.
 
 The LP UART port treats DE as a bounded safety signal. It loops until all bytes
 are accepted by the 16-byte FIFO, holds DE for the full 57600 8E1 frame time

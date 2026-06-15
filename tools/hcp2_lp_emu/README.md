@@ -5,7 +5,7 @@ Unicorn and connects its modeled LP-UART pins directly to the Phase 0b
 SupraMatic simulator.
 
 The harness models the pieces the LP blob actually touches: LP SRAM at
-`0x50000000`, the fixed mailbox at `0x50002000`, LP-UART RX/TX FIFOs with a
+`0x50000000`, the fixed mailbox at `0x50002400`, LP-UART RX/TX FIFOs with a
 16-byte depth, DE on LP GPIO0, /RE on LP GPIO1, and benign PMU/clock/wake-cause
 stubs. Any MMIO outside the modeled pages fails the run; every modeled register
 access is reported in the manifest.
