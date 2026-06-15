@@ -216,6 +216,7 @@ class SupraMaticSimulator:
         self.emulate_commands = emulate_commands
         self.scenario_actions = self.build_scenario_actions(scenario)
         self.seen_button_presses: set[str] = set()
+        self.active_button_presses: set[str] = set()
         self.trace_start_s = time.monotonic()
         self.trace_file: TextIO | None = None
         if trace_path is not None:
@@ -592,9 +593,15 @@ class SupraMaticSimulator:
             if button is not None and button_phase is not None:
                 key = f"{button}:{button_phase}"
                 self.report.button_phase_observations[key] = self.report.button_phase_observations.get(key, 0) + 1
-                if button_phase == "press" and button not in self.seen_button_presses:
-                    self.seen_button_presses.add(button)
-                    self.door.command(button)
+                if button_phase == "press":
+                    if button not in self.active_button_presses:
+                        self.active_button_presses.add(button)
+                        self.seen_button_presses.add(button)
+                        self.door.command(button)
+                elif button_phase == "release":
+                    self.active_button_presses.discard(button)
+            elif button is None:
+                self.active_button_presses.clear()
             latency_ms = (time.monotonic() - start) * 1000.0
             self.report.record_latency(latency_ms)
             self.report.replies += 1

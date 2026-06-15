@@ -122,6 +122,52 @@ class ScanThenSilentTransport:
         pass
 
 
+def status_response(counter: int, button: str | None = None, phase: str | None = None) -> bytes:
+    payload = bytearray([protocol.SLAVE_ID, protocol.FC_READ_WRITE_MULTIPLE_REGISTERS, 0x10])
+    payload.extend([counter & 0xFF, 0x00, 0x03, 0x01])
+    if button is None or phase is None:
+        payload.extend([0x00, 0x00, 0x00])
+    else:
+        payload.extend(protocol.BUTTON_STATUS_PHASES[button][phase])
+    payload.extend([0x00] * 9)
+    assert len(payload) == 19
+    return protocol.append_crc(bytes(payload))
+
+
+class ScriptedStatusTransport:
+    def __init__(self, phases: list[tuple[str, str] | None]) -> None:
+        self.phases = list(phases)
+        self.pending = bytearray()
+        self.status_polls = 0
+
+    def write(self, data: bytes) -> None:
+        if data == protocol.bus_scan_request(protocol.SLAVE_ID):
+            self.pending.extend(protocol.SCAN_RESPONSE)
+            return
+        if len(data) >= 15 and data[0] == protocol.SLAVE_ID and data[1] == protocol.FC_READ_WRITE_MULTIPLE_REGISTERS:
+            counter = data[11]
+            phase = self.phases[self.status_polls] if self.status_polls < len(self.phases) else None
+            self.status_polls += 1
+            if phase is None:
+                self.pending.extend(status_response(counter))
+            else:
+                self.pending.extend(status_response(counter, phase[0], phase[1]))
+
+    def read_available(self, timeout: float) -> bytes:
+        if self.pending:
+            data = bytes(self.pending)
+            self.pending.clear()
+            return data
+        time.sleep(min(timeout, 0.001))
+        return b""
+
+    def command(self, line: str) -> str:
+        raise RuntimeError(line)
+
+    def close(self) -> None:
+        pass
+
+
 def test_simulator_abort_on_first_miss(tmp_path: Path) -> None:
     progress_path = tmp_path / "miss-progress.jsonl"
     transport = ScanThenSilentTransport()
@@ -145,6 +191,59 @@ def test_simulator_abort_on_first_miss(tmp_path: Path) -> None:
     events = [json.loads(line) for line in progress_path.read_text(encoding="utf-8").splitlines()]
     assert events[-1]["event"] == "final"
     assert events[-1]["verdict"] == "missed-poll"
+
+
+def test_external_button_press_edges_can_repeat_after_release() -> None:
+    transport = ScriptedStatusTransport(
+        [
+            ("open", "press"),
+            ("open", "press"),
+            ("open", "release"),
+            None,
+            ("open", "press"),
+            ("open", "release"),
+        ]
+    )
+    simulator = SupraMaticSimulator(transport, speed_factor=5000.0, response_timeout_s=0.001)
+    try:
+        report = simulator.run(6)
+    finally:
+        simulator.close()
+
+    commands = [
+        event
+        for event in report.door["events"]
+        if event["event"] == "command" and event["button"] == "open"
+    ]
+    assert report.verdict == "ok"
+    assert report.button_phase_observations["open:press"] == 3
+    assert report.button_phase_observations["open:release"] == 2
+    assert len(commands) == 2
+
+
+def test_external_button_held_frames_apply_once_until_idle_or_release() -> None:
+    transport = ScriptedStatusTransport(
+        [
+            ("close", "press"),
+            ("close", "press"),
+            ("close", "press"),
+            ("close", "release"),
+            ("close", "press"),
+        ]
+    )
+    simulator = SupraMaticSimulator(transport, speed_factor=5000.0, response_timeout_s=0.001)
+    try:
+        report = simulator.run(5)
+    finally:
+        simulator.close()
+
+    commands = [
+        event
+        for event in report.door["events"]
+        if event["event"] == "command" and event["button"] == "close"
+    ]
+    assert report.verdict == "ok"
+    assert len(commands) == 2
 
 
 def test_socketpair_fault_recovery_and_open_command() -> None:
