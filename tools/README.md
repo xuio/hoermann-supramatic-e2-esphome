@@ -18,6 +18,7 @@ This directory contains the Python helpers used to build, test, capture, and cal
 | `uv run garage-hcp2-hil-load` | [hcp2_hil_load.py](hcp2_hil_load.py) | Run HCP2 HIL simulator scenarios while host/Wi-Fi/API load commands are active |
 | `uv run garage-hcp2-closeout` | [hcp2_closeout.py](hcp2_closeout.py) | Run scripted HCP2 HIL closeout plans with simulator, load, command, and optional LA verdicts |
 | `uv run garage-hcp2-support-bundle` | [hcp2_support_bundle.py](hcp2_support_bundle.py) | Collect Series 4 tester `/health`, `/support`, `/stats`, and RAM protocol-log files from the ESP HTTP debug port |
+| `uv run garage-hcp2-debug-browser-e2e` | [hcp2_debug_browser_e2e.py](hcp2_debug_browser_e2e.py) | Manual/HIL Playwright browser check for the Series 4 debug web UI, live WebSocket log, reconnect path, frontend cache download, and optional soak |
 | `uv run garage-test-wizard` | [garage_test_wizard.py](garage_test_wizard.py) | Guided manual Home Assistant position tests using measured clear-opening height |
 | `uv run garage-generate-aruco-markers` | [generate_aruco_marker_pdfs.py](generate_aruco_marker_pdfs.py) | Generate printable ArUco marker PDFs |
 | `uv run garage-hcp-proxy-client` | [hcp_proxy_client.py](hcp_proxy_client.py) | Laptop-side RS-485 proxy experiments |
@@ -107,6 +108,15 @@ uv run garage-hcp2-support-bundle --host supramatic-4-tester.local --action stop
 
 The tool writes under ignored `captures/hcp2/support-bundle-*` by default and
 prints the exact bundle directory. See [docs/hcp2-series4-tester.md](../docs/hcp2-series4-tester.md).
+
+For a real browser check of the debug UI, run Playwright manually against a
+live tester. This is a HIL-only gate and is intentionally not part of normal CI:
+
+```bash
+uv run --with playwright garage-hcp2-debug-browser-e2e --host supramatic-4-tester.local \
+  --browser-channel chrome --screenshot captures/hcp2/debug-browser-e2e.png \
+  --report captures/hcp2/debug-browser-e2e.json
+```
 
 ## Visual Calibration Workflow
 
