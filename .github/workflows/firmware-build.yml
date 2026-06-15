@@ -27,12 +27,10 @@ jobs:
             config: configs/supramatic-e2.yaml
             env_name: supramatic-e2
             artifact: hcp1-supramatic-e2
-            public_secret_keys: api_key_supramatic_e2 ota_password_supramatic_e2
           - family: HCP2
             config: configs/supramatic-4-tester.yaml
             env_name: supramatic-4-tester
             artifact: hcp2-supramatic-4-tester
-            public_secret_keys: api_key_supramatic_4_tester ota_password_supramatic_4_tester
 
     steps:
       - name: Check out repository
@@ -59,8 +57,6 @@ jobs:
         run: uv run esphome compile "${{ matrix.config }}"
 
       - name: Collect firmware artifacts
-        env:
-          PUBLIC_SECRET_KEYS: ${{ matrix.public_secret_keys }}
         run: |
           set -eu
 
@@ -85,38 +81,6 @@ jobs:
             echo "ref=${GITHUB_REF}"
             echo "event=${GITHUB_EVENT_NAME}"
           } > "$artifact_dir/manifest.txt"
-
-          python - <<'PY'
-          import os
-          import re
-          from pathlib import Path
-
-          secrets_text = Path("configs/secrets.yaml").read_text(encoding="utf-8")
-          values = {}
-          for key in os.environ["PUBLIC_SECRET_KEYS"].split():
-              match = re.search(rf"^{re.escape(key)}:\s*[\"']?([^\"'\n#]+)", secrets_text, re.MULTILINE)
-              if not match:
-                  raise SystemExit(f"missing generated secret {key}")
-              values[key] = match.group(1).strip()
-
-          lines = [
-              "Public prebuilt firmware credentials",
-              "",
-              "These values are intentionally public because they belong to the downloadable",
-              "prebuilt image. Build the YAML locally with your own configs/secrets.yaml for",
-              "a private installation.",
-              "",
-              f"artifact=${{ matrix.artifact }}",
-              f"config=${{ matrix.config }}",
-              f"commit={os.environ['GITHUB_SHA']}",
-              "",
-          ]
-          lines.extend(f"{key}={value}" for key, value in values.items())
-          Path("firmware-artifacts/${{ matrix.artifact }}/public-credentials.txt").write_text(
-              "\n".join(lines) + "\n",
-              encoding="utf-8",
-          )
-          PY
 
           (
             cd "$artifact_dir"
@@ -156,20 +120,13 @@ jobs:
 
           mkdir -p release-assets
 
-          for artifact in hcp1-supramatic-e2 hcp2-supramatic-4-tester; do
-            artifact_dir="firmware-artifacts/${artifact}"
-            test -d "$artifact_dir"
+          artifact="hcp2-supramatic-4-tester"
+          artifact_dir="firmware-artifacts/${artifact}"
+          test -d "$artifact_dir"
 
-            (
-              cd "$artifact_dir"
-              zip -qr "../../release-assets/${artifact}.zip" .
-            )
-
-            for file in firmware.bin firmware.ota.bin firmware.factory.bin bootloader.bin partitions.bin ota_data_initial.bin manifest.txt public-credentials.txt; do
-              if [ -f "$artifact_dir/$file" ]; then
-                cp "$artifact_dir/$file" "release-assets/${artifact}-${file}"
-              fi
-            done
+          for file in firmware.factory.bin firmware.ota.bin manifest.txt; do
+            test -f "$artifact_dir/$file"
+            cp "$artifact_dir/$file" "release-assets/${artifact}-${file}"
           done
 
           (
@@ -180,18 +137,18 @@ jobs:
           cat > release-notes.md <<'EOF'
           Latest successful firmware build from `main`.
 
-          Public direct downloads:
+          Public direct downloads for the HCP2 Series 4 tester:
 
-          - HCP1 bundle: `hcp1-supramatic-e2.zip`
-          - HCP1 factory image: `hcp1-supramatic-e2-firmware.factory.bin`
-          - HCP1 OTA image: `hcp1-supramatic-e2-firmware.ota.bin`
-          - HCP2 Series 4 tester bundle: `hcp2-supramatic-4-tester.zip`
-          - HCP2 Series 4 tester factory image: `hcp2-supramatic-4-tester-firmware.factory.bin`
-          - HCP2 Series 4 tester OTA image: `hcp2-supramatic-4-tester-firmware.ota.bin`
+          - Factory image: `hcp2-supramatic-4-tester-firmware.factory.bin`
+          - OTA image: `hcp2-supramatic-4-tester-firmware.ota.bin`
+          - Build manifest: `hcp2-supramatic-4-tester-manifest.txt`
+          - Checksums: `SHA256SUMS`
 
-          Each bundle includes `public-credentials.txt` with the ESPHome API key
-          and OTA password generated for that public image. These credentials are
-          public by design; build locally if you need private credentials.
+          This public tester image does not bake in a shared ESPHome API encryption
+          key. ESPHome starts in its first-adoption mode and stores a per-device
+          Noise key in flash when adopted. OTA has no password in the public image,
+          so there is no shared public OTA password; for a private deployment, add
+          OTA auth in a local/private config and upload that image after adoption.
           EOF
 
       - name: Publish firmware-latest release

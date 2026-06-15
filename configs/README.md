@@ -45,21 +45,20 @@ after station Wi-Fi is connected.
 
 ## Automated Artifacts
 
-GitHub Actions builds downloadable firmware artifacts for the main HCP1 image and
-the HCP2 Series 4 tester image in `.github/workflows/firmware-build.yml`. The
-newest successful `main` build is published publicly at
+GitHub Actions builds firmware artifacts for the main HCP1 image and the HCP2
+Series 4 tester image in `.github/workflows/firmware-build.yml`. The newest
+successful `main` build publishes the public HCP2 tester image at
 <https://github.com/xuio/hoermann-supramatic-e2-esphome/releases/latest>.
 
-- `hcp1-supramatic-e2`: `configs/supramatic-e2.yaml`
-- `hcp2-supramatic-4-tester`: `configs/supramatic-4-tester.yaml`
+The public release intentionally contains only the files a tester normally needs:
 
-Stable direct-download names on the `firmware-latest` release:
-
-- `hcp1-supramatic-e2-firmware.factory.bin`
-- `hcp1-supramatic-e2-firmware.ota.bin`
 - `hcp2-supramatic-4-tester-firmware.factory.bin`
 - `hcp2-supramatic-4-tester-firmware.ota.bin`
+- `hcp2-supramatic-4-tester-manifest.txt`
+- `SHA256SUMS`
 
-Each public bundle includes `public-credentials.txt` with the ESPHome API key and
-OTA password generated for that public image. Build locally when the credentials
-must be private.
+The public tester image does not include a shared ESPHome API key. ESPHome starts
+in first-adoption mode and stores a per-device encryption key in flash when
+adopted. OTA has no password in the public image to avoid a shared public
+password; add OTA auth in a local/private config and upload that image after
+adoption for a permanent install.

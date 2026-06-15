@@ -47,12 +47,12 @@ captive_portal:
 
 api:
   reboot_timeout: 0s
+  # No key is baked into the public tester image. ESPHome starts with a
+  # plaintext adoption path, then stores the per-device Noise key in flash.
   encryption:
-    key: !secret api_key_supramatic_4_tester
 
 ota:
   - platform: esphome
-    password: !secret ota_password_supramatic_4_tester
 
 safe_mode:
   disabled: false
