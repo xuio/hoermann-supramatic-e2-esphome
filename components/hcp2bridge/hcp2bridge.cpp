@@ -156,6 +156,17 @@ bool HCP2Bridge::is_continuity_healthy() const {
 
 bool HCP2Bridge::is_safe_for_ota_restart() const { return this->is_continuity_healthy(); }
 
+bool HCP2Bridge::has_continuity_diagnostic_warning() const {
+#ifdef USE_ESP32
+  portENTER_CRITICAL(&this->state_mux_);
+#endif
+  const bool value = this->continuity_diagnostic_warning_;
+#ifdef USE_ESP32
+  portEXIT_CRITICAL(&this->state_mux_);
+#endif
+  return value;
+}
+
 hcp2_drive_state_code_t HCP2Bridge::get_drive_state() const {
   return (hcp2_drive_state_code_t) this->drive_status_snapshot_().state;
 }
@@ -275,6 +286,10 @@ uint32_t HCP2Bridge::get_lp_stuck_de_count() const {
 
 uint32_t HCP2Bridge::get_lp_mailbox_repair_count() const {
   return this->counter_snapshot_(&HCP2Bridge::lp_mailbox_repair_count_);
+}
+
+uint32_t HCP2Bridge::get_continuity_good_ms() const {
+  return this->counter_snapshot_(&HCP2Bridge::continuity_good_ms_);
 }
 
 uint32_t HCP2Bridge::get_hp_reset_count() const { return this->counter_snapshot_(&HCP2Bridge::hp_reset_count_); }
@@ -1548,15 +1563,49 @@ void HCP2Bridge::update_state_from_mailbox_() {
     this->bus_online_ = bus_online;
     changed = true;
   }
-  const bool continuity_healthy =
+  const bool base_continuity_ok =
       !this->hp_fallback_ && polls_seen > 0u && heartbeat > 0u && this->bus_online_ && this->valid_broadcast_ &&
-      missed_polls == 0u && (polls_answered >= polls_seen || pending_response) && health_flags == 0u && tx_abort == 0u &&
-      collision == 0u && loop_overruns == 0u && rx_starvations == 0u && stuck_de == 0u &&
-      (max_de_hold == 0u || max_de_hold <= HCP2BRIDGE_MAX_DE_HIGH_US);
+      missed_polls == 0u && (polls_answered >= polls_seen || pending_response);
+  const bool sticky_diagnostics_present =
+      health_flags != 0u || tx_abort != 0u || collision != 0u || loop_overruns != 0u || rx_starvations != 0u ||
+      stuck_de != 0u || mailbox_repairs != 0u || (max_de_hold > 0u && max_de_hold > HCP2BRIDGE_MAX_DE_HIGH_US);
+  const bool diagnostics_changed =
+      !this->continuity_sample_seen_ || polls_seen < this->continuity_prev_polls_seen_ ||
+      polls_answered < this->continuity_prev_polls_answered_ || health_flags != this->continuity_prev_health_flags_ ||
+      tx_abort != this->continuity_prev_tx_abort_count_ || collision != this->continuity_prev_collision_count_ ||
+      loop_overruns != this->continuity_prev_loop_overrun_count_ ||
+      rx_starvations != this->continuity_prev_rx_starvation_count_ ||
+      stuck_de != this->continuity_prev_stuck_de_count_ ||
+      mailbox_repairs != this->continuity_prev_mailbox_repair_count_ ||
+      (max_de_hold > this->continuity_prev_max_de_hold_us_ && max_de_hold > HCP2BRIDGE_MAX_DE_HIGH_US);
+  if (base_continuity_ok && !diagnostics_changed) {
+    if (this->continuity_good_since_ms_ == 0u) {
+      this->continuity_good_since_ms_ = now_ms;
+    }
+    this->continuity_good_ms_ = now_ms - this->continuity_good_since_ms_;
+  } else {
+    this->continuity_good_since_ms_ = 0u;
+    this->continuity_good_ms_ = 0u;
+  }
+  const bool diagnostics_clear =
+      !sticky_diagnostics_present || this->continuity_good_ms_ >= HCP2BRIDGE_CONTINUITY_GOOD_CLEAR_MS;
+  const bool continuity_healthy = base_continuity_ok && diagnostics_clear;
   if (this->continuity_healthy_ != continuity_healthy) {
     this->continuity_healthy_ = continuity_healthy;
     changed = true;
   }
+  this->continuity_diagnostic_warning_ = continuity_healthy && sticky_diagnostics_present;
+  this->continuity_sample_seen_ = true;
+  this->continuity_prev_polls_seen_ = polls_seen;
+  this->continuity_prev_polls_answered_ = polls_answered;
+  this->continuity_prev_health_flags_ = health_flags;
+  this->continuity_prev_tx_abort_count_ = tx_abort;
+  this->continuity_prev_collision_count_ = collision;
+  this->continuity_prev_max_de_hold_us_ = max_de_hold;
+  this->continuity_prev_loop_overrun_count_ = loop_overruns;
+  this->continuity_prev_rx_starvation_count_ = rx_starvations;
+  this->continuity_prev_stuck_de_count_ = stuck_de;
+  this->continuity_prev_mailbox_repair_count_ = mailbox_repairs;
   if (changed) {
     this->state_callback_pending_ = true;
   }

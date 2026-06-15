@@ -13,6 +13,7 @@ import os
 import socket
 import threading
 import time
+import urllib.error
 import urllib.request
 from collections.abc import Iterator
 
@@ -33,7 +34,7 @@ def test_html_extraction_is_a_complete_document() -> None:
     assert stripped.startswith("<!doctype html>")
     assert stripped.lower().endswith("</html>")
     # Load-bearing hooks the E2E and firmware contract depend on.
-    for marker in ('<pre id="log">', "Reconnect Stream", "Download JSON", 'id="verdict"'):
+    for marker in ('<pre id="log">', "Reconnect Stream", "Download JSON", "HP core controls", 'id="verdict"'):
         assert marker in html, marker
 
 
@@ -54,6 +55,7 @@ def test_canonical_fixture_covers_all_record_types_and_faults() -> None:
 @pytest.fixture()
 def mock_server() -> Iterator[str]:
     server = build_server("127.0.0.1", 0, "nominal")
+    server.mock_state.started = time.monotonic() - 120  # HP reset controls are available after boot validation.
     port = server.server_address[1]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -65,12 +67,17 @@ def mock_server() -> Iterator[str]:
         thread.join(timeout=5)
 
 
-def _get(base: str, path: str) -> tuple[int, str]:
+def _request(base: str, path: str, *, method: str = "GET") -> tuple[int, str]:
     try:
-        with urllib.request.urlopen(base + path, timeout=5) as resp:
+        request = urllib.request.Request(base + path, method=method)
+        with urllib.request.urlopen(request, timeout=5) as resp:
             return resp.status, resp.read().decode()
     except urllib.error.HTTPError as exc:  # 503 etc. still carry a body
         return exc.code, exc.read().decode()
+
+
+def _get(base: str, path: str) -> tuple[int, str]:
+    return _request(base, path)
 
 
 def test_json_routes(mock_server: str) -> None:
@@ -78,6 +85,8 @@ def test_json_routes(mock_server: str) -> None:
     health = json.loads(body)
     assert status == 200 and health["verdict"] == "ok"
     assert {"checks", "stats", "door", "lp", "hp"} <= set(health)
+    assert "warnings" in health
+    assert health["checks"]["diagnostic_clear_ms"] == 3000
     assert health["lp"]["max_response_schedule_to_tx_start_us"] >= 0
     assert health["lp"]["max_response_tx_us"] >= 0
 
@@ -90,6 +99,37 @@ def test_json_routes(mock_server: str) -> None:
     assert status == 200
     status, _ = _get(mock_server, "/hcp2_log/start")
     assert status == 200
+
+
+def test_hp_control_routes_are_post_only(mock_server: str) -> None:
+    status, _ = _get(mock_server, "/control/hp/restart")
+    assert status == 405
+    for action in ("restart", "cpu_reset", "panic"):
+        status, body = _request(mock_server, f"/control/hp/{action}", method="POST")
+        payload = json.loads(body)
+        assert status == 202
+        assert payload["ok"] is True
+        assert payload["action"] == action
+        assert payload["lp_expected"] == "running"
+
+
+def test_hp_control_routes_wait_for_boot_validation() -> None:
+    server = build_server("127.0.0.1", 0, "nominal")
+    server.mock_state.started = time.monotonic() - 30
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{port}"
+    try:
+        status, body = _request(base, "/control/hp/restart", method="POST")
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+    payload = json.loads(body)
+    assert status == 409
+    assert payload["error"] == "boot validation pending"
+    assert 0 < payload["retry_after_ms"] <= 40_500
 
 
 def _ws_connect(host: str, port: int, path: str = "/hcp2_log/ws") -> tuple[socket.socket, str]:

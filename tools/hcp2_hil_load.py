@@ -14,6 +14,8 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +36,10 @@ from tools.supramatic_sim.simulator import (
     cycles_for_duration_hours,
 )
 from tools.supramatic_sim.transport import SerialTransport
+
+LP_HEALTH_FLAG_RX_STARVATION = 0x0002
+DEVICE_HEALTH_TIMEOUT_S = 3.0
+DEVICE_HEALTH_STALE_POLL_MS = 1000
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -57,6 +63,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--esp-host", help="ESPHome device host/IP for hostile load commands")
     parser.add_argument("--esp-api-port", type=int, default=6053, help="ESPHome native API port")
+    parser.add_argument("--esp-http-port", type=int, default=80, help="ESP HTTP debug port for /health classification")
+    parser.add_argument(
+        "--health-check",
+        choices=["auto", "never", "require"],
+        default="auto",
+        help=(
+            "Fetch /health when --esp-host is set. auto records unavailable health without failing; "
+            "require fails the run when health is unavailable or continuity-classified as failed."
+        ),
+    )
     parser.add_argument("--esp-api-key", help="ESPHome native API encryption key")
     parser.add_argument("--secrets-file", type=Path, default=Path("secrets.yaml"))
     parser.add_argument("--api-key-secret", default="api_key_supramatic_4_dev")
@@ -513,6 +529,172 @@ def analyze_logic_capture(args: argparse.Namespace) -> dict[str, Any] | None:
     return report
 
 
+def _int_value(value: Any, default: int = 0) -> int:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return int(value)
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _bool_value(value: Any, default: bool = True) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on", "ok"}:
+        return True
+    if text in {"0", "false", "no", "off", "fail"}:
+        return False
+    return default
+
+
+def _nested_int(payload: dict[str, Any], name: str, default: int = 0) -> int:
+    for section_name in ("checks", "lp", "stats"):
+        section = payload.get(section_name)
+        if isinstance(section, dict) and name in section:
+            return _int_value(section.get(name), default)
+    return _int_value(payload.get(name), default)
+
+
+def _nested_bool(payload: dict[str, Any], name: str, default: bool = True) -> bool:
+    for section_name in ("checks", "lp", "stats"):
+        section = payload.get(section_name)
+        if isinstance(section, dict) and name in section:
+            return _bool_value(section.get(name), default)
+    return _bool_value(payload.get(name), default)
+
+
+def classify_device_health(payload: dict[str, Any], *, fault_injection_expected: bool) -> dict[str, Any]:
+    """Classify ESP /health as a continuity verdict for HIL reports.
+
+    The firmware endpoint owns the live continuity verdict. This host-side
+    classifier still blocks on poll loss and active transport faults, but it
+    treats sticky LP diagnostics as warnings once the firmware has declared the
+    recent continuity window healthy again.
+    """
+
+    reasons = payload.get("reasons")
+    firmware_reasons = [str(reason) for reason in reasons] if isinstance(reasons, list) else []
+    firmware_ok = payload.get("verdict") == "ok"
+    blocking: list[str] = []
+    warnings: list[str] = []
+
+    for name in ("lp_mode", "lp_seen", "bus_online", "valid_broadcast"):
+        if not _nested_bool(payload, name, True):
+            blocking.append(name)
+
+    for name in (
+        "missed_polls",
+        "raw_missed_polls",
+        "tx_aborts",
+        "collisions",
+        "loop_overruns",
+        "stuck_de_recoveries",
+    ):
+        value = _nested_int(payload, name)
+        if value != 0:
+            blocking.append(f"{name}:{value}")
+
+    last_poll_age_ms = _nested_int(payload, "last_poll_age_ms", 0)
+    if last_poll_age_ms > DEVICE_HEALTH_STALE_POLL_MS:
+        blocking.append(f"last_poll_age_ms:{last_poll_age_ms}")
+
+    health_flags = _nested_int(payload, "health_flags")
+    rx_starvations = _nested_int(payload, "rx_starvations")
+    rx_flag_set = bool(health_flags & LP_HEALTH_FLAG_RX_STARVATION)
+    non_rx_flags = health_flags & ~LP_HEALTH_FLAG_RX_STARVATION
+    if non_rx_flags:
+        if firmware_ok and not blocking:
+            warnings.append(f"lp_health_flags_sticky:0x{non_rx_flags:04x}")
+        else:
+            blocking.append(f"lp_health_flags_non_rx:0x{non_rx_flags:04x}")
+
+    has_rx_warning = rx_starvations != 0 or rx_flag_set
+    if has_rx_warning:
+        if firmware_ok and not blocking:
+            warnings.append(f"rx_starvations_sticky:{rx_starvations}")
+        elif fault_injection_expected and not blocking:
+            warnings.append(f"rx_starvations_during_fault_injection:{rx_starvations}")
+        else:
+            blocking.append(f"rx_starvations:{rx_starvations}")
+
+    allowed_firmware_reasons = {"lp_health_flags", "rx_starvations"} if (fault_injection_expected or firmware_ok) else set()
+    for reason in firmware_reasons:
+        if reason not in allowed_firmware_reasons and reason not in blocking:
+            blocking.append(f"firmware:{reason}")
+    if payload.get("verdict") == "fail" and not firmware_reasons and not blocking and not warnings:
+        blocking.append("firmware:fail")
+
+    verdict = "fail" if blocking else ("warn" if warnings else "ok")
+    return {
+        "verdict": verdict,
+        "continuity_verdict": "fail" if blocking else "ok",
+        "firmware_verdict": str(payload.get("verdict", "unknown")),
+        "firmware_reasons": firmware_reasons,
+        "fault_injection_expected": fault_injection_expected,
+        "blocking_reasons": blocking,
+        "warnings": warnings,
+        "health_flags": health_flags,
+        "rx_starvations": rx_starvations,
+        "last_poll_age_ms": last_poll_age_ms,
+    }
+
+
+def fetch_device_health(args: argparse.Namespace) -> dict[str, Any] | None:
+    if args.health_check == "never" or not args.esp_host:
+        return None
+    url = f"http://{args.esp_host}:{args.esp_http_port}/health"
+    request = urllib.request.Request(url, headers={"Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(request, timeout=DEVICE_HEALTH_TIMEOUT_S) as response:
+            status = int(response.status)
+            body = response.read()
+    except urllib.error.HTTPError as exc:
+        status = int(exc.code)
+        body = exc.read()
+    except (OSError, TimeoutError, urllib.error.URLError) as exc:
+        return {
+            "url": url,
+            "verdict": "unavailable",
+            "continuity_verdict": "unknown",
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+    try:
+        payload = json.loads(body.decode("utf-8", errors="replace"))
+    except json.JSONDecodeError as exc:
+        return {
+            "url": url,
+            "http_status": status,
+            "verdict": "unavailable",
+            "continuity_verdict": "unknown",
+            "error": f"JSONDecodeError: {exc}",
+        }
+    if not isinstance(payload, dict):
+        return {
+            "url": url,
+            "http_status": status,
+            "verdict": "unavailable",
+            "continuity_verdict": "unknown",
+            "error": f"unexpected JSON payload type: {type(payload).__name__}",
+        }
+
+    classification = classify_device_health(payload, fault_injection_expected=bool(args.fault))
+    return {
+        "url": url,
+        "http_status": status,
+        **classification,
+        "payload": payload,
+    }
+
+
 def run_session(args: argparse.Namespace, *, run_index: int = 1, load_commands: list[str] | None = None) -> dict[str, Any]:
     cycles = effective_cycles(args)
     duration_s = effective_duration_s(args)
@@ -564,6 +746,8 @@ def run_session(args: argparse.Namespace, *, run_index: int = 1, load_commands: 
         "preset": args.preset,
         "esp_host": args.esp_host,
         "esp_api_port": args.esp_api_port,
+        "esp_http_port": args.esp_http_port,
+        "health_check": args.health_check,
         "esp_expected_name": args.esp_expected_name,
         "esp_cover_object_id": args.esp_cover_object_id,
         "esp_button_object_ids": button_object_ids,
@@ -592,6 +776,7 @@ def run_session(args: argparse.Namespace, *, run_index: int = 1, load_commands: 
         "host_tuning": {},
         "native_api_commands": None,
         "emulated_esphome_commands": None,
+        "device_health": None,
         "latency_authority": "host_round_trip",
         "verdict": "not-run",
     }
@@ -680,6 +865,15 @@ def run_session(args: argparse.Namespace, *, run_index: int = 1, load_commands: 
         if report["verdict"] == "ok" and record["returncode"] != 0:
             report["verdict"] = "post-command-failed"
 
+    device_health = fetch_device_health(args)
+    if device_health is not None:
+        report["device_health"] = device_health
+        if report["verdict"] == "ok":
+            if device_health.get("continuity_verdict") == "fail":
+                report["verdict"] = "device-health-failed"
+            elif args.health_check == "require" and device_health.get("continuity_verdict") == "unknown":
+                report["verdict"] = "device-health-unavailable"
+
     logic_report = analyze_logic_capture(args)
     if logic_report is not None:
         report["logic_analyzer"] = logic_report
@@ -715,6 +909,8 @@ def aggregate_reports(args: argparse.Namespace, runs: list[dict[str, Any]]) -> d
         "command_mode": resolve_command_mode(args, parse_button_object_ids(args.esp_button_object_id)),
         "esp_host": args.esp_host,
         "esp_api_port": args.esp_api_port,
+        "esp_http_port": args.esp_http_port,
+        "health_check": args.health_check,
         "repeat": args.repeat,
         "completed_runs": len(runs),
         "cycles_per_run": effective_cycles(args),

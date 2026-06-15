@@ -327,6 +327,7 @@ class MockState:
     def health(self) -> dict[str, Any]:
         reasons = self._reasons()
         ok = not reasons
+        warnings: list[str] = []
         stats = self.stats()
         checks = {
             "lp_mode": self.scenario != "hp_fallback",
@@ -346,11 +347,15 @@ class MockState:
             "rx_starvations": 0,
             "stuck_de_recoveries": 0,
             "max_de_hold_us": 6200,
+            "continuity_good_ms": 5000 if ok else 0,
+            "diagnostic_clear_ms": 3000,
+            "diagnostic_warning": False,
         }
         return {
             "verdict": "ok" if ok else "fail",
             "safe_for_ota_restart": ok,
             "reasons": reasons,
+            "warnings": warnings,
             "checks": checks,
             "stats": stats,
             "door": self.door(),
@@ -442,6 +447,9 @@ class DebugHandler(BaseHTTPRequestHandler):
         if path == "/support":
             self._send_json(self.state.support())
             return
+        if path in ("/control/hp/restart", "/control/hp/cpu_reset", "/control/hp/panic"):
+            self._send_json({"ok": False, "error": "POST required"}, 405)
+            return
         if path == "/hcp2_log/start":
             self.state.log_enabled = True
             self._send_json(self.state.stats()["protocol_log"])
@@ -460,6 +468,35 @@ class DebugHandler(BaseHTTPRequestHandler):
             return
         if path == "/hcp2_log.bin":
             self._send_bytes(self.state.recent_ndjson().encode("utf-8"), 200, "application/octet-stream")
+            return
+        self._send_text("not found\n", 404)
+
+    def do_POST(self) -> None:  # noqa: N802
+        path = self.path.split("?", 1)[0]
+        if path in ("/control/hp/restart", "/control/hp/cpu_reset", "/control/hp/panic"):
+            action = path.rsplit("/", 1)[1]
+            uptime_ms = self.state._now_ms()
+            if uptime_ms < 70_000:
+                self._send_json(
+                    {
+                        "ok": False,
+                        "error": "boot validation pending",
+                        "uptime_ms": uptime_ms,
+                        "retry_after_ms": 70_000 - uptime_ms,
+                    },
+                    409,
+                )
+                return
+            self._send_json(
+                {
+                    "ok": True,
+                    "action": action,
+                    "delay_ms": 250,
+                    "lp_expected": "running",
+                    "message": f"{action} scheduled by mock server",
+                },
+                202,
+            )
             return
         self._send_text("not found\n", 404)
 

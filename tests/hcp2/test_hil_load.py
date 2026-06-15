@@ -8,6 +8,7 @@ from tools.hcp2_hil_load import (
     EmulatedEspHomeCommandSender,
     aggregate_reports,
     build_parser,
+    classify_device_health,
     effective_cycles,
     effective_duration_s,
     effective_load_commands,
@@ -198,3 +199,84 @@ def test_hil_load_emulated_mode_rejects_decoded_button_expectations() -> None:
 
     with pytest.raises(ValueError, match="--expect-button requires decoded HCP2 output"):
         run_session(args, load_commands=[])
+
+
+def health_payload(**checks):
+    payload = {
+        "verdict": "ok",
+        "reasons": [],
+        "checks": {
+            "lp_mode": True,
+            "lp_seen": True,
+            "bus_online": True,
+            "valid_broadcast": True,
+            "last_poll_age_ms": 20,
+            "polls_seen": 100,
+            "polls_answered": 100,
+            "missed_polls": 0,
+            "raw_missed_polls": 0,
+            "health_flags": 0,
+            "tx_aborts": 0,
+            "collisions": 0,
+            "loop_overruns": 0,
+            "rx_starvations": 0,
+            "stuck_de_recoveries": 0,
+        },
+    }
+    payload["checks"].update(checks)
+    if payload["checks"]["health_flags"] or payload["checks"]["rx_starvations"]:
+        payload["verdict"] = "fail"
+        payload["reasons"] = ["lp_health_flags", "rx_starvations"]
+    return payload
+
+
+def test_hil_load_classifies_injected_rx_starvation_as_warning() -> None:
+    report = classify_device_health(
+        health_payload(health_flags=0x0002, rx_starvations=14),
+        fault_injection_expected=True,
+    )
+
+    assert report["verdict"] == "warn"
+    assert report["continuity_verdict"] == "ok"
+    assert report["warnings"] == ["rx_starvations_during_fault_injection:14"]
+
+
+def test_hil_load_classifies_unexpected_rx_starvation_as_failure() -> None:
+    report = classify_device_health(
+        health_payload(health_flags=0x0002, rx_starvations=1),
+        fault_injection_expected=False,
+    )
+
+    assert report["verdict"] == "fail"
+    assert report["continuity_verdict"] == "fail"
+    assert "rx_starvations:1" in report["blocking_reasons"]
+
+
+def test_hil_load_accepts_firmware_cleared_sticky_diagnostics() -> None:
+    payload = health_payload(health_flags=0x0006, rx_starvations=3)
+    payload["verdict"] = "ok"
+    payload["safe_for_ota_restart"] = True
+    payload["reasons"] = []
+    payload["warnings"] = ["lp_health_flags", "rx_starvations"]
+    report = classify_device_health(payload, fault_injection_expected=False)
+
+    assert report["verdict"] == "warn"
+    assert report["continuity_verdict"] == "ok"
+    assert "lp_health_flags_sticky:0x0004" in report["warnings"]
+    assert "rx_starvations_sticky:3" in report["warnings"]
+
+
+def test_hil_load_health_classifier_never_hides_real_continuity_failures() -> None:
+    missed = classify_device_health(
+        health_payload(health_flags=0x0002, rx_starvations=1, missed_polls=1),
+        fault_injection_expected=True,
+    )
+    non_rx_flag = classify_device_health(
+        health_payload(health_flags=0x0006, rx_starvations=1),
+        fault_injection_expected=True,
+    )
+
+    assert missed["verdict"] == "fail"
+    assert "missed_polls:1" in missed["blocking_reasons"]
+    assert non_rx_flag["verdict"] == "fail"
+    assert "lp_health_flags_non_rx:0x0004" in non_rx_flag["blocking_reasons"]

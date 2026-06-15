@@ -160,6 +160,28 @@ def test_logic_analyzer_report_rejects_de_deadman_violation(tmp_path: Path) -> N
     assert "exceeds" in report["failures"][0]
 
 
+def test_logic_analyzer_allows_trailing_de_capture_fragment(tmp_path: Path) -> None:
+    capture = tmp_path / "trailing-de.csv"
+    write_csv(
+        capture,
+        [
+            (0.0000, 0, 0, 1, 1),
+            (0.0010, 1, 0, 1, 1),
+            (0.0011, 1, 0, 0, 1),
+            (0.0012, 1, 0, 1, 1),
+        ],
+    )
+
+    samples = load_samples(capture, {"de": "de", "re": "re", "tx": "tx", "rx": "rx"})
+    report = analyze_samples(samples, max_de_high_us=9000.0)
+    strict_report = analyze_samples(samples, max_de_high_us=9000.0, require_final_de_low=True)
+
+    assert report["verdict"] == "ok"
+    assert report["trailing_boundary_de_windows"] == 1
+    assert strict_report["verdict"] == "fail"
+    assert "DE is still high at the last sample" in strict_report["failures"]
+
+
 def test_logic_analyzer_can_allow_re_high_only_during_de(tmp_path: Path) -> None:
     capture = tmp_path / "re-during-de.csv"
     write_csv(

@@ -8,6 +8,8 @@
 #include <string>
 
 #ifdef USE_ESP32
+#include "esp_rom_sys.h"
+#include "esp_system.h"
 #include "mbedtls/base64.h"
 #include "mbedtls/sha1.h"
 #endif
@@ -110,6 +112,9 @@ std::string HCP2Bridge::http_debug_health_json_() {
   const bool bus_online = this->is_bus_online();
   const bool valid_broadcast = this->has_valid_broadcast();
   const bool lp_seen = polls_seen > 0u && this->get_lp_heartbeat() > 0u;
+  const bool continuity_healthy = this->is_continuity_healthy();
+  const bool diagnostic_warning = this->has_continuity_diagnostic_warning();
+  const uint32_t continuity_good_ms = this->get_continuity_good_ms();
 
   std::string reasons = "[";
   bool first_reason = true;
@@ -121,6 +126,24 @@ std::string HCP2Bridge::http_debug_health_json_() {
     reasons += "\"";
     reasons += reason;
     reasons += "\"";
+  };
+  std::string warnings = "[";
+  bool first_warning = true;
+  const auto add_warning = [&](const char *warning) {
+    if (!first_warning) {
+      warnings += ",";
+    }
+    first_warning = false;
+    warnings += "\"";
+    warnings += warning;
+    warnings += "\"";
+  };
+  const auto add_diagnostic = [&](const char *name) {
+    if (continuity_healthy) {
+      add_warning(name);
+    } else {
+      add_reason(name);
+    }
   };
 
   if (!lp_mode) {
@@ -142,35 +165,38 @@ std::string HCP2Bridge::http_debug_health_json_() {
     add_reason("missed_polls");
   }
   if (health_flags != 0u) {
-    add_reason("lp_health_flags");
+    add_diagnostic("lp_health_flags");
   }
   if (tx_aborts != 0u) {
-    add_reason("tx_aborts");
+    add_diagnostic("tx_aborts");
   }
   if (collisions != 0u) {
-    add_reason("collisions");
+    add_diagnostic("collisions");
   }
   if (loop_overruns != 0u) {
-    add_reason("loop_overruns");
+    add_diagnostic("loop_overruns");
   }
   if (rx_starvations != 0u) {
-    add_reason("rx_starvations");
+    add_diagnostic("rx_starvations");
   }
   if (stuck_de != 0u) {
-    add_reason("stuck_de_recoveries");
+    add_diagnostic("stuck_de_recoveries");
   }
   if (max_de_hold_us > 0u && max_de_hold_us > HCP2BRIDGE_MAX_DE_HIGH_US) {
-    add_reason("de_hold_too_long");
+    add_diagnostic("de_hold_too_long");
   }
   reasons += "]";
+  warnings += "]";
 
-  const bool safe_for_ota_restart = first_reason;
+  const bool safe_for_ota_restart = continuity_healthy;
   std::string json = "{\"verdict\":\"";
   json += safe_for_ota_restart ? "ok" : "fail";
   json += "\",\"safe_for_ota_restart\":";
   json += safe_for_ota_restart ? "true" : "false";
   json += ",\"reasons\":";
   json += reasons;
+  json += ",\"warnings\":";
+  json += warnings;
   json += ",\"checks\":{\"lp_mode\":";
   json += lp_mode ? "true" : "false";
   json += ",\"lp_seen\":";
@@ -205,6 +231,12 @@ std::string HCP2Bridge::http_debug_health_json_() {
   json += std::to_string(stuck_de);
   json += ",\"max_de_hold_us\":";
   json += std::to_string(max_de_hold_us);
+  json += ",\"continuity_good_ms\":";
+  json += std::to_string(continuity_good_ms);
+  json += ",\"diagnostic_clear_ms\":";
+  json += std::to_string(HCP2BRIDGE_CONTINUITY_GOOD_CLEAR_MS);
+  json += ",\"diagnostic_warning\":";
+  json += diagnostic_warning ? "true" : "false";
   json += "},\"stats\":";
   json += this->http_debug_stats_json_();
   json += ",\"door\":";
@@ -338,6 +370,7 @@ a{color:#7dd3fc}
 #updated{color:var(--muted);font-size:12px}
 #reasons{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 #reasons .rchip{background:#7f1d1d;color:#fee2e2;border-radius:6px;padding:2px 8px;font-size:12px;font-family:var(--mono)}
+#reasons .wchip{background:#713f12;color:#fef3c7;border-radius:6px;padding:2px 8px;font-size:12px;font-family:var(--mono)}
 /* vital chips */
 #vitals{display:flex;gap:8px;margin-top:10px;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:2px}
 .chip{flex:0 0 auto;min-width:84px;border:1px solid var(--line2);border-radius:8px;background:var(--panel);padding:6px 9px}
@@ -376,6 +409,9 @@ button,a.button,select,input[type=text]{font:inherit;border:1px solid var(--line
   padding:8px 11px;text-decoration:none;cursor:pointer;min-height:40px}
 button:hover,a.button:hover{background:#334155}
 button.pri{border-color:#0e7490}
+button.warn{border-color:#a16207;color:#fde68a}
+button.danger{border-color:#b91c1c;color:#fecaca;background:#450a0a}
+button:disabled{opacity:.55;cursor:not-allowed}
 button.on{background:#0e7490;border-color:#22d3ee}
 input[type=text]{cursor:text;min-width:120px}
 label.flt{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:#cbd5e1}
@@ -463,6 +499,14 @@ details{margin-top:12px}summary{cursor:pointer;color:#cbd5e1;font-size:13px;padd
     <section class="panel"><h2>Link diagnostics</h2><div id="linkDiag"></div></section>
     <section class="panel"><h2>LP core</h2><div id="lpPanel"></div></section>
     <section class="panel"><h2>HP resets</h2><div id="hpPanel"></div></section>
+    <section class="panel"><h2>HP core controls</h2>
+      <div class="toolbar">
+        <button id="hpRestartBtn" class="pri hpctl" onclick="hpAction('restart')">HP reboot</button>
+        <button id="hpCpuResetBtn" class="warn hpctl" onclick="hpAction('cpu_reset')">CPU reset</button>
+        <button id="hpPanicBtn" class="danger hpctl" onclick="hpAction('panic')">Panic halt</button>
+      </div>
+      <div id="hpControlStatus" class="muted">ready</div>
+    </section>
     <section class="panel"><h2>Device log storage</h2><div id="protocolPanel"></div></section>
     <section class="panel"><h2>Stats</h2><div id="statsPanel"></div></section>
   </div>
@@ -493,13 +537,15 @@ details{margin-top:12px}summary{cursor:pointer;color:#cbd5e1;font-size:13px;padd
 const $=id=>document.getElementById(id);
 const RESPONSE_DELAY_US=4200;        // HCP2_DEFAULT_RESPONSE_DELAY_US
 const STALE_MS=2000;                 // matches the firmware health-push fallback window
+const HP_ACTION_MIN_UPTIME_MS=70000;  // keep ESPHome safe-mode from rolling back a fresh OTA image
 const LOG_DISPLAY_MAX=5000;          // rendered lines; full history stays in logCache for export
 const JITTER_RING=2048, POLL_RING=600;
-let logSocket=null,logReconnectTimer=null;
+let logSocket=null,logReconnectTimer=null,hpReconnectTimer=null;
 let logLines=[],logCache=[],logCacheBytes=0;
 let refreshBusy=false,logLoadBusy=false,rawPath=null,rawBusy=false;
 let lastHealthStreamMs=0,lastHealthOkMs=0;
 let logReconnectDelayMs=1000,logRenderQueued=false;
+let hpReconnectUntilMs=0,hpReconnectDelayMs=1000,hpReconnectLabel='';
 let logSeenSeqs=new Set(),logPendingAppend=[],logPendingReplace=null;
 let logRenderStickToBottom=true;
 const logStickThresholdPx=24;
@@ -568,7 +614,10 @@ function applyHealth(health,source='http'){
   $('verdict').className='status '+(ok?'ok':'fail');
   $('verdict').textContent=ok?'continuity ok':'continuity problem';
   $('updated').textContent='updated '+new Date().toLocaleTimeString()+' via '+source+(stats.build?(' · fw '+stats.build):'');
-  $('reasons').innerHTML=(health.reasons||[]).map(r=>`<span class="rchip">${r}</span>`).join('');
+  $('reasons').innerHTML=[
+    ...(health.reasons||[]).map(r=>`<span class="rchip">${r}</span>`),
+    ...(health.warnings||[]).map(r=>`<span class="wchip">${r}</span>`)
+  ].join('');
   const c=health.checks||{},lp=health.lp||{},hp=health.hp||{},p=stats.protocol_log||{};
   logEnabled=p.enabled!==false;
   // counters: keep bound to health.checks exactly (test contract) -- no extra nodes
@@ -581,6 +630,7 @@ function applyHealth(health,source='http'){
   renderDoor(health,stats);
   renderTiming(stats,lp);
   renderLinkDiag(stats);
+  updateHpControls(stats);
   renderVitals(health,stats,c,lp);
   $('logSummary').textContent=`device log ${p.enabled?'enabled':'disabled'}, ${p.used||0}/${p.capacity||0} bytes, overwritten ${p.overwritten_records||0}`;
   updateLogCacheSummary();
@@ -690,6 +740,17 @@ function renderLinkDiag(stats){
     ['ui cache bytes',((logCacheBytes/1024).toFixed(1))+' KiB']
   ];
   $('linkDiag').innerHTML=rows.map(r=>`<div class="linkrow"><span class="key">${r[0]}</span><span class="value ${r[2]||''}">${r[1]}</span></div>`).join('');
+}
+function updateHpControls(stats){
+  const uptime=stats.uptime_ms||0;
+  const ready=uptime>=HP_ACTION_MIN_UPTIME_MS;
+  document.querySelectorAll('.hpctl').forEach(b=>{b.disabled=!ready});
+  const status=$('hpControlStatus');
+  if(!ready){
+    status.textContent='available in '+Math.ceil((HP_ACTION_MIN_UPTIME_MS-uptime)/1000)+'s';
+  }else if(!status.textContent||status.textContent.startsWith('available in ')){
+    status.textContent='ready';
+  }
 }
 let clientReconnects=0,dedupeDrops=0;
 function applyStale(){
@@ -910,6 +971,68 @@ async function controlLog(action){
   if(action==='clear'){logLines=[];logPendingAppend=[];logPendingReplace='';resetLogCache();resetDerived();renderLog(true);await refreshLog(false)}
   else await refreshLog();
 }
+function clearHpReconnect(){
+  if(hpReconnectTimer){clearTimeout(hpReconnectTimer);hpReconnectTimer=null}
+}
+function beginHpReconnect(label){
+  clearHpReconnect();
+  closeLogStream();
+  hpReconnectLabel=label||'HP action';
+  hpReconnectDelayMs=1000;
+  hpReconnectUntilMs=Date.now()+90000;
+  $('logStream').textContent='waiting for ESP reconnect';
+  hpReconnectTimer=setTimeout(hpReconnectLoop,1500);
+}
+async function hpReconnectLoop(){
+  hpReconnectTimer=null;
+  if(Date.now()>hpReconnectUntilMs){
+    $('logStream').textContent='ESP reconnect timed out; use Reconnect Stream';
+    $('hpControlStatus').textContent=hpReconnectLabel+' reconnect timed out';
+    requestRefresh();
+    return;
+  }
+  try{
+    const health=await getJson('/health',1);
+    applyHealth(health,'http');
+    $('hpControlStatus').textContent=hpReconnectLabel+' reconnected';
+    connectLogStream(true);
+  }catch(e){
+    $('logStream').textContent='ESP reconnect pending; retrying in '+Math.round(hpReconnectDelayMs/1000)+'s';
+    hpReconnectTimer=setTimeout(hpReconnectLoop,hpReconnectDelayMs);
+    hpReconnectDelayMs=Math.min(hpReconnectDelayMs*1.4,5000);
+  }
+}
+async function hpAction(action){
+  const labels={restart:'HP reboot',cpu_reset:'CPU reset',panic:'Panic halt'};
+  const prompts={
+    restart:'Reboot the ESP32 main core now? The LP responder should keep answering HCP2 polls.',
+    cpu_reset:'Run a diagnostic CPU reset now? Use HP reboot for normal testing.',
+    panic:'Trigger an HP panic now? This build halts the HP core while the LP responder keeps running.'
+  };
+  if(!labels[action])return;
+  const uptime=(lastHealth&&lastHealth.stats&&lastHealth.stats.uptime_ms)||0;
+  if(uptime<HP_ACTION_MIN_UPTIME_MS){
+    $('hpControlStatus').textContent='available in '+Math.ceil((HP_ACTION_MIN_UPTIME_MS-uptime)/1000)+'s';
+    return;
+  }
+  if(!confirm(prompts[action]))return;
+  const status=$('hpControlStatus');
+  status.textContent=labels[action]+' requested';
+  try{
+    const r=await fetch('/control/hp/'+action,{method:'POST',cache:'no-store'});
+    const text=await r.text();
+    let payload=null;try{payload=JSON.parse(text)}catch(e){}
+    if(!r.ok)throw new Error((payload&&payload.error)||text||('HTTP '+r.status));
+    status.textContent=(payload&&payload.message)||labels[action]+' scheduled';
+    if(action==='restart'||action==='cpu_reset'){
+      beginHpReconnect(labels[action]);
+    }else{
+      closeLogStream();
+    }
+  }catch(e){
+    status.textContent=labels[action]+' failed: '+e.message;
+  }
+}
 async function refreshLog(replace=true){
   if(logLoadBusy)return;logLoadBusy=true;
   try{const r=await fetch('/hcp2_log',{cache:'no-store'});appendLogText(await r.text(),replace)}
@@ -921,6 +1044,7 @@ function closeLogStream(){
   if(logSocket){logSocket.onclose=null;try{logSocket.close()}catch(e){};logSocket=null}
 }
 function connectLogStream(replace=false){
+  clearHpReconnect();
   closeLogStream();resetDerived();
   lastHealthStreamMs=Date.now();
   const scheme=location.protocol==='https:'?'wss':'ws';
@@ -1313,6 +1437,53 @@ void HCP2Bridge::http_debug_handle_request_(std::unique_ptr<socket::Socket> clie
                                     this->http_debug_support_json_());
     return;
   }
+  if (path == "/control/hp/restart" || path == "/control/hp/cpu_reset" || path == "/control/hp/panic") {
+    if (request.rfind("POST ", 0) != 0) {
+      this->http_debug_send_response_(std::move(client), "405 Method Not Allowed", "application/json",
+                                      "{\"ok\":false,\"error\":\"POST required\"}");
+      return;
+    }
+    const uint32_t uptime_ms = millis();
+    if (uptime_ms < HCP2BRIDGE_HTTP_HP_ACTION_MIN_UPTIME_MS) {
+      std::string body = "{\"ok\":false,\"error\":\"boot validation pending\",\"uptime_ms\":";
+      body += std::to_string(uptime_ms);
+      body += ",\"retry_after_ms\":";
+      body += std::to_string(HCP2BRIDGE_HTTP_HP_ACTION_MIN_UPTIME_MS - uptime_ms);
+      body += "}";
+      this->http_debug_send_response_(std::move(client), "409 Conflict", "application/json", body);
+      return;
+    }
+    HttpDebugHpAction action = HttpDebugHpAction::RESTART;
+    const char *action_name = "restart";
+    const char *control_name = "hp_restart";
+    const char *message = "HP reboot scheduled; LP responder remains loaded";
+    if (path == "/control/hp/cpu_reset") {
+      action = HttpDebugHpAction::CPU_RESET;
+      action_name = "cpu_reset";
+      control_name = "hp_cpu_reset";
+      message = "HP CPU reset scheduled; LP responder remains loaded";
+    } else if (path == "/control/hp/panic") {
+      action = HttpDebugHpAction::PANIC;
+      action_name = "panic";
+      control_name = "hp_panic";
+      message = "HP panic scheduled; LP responder remains loaded";
+    }
+    if (!this->http_debug_schedule_hp_action_(action)) {
+      this->http_debug_send_response_(std::move(client), "503 Service Unavailable", "application/json",
+                                      "{\"ok\":false,\"error\":\"could not schedule HP action\"}");
+      return;
+    }
+    this->protocol_log_append_control_(control_name);
+    std::string body = "{\"ok\":true,\"action\":\"";
+    body += action_name;
+    body += "\",\"delay_ms\":";
+    body += std::to_string(HCP2BRIDGE_HTTP_HP_ACTION_DELAY_MS);
+    body += ",\"lp_expected\":\"running\",\"message\":\"";
+    body += message;
+    body += "\"}";
+    this->http_debug_send_response_(std::move(client), "202 Accepted", "application/json", body);
+    return;
+  }
   if (path == "/hcp2_log/start") {
     this->protocol_log_enabled_ = true;
     this->protocol_log_append_control_("start");
@@ -1349,6 +1520,34 @@ void HCP2Bridge::http_debug_handle_request_(std::unique_ptr<socket::Socket> clie
     return;
   }
   this->http_debug_send_response_(std::move(client), "404 Not Found", "text/plain; charset=utf-8", "not found\n");
+}
+
+bool HCP2Bridge::http_debug_schedule_hp_action_(HttpDebugHpAction action) {
+  const BaseType_t ok =
+      xTaskCreatePinnedToCore(HCP2Bridge::http_debug_hp_action_task_, "hcp2_hp_action",
+                              HCP2BRIDGE_HTTP_HP_ACTION_TASK_STACK_BYTES,
+                              reinterpret_cast<void *>(static_cast<uintptr_t>(action)), 2, nullptr, tskNO_AFFINITY);
+  return ok == pdPASS;
+}
+
+void HCP2Bridge::http_debug_hp_action_task_(void *arg) {
+  const auto action = static_cast<HttpDebugHpAction>(reinterpret_cast<uintptr_t>(arg));
+  vTaskDelay(pdMS_TO_TICKS(HCP2BRIDGE_HTTP_HP_ACTION_DELAY_MS));
+  switch (action) {
+    case HttpDebugHpAction::RESTART:
+      ESP_LOGW(TAG, "HCP2 debug UI requested HP esp_restart(); LP core should keep running");
+      esp_restart();
+      break;
+    case HttpDebugHpAction::CPU_RESET:
+      ESP_LOGW(TAG, "HCP2 debug UI requested HP CPU reset; LP core should keep running");
+      esp_rom_software_reset_cpu(0);
+      break;
+    case HttpDebugHpAction::PANIC:
+      ESP_LOGE(TAG, "HCP2 debug UI requested HP panic; LP core should keep running");
+      esp_system_abort("HCP2 debug UI panic trigger");
+      break;
+  }
+  vTaskDelete(nullptr);
 }
 
 void HCP2Bridge::http_debug_upgrade_log_ws_(std::unique_ptr<socket::Socket> client, const std::string &request) {

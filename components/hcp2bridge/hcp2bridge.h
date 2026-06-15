@@ -71,6 +71,7 @@ class HCP2Bridge : public Component {
   bool is_continuity_healthy() const;
   bool is_safe_for_ota_restart() const;
   bool has_continuity_problem() const { return !this->is_continuity_healthy(); }
+  bool has_continuity_diagnostic_warning() const;
   float get_position() const;
   hcp2_drive_state_code_t get_drive_state() const;
   std::string get_state_string() const;
@@ -103,6 +104,7 @@ class HCP2Bridge : public Component {
   uint32_t get_lp_rx_starvation_count() const;
   uint32_t get_lp_stuck_de_count() const;
   uint32_t get_lp_mailbox_repair_count() const;
+  uint32_t get_continuity_good_ms() const;
   uint32_t get_hp_reset_count() const;
   uint32_t get_hp_panic_reset_count() const;
   uint32_t get_hp_wdt_reset_count() const;
@@ -112,6 +114,12 @@ class HCP2Bridge : public Component {
 #ifdef USE_ESP32
   struct CommandEvent {
     hcp2_button_t button;
+  };
+
+  enum class HttpDebugHpAction : uintptr_t {
+    RESTART = 1,
+    CPU_RESET = 2,
+    PANIC = 3,
   };
 
   static void bus_task_trampoline_(void *arg);
@@ -144,6 +152,8 @@ class HCP2Bridge : public Component {
   void http_debug_service_log_ws_();
   void http_debug_close_log_ws_(const char *reason);
   void http_debug_handle_request_(std::unique_ptr<socket::Socket> client, const std::string &request);
+  bool http_debug_schedule_hp_action_(HttpDebugHpAction action);
+  static void http_debug_hp_action_task_(void *arg);
   void http_debug_send_response_(std::unique_ptr<socket::Socket> client, const char *status, const char *content_type,
                                  const std::string &body);
   void http_debug_send_log_binary_response_(std::unique_ptr<socket::Socket> client);
@@ -222,6 +232,20 @@ class HCP2Bridge : public Component {
   bool obstruction_{false};
   bool bus_online_{false};
   bool continuity_healthy_{false};
+  bool continuity_diagnostic_warning_{false};
+  bool continuity_sample_seen_{false};
+  uint32_t continuity_good_since_ms_{0};
+  uint32_t continuity_good_ms_{0};
+  uint32_t continuity_prev_polls_seen_{0};
+  uint32_t continuity_prev_polls_answered_{0};
+  uint32_t continuity_prev_health_flags_{0};
+  uint32_t continuity_prev_tx_abort_count_{0};
+  uint32_t continuity_prev_collision_count_{0};
+  uint32_t continuity_prev_max_de_hold_us_{0};
+  uint32_t continuity_prev_loop_overrun_count_{0};
+  uint32_t continuity_prev_rx_starvation_count_{0};
+  uint32_t continuity_prev_stuck_de_count_{0};
+  uint32_t continuity_prev_mailbox_repair_count_{0};
   bool state_callback_pending_{false};
   bool command_callback_pending_{false};
   hcp2_button_t last_commanded_button_{HCP2_BUTTON_NONE};

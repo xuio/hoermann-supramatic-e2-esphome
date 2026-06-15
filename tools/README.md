@@ -75,7 +75,12 @@ The hostile preset adds a ping stream and repeated ESPHome native-API TCP
 connects while the same virtual SupraMatic master verifies poll replies. With
 `--repeat`, the JSON output becomes an aggregate report with total polls,
 misses, max consecutive misses, and worst latency across runs. Per-run traces
-are written as `*.runNN.jsonl`.
+are written as `*.runNN.jsonl`. When `--esp-host` is set, the runner also samples
+the tester debug `/health` endpoint at the end of each run. The firmware health
+verdict remains visible, but the HIL report classifies an RX-starvation-only
+health flag during intentional fault injection as a warning instead of a bus
+continuity failure; missed polls, stale bus state, tx aborts, collisions, loop
+overruns, stuck DE, and non-RX LP health flags still fail the run.
 
 The same HIL runner can execute named SupraMatic scenarios and schedule ESPHome
 native-API commands while the RS-485 master keeps polling:
@@ -120,6 +125,10 @@ uv run garage-hcp2-hil-load --serial /dev/serial/by-id/usb-1a86_USB_Single_Seria
 
 The progress file is JSONL and fsynced after every snapshot, so a detached bench
 run still leaves poll/reply/miss counters if the SSH session or runner dies.
+
+For logic-analyzer sidecars, `garage-hcp2-hil-la verify` tolerates a capture
+ending while DE is already high and reports that as a trailing boundary window.
+Use `--require-final-de-low` for a deliberately strict capture-end check.
 
 ## HCP2 Series 4 Tester Bundles
 

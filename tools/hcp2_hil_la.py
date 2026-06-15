@@ -857,6 +857,7 @@ def analyze_samples(
     max_de_high_us: float = DEFAULT_MAX_DE_HIGH_US,
     ignore_before_us: float = 0.0,
     require_initial_de_low: bool = True,
+    require_final_de_low: bool = False,
     require_initial_tx_high: bool = True,
     require_re_low: bool = True,
     allow_re_high_during_de: bool = False,
@@ -877,7 +878,11 @@ def analyze_samples(
         failures.append("DE is not low at the first sample")
     if require_initial_tx_high and initial_tx is not None and initial_tx != 1:
         failures.append("TX is not idle-high at the first sample")
+    trailing_boundary_de_windows = []
     if de_windows and value_at(samples[-1], "de") == 1:
+        trailing_boundary_de_windows.append(de_windows[-1])
+
+    if trailing_boundary_de_windows and require_final_de_low:
         failures.append("DE is still high at the last sample")
 
     long_de_windows = [window for window in de_windows if window.duration_us > max_de_high_us]
@@ -929,6 +934,7 @@ def analyze_samples(
         "tx_transitions_outside_de": len(tx_outside_de),
         "de_windows_without_tx_activity": len(de_without_tx),
         "initial_boundary_de_windows_without_tx_activity": len(initial_boundary_de_without_tx),
+        "trailing_boundary_de_windows": len(trailing_boundary_de_windows),
         "re_high_samples": re_high_samples,
         "re_high_outside_de_samples": re_high_outside_de_samples,
         "allow_re_high_during_de": allow_re_high_during_de,
@@ -950,6 +956,7 @@ def verify_samples(
     max_de_high_us: float = DEFAULT_MAX_DE_HIGH_US,
     ignore_before_us: float = 0.0,
     require_initial_de_low: bool = True,
+    require_final_de_low: bool = False,
     require_initial_tx_high: bool = True,
     require_re_low: bool = True,
     allow_re_high_during_de: bool = False,
@@ -967,6 +974,7 @@ def verify_samples(
         max_de_high_us=max_de_high_us,
         ignore_before_us=ignore_before_us,
         require_initial_de_low=require_initial_de_low,
+        require_final_de_low=require_final_de_low,
         require_initial_tx_high=require_initial_tx_high,
         require_re_low=require_re_low,
         allow_re_high_during_de=allow_re_high_during_de,
@@ -1043,6 +1051,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
             max_de_high_us=args.max_de_high_us,
             ignore_before_us=args.ignore_before_us,
             require_initial_de_low=not args.allow_initial_de_high,
+            require_final_de_low=args.require_final_de_low,
             require_initial_tx_high=not args.allow_initial_tx_low,
             require_re_low=not args.allow_re_high,
             allow_re_high_during_de=args.allow_re_high_during_de,
@@ -1110,6 +1119,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
             max_de_high_us=args.max_de_high_us,
             ignore_before_us=args.ignore_before_us,
             require_initial_de_low=not args.allow_initial_de_high,
+            require_final_de_low=args.require_final_de_low,
             require_initial_tx_high=not args.allow_initial_tx_low,
             require_re_low=not args.allow_re_high,
             allow_re_high_during_de=args.allow_re_high_during_de,
@@ -1202,6 +1212,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Ignore samples before this offset from capture start; default keeps full reset-safety analysis",
     )
     analyze.add_argument("--allow-initial-de-high", action="store_true")
+    analyze.add_argument(
+        "--require-final-de-low",
+        action="store_true",
+        help="Fail when the capture ends with DE high; default tolerates a clipped final response window",
+    )
     analyze.add_argument("--allow-initial-tx-low", action="store_true")
     analyze.add_argument("--allow-re-high", action="store_true")
     analyze.add_argument("--allow-re-high-during-de", action="store_true")
@@ -1233,6 +1248,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Ignore samples before this offset from capture start; default keeps full reset-safety analysis",
     )
     verify.add_argument("--allow-initial-de-high", action="store_true")
+    verify.add_argument(
+        "--require-final-de-low",
+        action="store_true",
+        help="Fail when the capture ends with DE high; default tolerates a clipped final response window",
+    )
     verify.add_argument("--allow-initial-tx-low", action="store_true")
     verify.add_argument("--allow-re-high", action="store_true")
     verify.add_argument("--allow-re-high-during-de", action="store_true")
