@@ -60,51 +60,42 @@ void hcp2_lp_mailbox_publish_state(volatile hcp2_lp_mailbox_t *mailbox, const hc
   mailbox->state_seq = seq + 1u;
 }
 
-void hcp2_lp_mailbox_publish_counters(volatile hcp2_lp_mailbox_t *mailbox, uint32_t now_us, uint32_t polls_seen,
-                                      uint32_t polls_answered, uint32_t tx_abort_count,
-                                      uint32_t collision_count, uint32_t max_de_hold_us,
-                                      uint32_t last_poll_us, uint32_t crc_error_count,
-                                      uint32_t rx_error_count, uint32_t max_loop_us,
-                                      uint32_t loop_overrun_count, uint32_t rx_starvation_count,
-                                      uint32_t stuck_de_count, uint32_t mailbox_repair_count,
-                                      uint16_t health_flags, uint16_t max_rx_fifo_count,
-                                      uint32_t max_poll_rx_to_schedule_us,
-                                      uint32_t max_response_schedule_to_tx_start_us,
-                                      uint32_t max_response_tx_us) {
-  if (mailbox == 0) {
+void hcp2_lp_mailbox_publish_counters(volatile hcp2_lp_mailbox_t *mailbox,
+                                      const hcp2_lp_counters_t *counters) {
+  if (mailbox == 0 || counters == 0) {
     return;
   }
 
-  mailbox->lp_time_us = now_us;
-  mailbox->polls_seen = polls_seen;
-  mailbox->polls_answered = polls_answered;
-  mailbox->tx_abort_count = tx_abort_count;
-  mailbox->collision_count = collision_count;
-  if (max_de_hold_us > mailbox->max_de_hold_us) {
-    mailbox->max_de_hold_us = max_de_hold_us;
+  mailbox->lp_time_us = counters->now_us;
+  mailbox->polls_seen = counters->polls_seen;
+  mailbox->polls_answered = counters->polls_answered;
+  mailbox->tx_abort_count = counters->tx_abort_count;
+  mailbox->collision_count = counters->collision_count;
+  if (counters->max_de_hold_us > mailbox->max_de_hold_us) {
+    mailbox->max_de_hold_us = counters->max_de_hold_us;
   }
-  mailbox->last_poll_us = last_poll_us;
-  mailbox->crc_error_count = crc_error_count;
-  mailbox->rx_error_count = rx_error_count;
-  if (max_loop_us > mailbox->max_loop_us) {
-    mailbox->max_loop_us = max_loop_us;
+  mailbox->last_poll_us = counters->last_poll_us;
+  mailbox->crc_error_count = counters->crc_error_count;
+  mailbox->rx_error_count = counters->rx_error_count;
+  if (counters->max_loop_us > mailbox->max_loop_us) {
+    mailbox->max_loop_us = counters->max_loop_us;
   }
-  mailbox->loop_overrun_count = loop_overrun_count;
-  mailbox->rx_starvation_count = rx_starvation_count;
-  mailbox->stuck_de_count = stuck_de_count;
-  mailbox->mailbox_repair_count = mailbox_repair_count;
-  mailbox->health_flags = health_flags;
-  if (max_rx_fifo_count > mailbox->max_rx_fifo_count) {
-    mailbox->max_rx_fifo_count = max_rx_fifo_count;
+  mailbox->loop_overrun_count = counters->loop_overrun_count;
+  mailbox->rx_starvation_count = counters->rx_starvation_count;
+  mailbox->stuck_de_count = counters->stuck_de_count;
+  mailbox->mailbox_repair_count = counters->mailbox_repair_count;
+  mailbox->health_flags = counters->health_flags;
+  if (counters->max_rx_fifo_count > mailbox->max_rx_fifo_count) {
+    mailbox->max_rx_fifo_count = counters->max_rx_fifo_count;
   }
-  if (max_poll_rx_to_schedule_us > mailbox->max_poll_rx_to_schedule_us) {
-    mailbox->max_poll_rx_to_schedule_us = max_poll_rx_to_schedule_us;
+  if (counters->max_poll_rx_to_schedule_us > mailbox->max_poll_rx_to_schedule_us) {
+    mailbox->max_poll_rx_to_schedule_us = counters->max_poll_rx_to_schedule_us;
   }
-  if (max_response_schedule_to_tx_start_us > mailbox->max_response_schedule_to_tx_start_us) {
-    mailbox->max_response_schedule_to_tx_start_us = max_response_schedule_to_tx_start_us;
+  if (counters->max_response_schedule_to_tx_start_us > mailbox->max_response_schedule_to_tx_start_us) {
+    mailbox->max_response_schedule_to_tx_start_us = counters->max_response_schedule_to_tx_start_us;
   }
-  if (max_response_tx_us > mailbox->max_response_tx_us) {
-    mailbox->max_response_tx_us = max_response_tx_us;
+  if (counters->max_response_tx_us > mailbox->max_response_tx_us) {
+    mailbox->max_response_tx_us = counters->max_response_tx_us;
   }
   memory_barrier_();
 }

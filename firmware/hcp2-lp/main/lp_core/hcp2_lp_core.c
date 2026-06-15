@@ -559,14 +559,28 @@ int main(void) {
       health_flags = (uint16_t) (health_flags | HCP2_LP_HEALTH_FLAG_LOOP_OVERRUN);
       trace_(HCP2_LP_TRACE_HEALTH, (uint16_t) (0xC000u | (loop_active_us & 0x0FFFu)));
     }
-    hcp2_lp_mailbox_publish_counters(mailbox, port_now_us_(NULL), engine.status_polls_received,
-                                     engine.status_responses_sent, tx_abort_count, collision_count, max_de_hold_us,
-                                     last_status_poll_us, engine.crc_errors, engine.rx_errors + rx_error_count,
-                                     max_loop_us, loop_overrun_count, rx_starvation_count, stuck_de_count,
-                                     mailbox_repair_count, health_flags, max_rx_fifo_count,
-                                     engine.max_status_poll_rx_to_schedule_us,
-                                     engine.max_status_response_schedule_to_tx_start_us,
-                                     engine.max_status_response_tx_us);
+    const hcp2_lp_counters_t counters = {
+        .now_us = port_now_us_(NULL),
+        .polls_seen = engine.status_polls_received,
+        .polls_answered = engine.status_responses_sent,
+        .tx_abort_count = tx_abort_count,
+        .collision_count = collision_count,
+        .max_de_hold_us = max_de_hold_us,
+        .last_poll_us = last_status_poll_us,
+        .crc_error_count = engine.crc_errors,
+        .rx_error_count = engine.rx_errors + rx_error_count,
+        .max_loop_us = max_loop_us,
+        .loop_overrun_count = loop_overrun_count,
+        .rx_starvation_count = rx_starvation_count,
+        .stuck_de_count = stuck_de_count,
+        .mailbox_repair_count = mailbox_repair_count,
+        .health_flags = health_flags,
+        .max_rx_fifo_count = max_rx_fifo_count,
+        .max_poll_rx_to_schedule_us = engine.max_status_poll_rx_to_schedule_us,
+        .max_response_schedule_to_tx_start_us = engine.max_status_response_schedule_to_tx_start_us,
+        .max_response_tx_us = engine.max_status_response_tx_us,
+    };
+    hcp2_lp_mailbox_publish_counters(mailbox, &counters);
 #if CONFIG_HCP2_BRINGUP_LP_WDT_ENABLE
     lp_wdt_poll_();
 #endif

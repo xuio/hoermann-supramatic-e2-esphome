@@ -133,12 +133,15 @@ class HCP2Bridge : public Component {
   void setup_protocol_log_();
   bool http_debug_enabled_() const { return this->http_debug_port_ != 0; }
   void setup_http_debug_server_();
+  void start_http_debug_task_();
+  static void http_debug_task_trampoline_(void *arg);
+  void http_debug_task_loop_();
   void maybe_setup_http_debug_server_();
   void http_debug_accept_client_();
   void http_debug_service_pending_client_();
-	  void http_debug_service_log_ws_();
-	  void http_debug_close_log_ws_(const char *reason);
-	  void http_debug_handle_request_(std::unique_ptr<socket::Socket> client, const std::string &request);
+  void http_debug_service_log_ws_();
+  void http_debug_close_log_ws_(const char *reason);
+  void http_debug_handle_request_(std::unique_ptr<socket::Socket> client, const std::string &request);
   void http_debug_send_response_(std::unique_ptr<socket::Socket> client, const char *status, const char *content_type,
                                  const std::string &body);
   void http_debug_send_log_binary_response_(std::unique_ptr<socket::Socket> client);
@@ -155,6 +158,9 @@ class HCP2Bridge : public Component {
   std::string http_debug_health_json_();
   std::string http_debug_stats_json_();
   std::string http_debug_support_json_();
+  std::string http_debug_door_json_();
+  std::string http_debug_lp_json_();
+  std::string http_debug_hp_json_();
   std::string protocol_log_summary_json_() const;
   std::string protocol_log_body_();
   std::string protocol_log_body_since_(uint32_t cursor_seq, uint32_t *next_cursor_seq, size_t max_bytes);
@@ -192,6 +198,7 @@ class HCP2Bridge : public Component {
   bool valid_broadcast_snapshot_() const;
   bool obstruction_snapshot_() const;
   uint32_t counter_snapshot_(uint32_t HCP2Bridge::*field) const;
+  bool apply_drive_status_locked_(const hcp2_drive_status_t *status, bool valid_broadcast_seen, uint32_t now_ms);
   static const char *button_name_(hcp2_button_t button);
   static const char *protocol_event_name_(uint8_t event_type);
   static const char *frame_type_name_(uint8_t frame_type);
@@ -202,7 +209,7 @@ class HCP2Bridge : public Component {
   InternalGPIOPin *de_pin_{nullptr};
   InternalGPIOPin *re_pin_{nullptr};
   hcp2_engine_config_t config_{};
-  bool hp_fallback_{true};
+  bool hp_fallback_{false};
   bool lp_uart_clock_source_default_{false};
   uint8_t uart_num_config_{1};
   uint16_t http_debug_port_{0};
@@ -261,6 +268,7 @@ class HCP2Bridge : public Component {
   QueueHandle_t command_queue_{nullptr};
   TaskHandle_t bus_task_handle_{nullptr};
   TaskHandle_t lp_supervisor_task_handle_{nullptr};
+  TaskHandle_t http_debug_task_handle_{nullptr};
   mutable portMUX_TYPE state_mux_ = portMUX_INITIALIZER_UNLOCKED;
   hcp2_engine_t engine_{};
   hcp2_hp_supervisor_t lp_supervisor_{};
@@ -287,17 +295,17 @@ class HCP2Bridge : public Component {
   size_t http_debug_request_buffer_len_{0};
   uint32_t http_debug_pending_client_started_ms_{0};
   uint32_t http_debug_next_setup_ms_{0};
-	  uint32_t http_debug_log_ws_next_seq_{0};
-	  uint32_t http_debug_log_ws_last_send_ms_{0};
-	  uint32_t http_debug_log_ws_last_status_ms_{0};
-	  uint32_t http_debug_log_ws_connect_count_{0};
-	  uint32_t http_debug_log_ws_disconnect_count_{0};
-	  uint32_t http_debug_log_ws_reject_count_{0};
-	  uint32_t http_debug_log_ws_peer_close_count_{0};
-	  uint32_t http_debug_log_ws_read_fail_count_{0};
-	  uint32_t http_debug_log_ws_write_fail_count_{0};
-	  int http_debug_log_ws_last_errno_{0};
-	  const char *http_debug_log_ws_last_close_reason_{"none"};
+  uint32_t http_debug_log_ws_next_seq_{0};
+  uint32_t http_debug_log_ws_last_send_ms_{0};
+  uint32_t http_debug_log_ws_last_status_ms_{0};
+  uint32_t http_debug_log_ws_connect_count_{0};
+  uint32_t http_debug_log_ws_disconnect_count_{0};
+  uint32_t http_debug_log_ws_reject_count_{0};
+  uint32_t http_debug_log_ws_peer_close_count_{0};
+  uint32_t http_debug_log_ws_read_fail_count_{0};
+  uint32_t http_debug_log_ws_write_fail_count_{0};
+  int http_debug_log_ws_last_errno_{0};
+  const char *http_debug_log_ws_last_close_reason_{"none"};
 #endif
 };
 

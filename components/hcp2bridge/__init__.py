@@ -60,7 +60,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_DEVICE_SIGNATURE, default="00000205043010FFA855"): validate_signature,
             cv.Optional(CONF_RESPONSE_DELAY, default="4200us"): cv.positive_time_period_microseconds,
             cv.Optional(CONF_BUTTON_PRESS_DURATION, default="100ms"): cv.positive_time_period_microseconds,
-            cv.Optional(CONF_HP_FALLBACK, default=True): cv.boolean,
+            cv.Optional(CONF_HP_FALLBACK, default=False): cv.boolean,
             cv.Optional(CONF_LP_UART_CLOCK_SOURCE, default="xtal_d2"): cv.enum(
                 LP_UART_CLOCK_SOURCES, lower=True
             ),

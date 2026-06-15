@@ -113,6 +113,28 @@ typedef struct {
 } hcp2_lp_health_sample_t;
 
 typedef struct {
+  uint32_t now_us;
+  uint32_t polls_seen;
+  uint32_t polls_answered;
+  uint32_t tx_abort_count;
+  uint32_t collision_count;
+  uint32_t max_de_hold_us;
+  uint32_t last_poll_us;
+  uint32_t crc_error_count;
+  uint32_t rx_error_count;
+  uint32_t max_loop_us;
+  uint32_t loop_overrun_count;
+  uint32_t rx_starvation_count;
+  uint32_t stuck_de_count;
+  uint32_t mailbox_repair_count;
+  uint16_t health_flags;
+  uint16_t max_rx_fifo_count;
+  uint32_t max_poll_rx_to_schedule_us;
+  uint32_t max_response_schedule_to_tx_start_us;
+  uint32_t max_response_tx_us;
+} hcp2_lp_counters_t;
+
+typedef struct {
   uint32_t magic;
   uint16_t abi_version;
   uint16_t struct_size;
@@ -252,17 +274,8 @@ void hcp2_lp_mailbox_init(volatile hcp2_lp_mailbox_t *mailbox);
 void hcp2_lp_mailbox_repair_header(volatile hcp2_lp_mailbox_t *mailbox);
 void hcp2_lp_mailbox_publish_state(volatile hcp2_lp_mailbox_t *mailbox, const hcp2_drive_status_t *state,
                                    uint32_t now_us);
-void hcp2_lp_mailbox_publish_counters(volatile hcp2_lp_mailbox_t *mailbox, uint32_t now_us, uint32_t polls_seen,
-                                      uint32_t polls_answered, uint32_t tx_abort_count,
-                                      uint32_t collision_count, uint32_t max_de_hold_us,
-                                      uint32_t last_poll_us, uint32_t crc_error_count,
-                                      uint32_t rx_error_count, uint32_t max_loop_us,
-                                      uint32_t loop_overrun_count, uint32_t rx_starvation_count,
-                                      uint32_t stuck_de_count, uint32_t mailbox_repair_count,
-                                      uint16_t health_flags, uint16_t max_rx_fifo_count,
-                                      uint32_t max_poll_rx_to_schedule_us,
-                                      uint32_t max_response_schedule_to_tx_start_us,
-                                      uint32_t max_response_tx_us);
+void hcp2_lp_mailbox_publish_counters(volatile hcp2_lp_mailbox_t *mailbox,
+                                      const hcp2_lp_counters_t *counters);
 void hcp2_lp_mailbox_publish_protocol_event(volatile hcp2_lp_mailbox_t *mailbox,
                                             const hcp2_protocol_event_t *event);
 uint8_t hcp2_lp_mailbox_read_protocol_event(const volatile hcp2_lp_mailbox_t *mailbox,

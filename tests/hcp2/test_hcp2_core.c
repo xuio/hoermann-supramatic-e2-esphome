@@ -532,9 +532,28 @@ static void test_mailbox_state_seqlock(void) {
   state.state = HCP2_DRIVE_OPENING;
   state.light_on = 1u;
   hcp2_lp_mailbox_publish_state(&mailbox, &state, 123456u);
-  hcp2_lp_mailbox_publish_counters(&mailbox, 123500u, 7u, 6u, 2u, 1u, 8000u, 123490u, 3u, 4u,
-                                   6100u, 5u, 6u, 7u, 8u, HCP2_LP_HEALTH_FLAG_RX_STARVATION, 9u,
-                                   10u, 4200u, 4100u);
+  const hcp2_lp_counters_t counters = {
+      .now_us = 123500u,
+      .polls_seen = 7u,
+      .polls_answered = 6u,
+      .tx_abort_count = 2u,
+      .collision_count = 1u,
+      .max_de_hold_us = 8000u,
+      .last_poll_us = 123490u,
+      .crc_error_count = 3u,
+      .rx_error_count = 4u,
+      .max_loop_us = 6100u,
+      .loop_overrun_count = 5u,
+      .rx_starvation_count = 6u,
+      .stuck_de_count = 7u,
+      .mailbox_repair_count = 8u,
+      .health_flags = HCP2_LP_HEALTH_FLAG_RX_STARVATION,
+      .max_rx_fifo_count = 9u,
+      .max_poll_rx_to_schedule_us = 10u,
+      .max_response_schedule_to_tx_start_us = 4200u,
+      .max_response_tx_us = 4100u,
+  };
+  hcp2_lp_mailbox_publish_counters(&mailbox, &counters);
 
   assert(hcp2_lp_mailbox_read_state(&mailbox, &snapshot));
   assert(snapshot.target_position == 200u);
