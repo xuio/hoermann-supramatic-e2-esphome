@@ -47,9 +47,8 @@ captive_portal:
 
 api:
   reboot_timeout: 0s
-  # No key is baked into the public tester image. ESPHome starts with a
-  # plaintext adoption path, then stores the per-device Noise key in flash.
-  encryption:
+  # Keep the public tester image plaintext so first-time Home Assistant
+  # adoption never asks the tester for a shared encryption key.
 
 ota:
   - platform: esphome

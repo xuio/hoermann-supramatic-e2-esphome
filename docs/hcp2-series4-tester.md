@@ -39,13 +39,13 @@ with the tester's Wi-Fi credentials, without editing or rebuilding the YAML. For
 first flashing, use
 `hcp2-supramatic-4-tester-firmware.factory-<commit>.bin`; it is the merged
 ESP32-C6 image for offset `0x0`. The public prebuilt image does not contain a
-shared ESPHome API key; after Wi-Fi is configured, adopt the node through Home
-Assistant / ESPHome so the per-device API encryption key is stored in flash. OTA
-has no password in the public image to avoid a shared public password. For a
-permanent install, add OTA auth in a local/private config and upload that image
-after adoption. The HCP2 debug UI intentionally owns port `80`, but it only
-starts after the device has joined station Wi-Fi; while the setup portal is
-active, the debug UI is closed.
+shared ESPHome API key and keeps the native API plaintext, so Home Assistant
+adoption should not ask for an encryption key. OTA has no password in the public
+image to avoid a shared public password. For a permanent install, add API
+encryption and OTA auth in a local/private config and upload that image after
+adoption. The HCP2 debug UI intentionally owns port `80`, but it only starts
+after the device has joined station Wi-Fi; while the setup portal is active, the
+debug UI is closed.
 
 The tester config exposes the normal Home Assistant garage-door cover and light,
 plus explicit command buttons for `open`, `close`, `stop`, `half`, `vent`, and

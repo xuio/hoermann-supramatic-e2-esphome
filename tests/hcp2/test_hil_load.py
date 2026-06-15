@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+import tools.hcp2_hil_load as hil_load
 from tools.hcp2_hil_load import (
     EmulatedEspHomeCommandSender,
     aggregate_reports,
@@ -135,7 +136,7 @@ def test_hil_load_parses_button_object_id_mapping() -> None:
         parse_button_object_ids(["foo=bar"])
 
 
-def test_hil_load_native_api_mapping_requires_host_and_key(tmp_path: Path) -> None:
+def test_hil_load_native_api_mapping_requires_host_but_allows_plaintext_api(tmp_path: Path, monkeypatch) -> None:
     args = parse_args(
         "--esp-cover-object-id",
         "garage_door_hcp2_tester",
@@ -145,6 +146,47 @@ def test_hil_load_native_api_mapping_requires_host_and_key(tmp_path: Path) -> No
     with pytest.raises(ValueError, match="--esp-host"):
         run_session(args, load_commands=[])
 
+    seen: dict[str, object] = {}
+
+    class DummyNativeApiCommandSender:
+        def __init__(self, **kwargs):
+            seen["api_key"] = kwargs["api_key"]
+            self.errors = []
+
+        def start(self) -> None:
+            return
+
+        def stop(self) -> None:
+            return
+
+        def report(self) -> dict[str, object]:
+            return {"mode": "native-api"}
+
+    class DummyTransport:
+        def __init__(self, serial: str):
+            self.serial = serial
+
+        def close(self) -> None:
+            return
+
+    class DummySimulation:
+        def as_dict(self) -> dict[str, object]:
+            return {"verdict": "ok"}
+
+    class DummySimulator:
+        def __init__(self, *args, **kwargs):
+            return
+
+        def run(self, *args, **kwargs):
+            return DummySimulation()
+
+        def close(self) -> None:
+            return
+
+    monkeypatch.setattr(hil_load, "NativeApiCommandSender", DummyNativeApiCommandSender)
+    monkeypatch.setattr(hil_load, "SerialTransport", DummyTransport)
+    monkeypatch.setattr(hil_load, "SupraMaticSimulator", DummySimulator)
+
     args = parse_args(
         "--esp-host",
         "192.0.2.10",
@@ -152,9 +194,12 @@ def test_hil_load_native_api_mapping_requires_host_and_key(tmp_path: Path) -> No
         "garage_door_hcp2_tester",
         "--secrets-file",
         str(tmp_path / "missing.yaml"),
+        "--cycles",
+        "1",
     )
-    with pytest.raises(ValueError, match="--esp-api-key"):
-        run_session(args, load_commands=[])
+    report = run_session(args, load_commands=[])
+    assert report["esp_api_encryption"] == "plaintext"
+    assert seen["api_key"] is None
 
 
 def test_hil_load_resolves_emulated_command_mode_for_scenarios() -> None:

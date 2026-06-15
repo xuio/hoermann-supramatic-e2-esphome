@@ -73,7 +73,7 @@ def build_parser() -> argparse.ArgumentParser:
             "require fails the run when health is unavailable or continuity-classified as failed."
         ),
     )
-    parser.add_argument("--esp-api-key", help="ESPHome native API encryption key")
+    parser.add_argument("--esp-api-key", help="ESPHome native API encryption key; omit for plaintext API")
     parser.add_argument("--secrets-file", type=Path, default=Path("secrets.yaml"))
     parser.add_argument("--api-key-secret", default="api_key_supramatic_4_dev")
     parser.add_argument("--esp-expected-name", help="ESPHome expected node name for native API")
@@ -261,7 +261,7 @@ class NativeApiCommandSender:
         *,
         host: str,
         port: int,
-        api_key: str,
+        api_key: str | None,
         expected_name: str | None,
         cover_object_id: str | None,
         button_object_ids: dict[str, str],
@@ -726,10 +726,6 @@ def run_session(args: argparse.Namespace, *, run_index: int = 1, load_commands: 
         )
     if use_native_api_commands and not args.esp_host:
         raise ValueError("native API command injection requires --esp-host")
-    if use_native_api_commands and not api_key:
-        raise ValueError(
-            "native API command injection requires --esp-api-key or a matching --api-key-secret in --secrets-file"
-        )
     if use_emulated_commands and args.expect_button:
         raise ValueError(
             "--expect-button requires decoded HCP2 output; emulated command mode records emulated_button_observations instead"
@@ -746,6 +742,7 @@ def run_session(args: argparse.Namespace, *, run_index: int = 1, load_commands: 
         "preset": args.preset,
         "esp_host": args.esp_host,
         "esp_api_port": args.esp_api_port,
+        "esp_api_encryption": "noise" if api_key else "plaintext",
         "esp_http_port": args.esp_http_port,
         "health_check": args.health_check,
         "esp_expected_name": args.esp_expected_name,
@@ -799,7 +796,6 @@ def run_session(args: argparse.Namespace, *, run_index: int = 1, load_commands: 
             report["load_commands"].append(record)
 
         if use_native_api_commands:
-            assert api_key is not None
             command_sender = NativeApiCommandSender(
                 host=args.esp_host,
                 port=args.esp_api_port,

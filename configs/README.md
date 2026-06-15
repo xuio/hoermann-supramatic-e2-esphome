@@ -47,11 +47,16 @@ after station Wi-Fi is connected.
 
 GitHub Actions builds firmware artifacts for the main HCP1 image and the HCP2
 Series 4 tester image in `.github/workflows/firmware-build.yml`. The newest
-successful `main` build publishes the public HCP2 tester image at
+successful `main` build publishes the public HCP1 and HCP2 images at
 <https://github.com/xuio/hoermann-supramatic-e2-esphome/releases/latest>.
 
-The public release intentionally contains only the files a tester normally needs:
+The public release intentionally contains only the files users normally need:
 
+- `hcp1-supramatic-e2-firmware.factory-<commit>.bin`
+- `hcp1-supramatic-e2-web-flasher-manifest-<commit>.json`
+- `hcp1-supramatic-e2-firmware.ota-<commit>.bin`
+- `hcp1-supramatic-e2-manifest-<commit>.txt`
+- `hcp1-supramatic-e2-<commit>.zip`
 - `hcp2-supramatic-4-tester-firmware.factory-<commit>.bin`
 - `hcp2-supramatic-4-tester-web-flasher-manifest-<commit>.json`
 - `hcp2-supramatic-4-tester-firmware.ota-<commit>.bin`
@@ -59,11 +64,15 @@ The public release intentionally contains only the files a tester normally needs
 - `hcp2-supramatic-4-tester-<commit>.zip`
 - `SHA256SUMS-<commit>.txt`
 
-The factory image is the easy flash image: a merged ESP32-C6 binary for offset
+The factory images are the easy flash images: merged ESP32 binaries for offset
 `0x0`. Every public download filename includes the short commit hash.
 
-The public tester image does not include a shared ESPHome API key. ESPHome starts
-in first-adoption mode and stores a per-device encryption key in flash when
-adopted. OTA has no password in the public image to avoid a shared public
-password; add OTA auth in a local/private config and upload that image after
-adoption for a permanent install.
+The HCP1 image is built from the standard Ethernet config with generated CI
+ESPHome API/OTA credentials. For a permanent HCP1 install, build or upload from
+your own private `configs/secrets.yaml`.
+
+The public HCP2 tester image does not include a shared ESPHome API key and keeps
+the native API plaintext, so Home Assistant adoption should not ask for an
+encryption key. OTA has no password in the public image to avoid a shared public
+password; add API encryption and OTA auth in a local/private config and upload
+that image after adoption for a permanent install.

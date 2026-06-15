@@ -120,88 +120,133 @@ jobs:
 
           mkdir -p release-assets
 
-          artifact="hcp2-supramatic-4-tester"
-          artifact_dir="firmware-artifacts/${artifact}"
           short_sha="$(printf '%s' "$GITHUB_SHA" | cut -c1-12)"
-          factory_asset="${artifact}-firmware.factory-${short_sha}.bin"
-          ota_asset="${artifact}-firmware.ota-${short_sha}.bin"
-          build_manifest_asset="${artifact}-manifest-${short_sha}.txt"
-          web_manifest_asset="${artifact}-web-flasher-manifest-${short_sha}.json"
           checksum_asset="SHA256SUMS-${short_sha}.txt"
-          bundle_asset="${artifact}-${short_sha}.zip"
-          test -d "$artifact_dir"
 
-          test -f "$artifact_dir/firmware.factory.bin"
-          test -f "$artifact_dir/firmware.ota.bin"
-          test -f "$artifact_dir/manifest.txt"
-          cp "$artifact_dir/firmware.factory.bin" "release-assets/${factory_asset}"
-          cp "$artifact_dir/firmware.ota.bin" "release-assets/${ota_asset}"
-          cp "$artifact_dir/manifest.txt" "release-assets/${build_manifest_asset}"
+          package_artifact() {
+            artifact="$1"
+            title="$2"
+            chip_family="$3"
+            improv="$4"
 
-          python3 - <<PY
+            artifact_dir="firmware-artifacts/${artifact}"
+            factory_asset="${artifact}-firmware.factory-${short_sha}.bin"
+            ota_asset="${artifact}-firmware.ota-${short_sha}.bin"
+            build_manifest_asset="${artifact}-manifest-${short_sha}.txt"
+            web_manifest_asset="${artifact}-web-flasher-manifest-${short_sha}.json"
+            bundle_asset="${artifact}-${short_sha}.zip"
+
+            test -d "$artifact_dir"
+            test -f "$artifact_dir/firmware.factory.bin"
+            test -f "$artifact_dir/firmware.ota.bin"
+            test -f "$artifact_dir/manifest.txt"
+
+            cp "$artifact_dir/firmware.factory.bin" "release-assets/${factory_asset}"
+            cp "$artifact_dir/firmware.ota.bin" "release-assets/${ota_asset}"
+            cp "$artifact_dir/manifest.txt" "release-assets/${build_manifest_asset}"
+
+            TITLE="$title" \
+            CHIP_FAMILY="$chip_family" \
+            IMPROV="$improv" \
+            VERSION="$short_sha" \
+            FACTORY_ASSET="$factory_asset" \
+            WEB_MANIFEST="release-assets/${web_manifest_asset}" \
+              python3 - <<'PY'
           import json
           import os
           from pathlib import Path
 
           base_url = f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/releases/download/firmware-latest"
-          manifest = {
-              "name": "Garage Door HCP2 Tester",
-              "version": "${short_sha}",
-              "new_install_prompt_erase": True,
-              "builds": [
+          build = {
+              "chipFamily": os.environ["CHIP_FAMILY"],
+              "parts": [
                   {
-                      "chipFamily": "ESP32-C6",
-                      "improv": True,
-                      "parts": [
-                          {
-                              "path": f"{base_url}/${factory_asset}",
-                              "offset": 0,
-                          }
-                      ],
+                      "path": f"{base_url}/{os.environ['FACTORY_ASSET']}",
+                      "offset": 0,
                   }
               ],
           }
-          Path("release-assets/${web_manifest_asset}").write_text(
+          if os.environ["IMPROV"] == "true":
+              build["improv"] = True
+          manifest = {
+              "name": os.environ["TITLE"],
+              "version": os.environ["VERSION"],
+              "new_install_prompt_erase": True,
+              "builds": [build],
+          }
+          Path(os.environ["WEB_MANIFEST"]).write_text(
               json.dumps(manifest, indent=2) + "\n",
               encoding="utf-8",
           )
           PY
 
-          bundle_dir="$(mktemp -d)"
-          cp "release-assets/${factory_asset}" "$bundle_dir/"
-          cp "release-assets/${ota_asset}" "$bundle_dir/"
-          cp "release-assets/${build_manifest_asset}" "$bundle_dir/"
-          cp "release-assets/${web_manifest_asset}" "$bundle_dir/"
-          (
-            cd "$bundle_dir"
-            sha256sum * > "${checksum_asset}"
-            zip -qr "${GITHUB_WORKSPACE}/release-assets/${bundle_asset}" .
-          )
-          rm -rf "$bundle_dir"
+            bundle_dir="$(mktemp -d)"
+            cp "release-assets/${factory_asset}" "$bundle_dir/"
+            cp "release-assets/${ota_asset}" "$bundle_dir/"
+            cp "release-assets/${build_manifest_asset}" "$bundle_dir/"
+            cp "release-assets/${web_manifest_asset}" "$bundle_dir/"
+            (
+              cd "$bundle_dir"
+              sha256sum * > "${checksum_asset}"
+              zip -qr "${GITHUB_WORKSPACE}/release-assets/${bundle_asset}" .
+            )
+            rm -rf "$bundle_dir"
+          }
+
+          package_artifact "hcp1-supramatic-e2" "Garage Door HCP1 SupraMatic E2" "ESP32-S3" "false"
+          package_artifact "hcp2-supramatic-4-tester" "Garage Door HCP2 Series 4 Tester" "ESP32-C6" "true"
 
           (
             cd release-assets
             sha256sum * > "${checksum_asset}"
           )
 
+          hcp1_factory_asset="hcp1-supramatic-e2-firmware.factory-${short_sha}.bin"
+          hcp1_ota_asset="hcp1-supramatic-e2-firmware.ota-${short_sha}.bin"
+          hcp1_build_manifest_asset="hcp1-supramatic-e2-manifest-${short_sha}.txt"
+          hcp1_web_manifest_asset="hcp1-supramatic-e2-web-flasher-manifest-${short_sha}.json"
+          hcp1_bundle_asset="hcp1-supramatic-e2-${short_sha}.zip"
+          hcp2_factory_asset="hcp2-supramatic-4-tester-firmware.factory-${short_sha}.bin"
+          hcp2_ota_asset="hcp2-supramatic-4-tester-firmware.ota-${short_sha}.bin"
+          hcp2_build_manifest_asset="hcp2-supramatic-4-tester-manifest-${short_sha}.txt"
+          hcp2_web_manifest_asset="hcp2-supramatic-4-tester-web-flasher-manifest-${short_sha}.json"
+          hcp2_bundle_asset="hcp2-supramatic-4-tester-${short_sha}.zip"
+
           cat > release-notes.md <<EOF
           Latest successful firmware build from \`main\` (\`${short_sha}\`).
 
-          Public direct downloads for the HCP2 Series 4 tester:
+          Public direct downloads for the HCP1 SupraMatic E2 / ESP32-S3-ETH image:
 
-          - Easy flash image: \`${factory_asset}\`
+          - Easy flash image: \`${hcp1_factory_asset}\`
+            (merged ESP32-S3 image, flash at offset \`0x0\`)
+          - ESP Web Tools manifest: \`${hcp1_web_manifest_asset}\`
+          - OTA image: \`${hcp1_ota_asset}\`
+          - Build manifest: \`${hcp1_build_manifest_asset}\`
+          - Commit bundle: \`${hcp1_bundle_asset}\`
+
+          Public direct downloads for the HCP2 Series 4 tester / ESP32-C6 image:
+
+          - Easy flash image: \`${hcp2_factory_asset}\`
             (merged ESP32-C6 image, flash at offset \`0x0\`)
-          - ESP Web Tools manifest: \`${web_manifest_asset}\`
-          - OTA image: \`${ota_asset}\`
-          - Build manifest: \`${build_manifest_asset}\`
-          - Commit bundle: \`${bundle_asset}\`
+          - ESP Web Tools manifest: \`${hcp2_web_manifest_asset}\`
+          - OTA image: \`${hcp2_ota_asset}\`
+          - Build manifest: \`${hcp2_build_manifest_asset}\`
+          - Commit bundle: \`${hcp2_bundle_asset}\`
+
+          Shared:
+
           - Checksums: \`${checksum_asset}\`
 
-          This public tester image does not bake in a shared ESPHome API encryption
-          key. ESPHome starts in its first-adoption mode and stores a per-device
-          Noise key in flash when adopted. OTA has no password in the public image,
-          so there is no shared public OTA password; for a private deployment, add
-          OTA auth in a local/private config and upload that image after adoption.
+          The HCP1 image is built from the standard Ethernet config with generated
+          CI ESPHome API/OTA credentials. For a permanent HCP1 install, build or
+          upload from your own private \`configs/secrets.yaml\`.
+
+          The HCP2 public tester image does not bake in a shared ESPHome API
+          encryption key and keeps the native API plaintext, so Home Assistant
+          adoption should not ask for an encryption key. OTA has no password in
+          the public image, so there is no shared public OTA password; for a
+          private deployment, add API encryption and OTA auth in a local/private
+          config and upload that image after adoption.
           EOF
 
       - name: Publish firmware-latest release
