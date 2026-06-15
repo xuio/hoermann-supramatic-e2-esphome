@@ -35,6 +35,8 @@ void hcp2_hp_supervisor_begin_session(hcp2_hp_supervisor_t *supervisor, uint32_t
   supervisor->epoch = nonzero_epoch_(epoch);
   supervisor->next_sequence = 0u;
 
+  mailbox->command_epoch = supervisor->epoch;
+  memory_barrier_();
   mailbox->command_sequence = 0u;
   memory_barrier_();
   mailbox->command_id = (uint8_t) HCP2_LP_COMMAND_NONE;
@@ -43,7 +45,6 @@ void hcp2_hp_supervisor_begin_session(hcp2_hp_supervisor_t *supervisor, uint32_t
   mailbox->command_ack_result = (uint8_t) HCP2_LP_COMMAND_RESULT_NONE;
   mailbox->command_deadline_us = 0u;
   hcp2_lp_mailbox_disarm_stop_trigger(mailbox);
-  mailbox->command_epoch = supervisor->epoch;
   memory_barrier_();
 }
 
