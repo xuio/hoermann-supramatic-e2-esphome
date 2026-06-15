@@ -13,6 +13,7 @@ from pathlib import Path
 
 from tools.supramatic_sim.__main__ import run_once, selftest
 from tools.supramatic_sim import protocol
+from tools.supramatic_sim.door_model import DEFAULT_HALF_POSITION, DEFAULT_VENT_POSITION
 from tools.supramatic_sim.simulator import DEFAULT_MISSED_POLL_THRESHOLD, SupraMaticSimulator
 from tools.supramatic_sim.transport import HOST_RESPONDER, build_host_responder
 
@@ -31,9 +32,25 @@ def scenario(**kwargs: object) -> Namespace:
         "trace": None,
         "progress": None,
         "progress_interval_s": 60.0,
+        "no_progress_fsync": False,
         "abort_on_miss": False,
         "fault": [],
+        "fault_every_cycles": 0,
+        "fault_cycle": [],
         "command": None,
+        "scenario": "steady",
+        "door_travel_cycles": 260,
+        "reverse_profile": "stop_then_reverse",
+        "reverse_dwell_cycles": 4,
+        "stop_latency_cycles": 1,
+        "overshoot_raw_ticks": 1,
+        "half_position_raw": DEFAULT_HALF_POSITION,
+        "vent_position_raw": DEFAULT_VENT_POSITION,
+        "goto_position_raw": 80,
+        "obstruction_cycle": None,
+        "obstruction_no_reverse": False,
+        "speculative_obstruction_flags": False,
+        "emulate_esphome_commands": False,
         "expect_button": [],
     }
     defaults.update(kwargs)
@@ -153,6 +170,194 @@ def test_socketpair_light_command() -> None:
     result = run_once(scenario(pty=False, socketpair=True, cycles=40, command="light"))
     assert result["verdict"] == "ok"
     assert result["command_replies"] == 1
+
+
+def test_door_scenario_open_and_close() -> None:
+    opened = run_once(
+        scenario(
+            pty=False,
+            socketpair=True,
+            cycles=24,
+            scenario="open-from-closed",
+            door_travel_cycles=8,
+            expect_button=["open"],
+        )
+    )
+    assert opened["verdict"] == "ok"
+    assert opened["door"]["state_name"] == "open"
+    assert opened["door"]["position"] == 200
+
+    closed = run_once(
+        scenario(
+            pty=False,
+            socketpair=True,
+            cycles=24,
+            scenario="close-from-open",
+            door_travel_cycles=8,
+            expect_button=["close"],
+        )
+    )
+    assert closed["verdict"] == "ok"
+    assert closed["door"]["state_name"] == "closed"
+    assert closed["door"]["position"] == 0
+
+
+def test_emulated_esphome_command_mode_moves_virtual_door_without_decoded_button() -> None:
+    result = run_once(
+        scenario(
+            pty=False,
+            socketpair=True,
+            cycles=24,
+            scenario="open-from-closed",
+            door_travel_cycles=8,
+            emulate_esphome_commands=True,
+        )
+    )
+
+    assert result["verdict"] == "ok"
+    assert result["door"]["state_name"] == "open"
+    assert result["door"]["position"] == 200
+    assert result["button_observations"] == {}
+    assert result["emulated_button_observations"] == {"open": 1}
+    assert result["emulated_button_phase_observations"] == {"open:press": 1}
+    assert any("ESPHome commands were emulated" in note for note in result["notes"])
+
+
+def test_door_scenario_stop_and_reverse_profiles() -> None:
+    stopped = run_once(
+        scenario(
+            pty=False,
+            socketpair=True,
+            cycles=24,
+            scenario="stop-mid-opening",
+            door_travel_cycles=16,
+            expect_button=["open", "stop"],
+        )
+    )
+    assert stopped["verdict"] == "ok"
+    assert stopped["door"]["state_name"] == "stopped"
+    assert 0 < stopped["door"]["position"] < 200
+
+    reversed_run = run_once(
+        scenario(
+            pty=False,
+            socketpair=True,
+            cycles=50,
+            scenario="reverse-open-to-close",
+            door_travel_cycles=32,
+            reverse_dwell_cycles=2,
+            expect_button=["open", "close"],
+        )
+    )
+    assert reversed_run["verdict"] == "ok"
+    assert reversed_run["door"]["state_name"] == "closed"
+    assert any(event["event"] == "stopped" and event["reason"] == "reverse-dwell" for event in reversed_run["door"]["events"])
+
+    immediate = run_once(
+        scenario(
+            pty=False,
+            socketpair=True,
+            cycles=24,
+            scenario="reverse-close-to-open",
+            door_travel_cycles=8,
+            reverse_profile="immediate_reverse",
+            expect_button=["close", "open"],
+        )
+    )
+    assert immediate["verdict"] == "ok"
+    assert immediate["door"]["state_name"] == "open"
+
+
+def test_door_scenario_partial_vent_light_obstruction_and_goto() -> None:
+    half = run_once(
+        scenario(
+            pty=False,
+            socketpair=True,
+            cycles=24,
+            scenario="half-position",
+            door_travel_cycles=8,
+            half_position_raw=24,
+            expect_button=["half"],
+        )
+    )
+    assert half["verdict"] == "ok"
+    assert half["door"]["state_name"] == "half"
+    assert half["door"]["position"] == 24
+
+    vent = run_once(
+        scenario(
+            pty=False,
+            socketpair=True,
+            cycles=24,
+            scenario="vent-position",
+            door_travel_cycles=8,
+            vent_position_raw=8,
+            expect_button=["vent"],
+        )
+    )
+    assert vent["verdict"] == "ok"
+    assert vent["door"]["state_name"] == "vent"
+    assert vent["door"]["position"] == 8
+
+    light = run_once(
+        scenario(
+            pty=False,
+            socketpair=True,
+            cycles=8,
+            scenario="light-toggle",
+            expect_button=["light"],
+        )
+    )
+    assert light["verdict"] == "ok"
+    assert light["door"]["light_word"] == 0
+
+    obstruction = run_once(
+        scenario(
+            pty=False,
+            socketpair=True,
+            cycles=28,
+            scenario="closing-obstruction",
+            door_travel_cycles=12,
+            obstruction_cycle=4,
+            expect_button=["close"],
+        )
+    )
+    assert obstruction["verdict"] == "ok"
+    assert obstruction["door"]["incomplete_cycles"] == 1
+    assert any(event["event"] == "obstruction" for event in obstruction["door"]["events"])
+
+    goto = run_once(
+        scenario(
+            pty=False,
+            socketpair=True,
+            cycles=24,
+            scenario="goto-position",
+            door_travel_cycles=10,
+            goto_position_raw=80,
+            expect_button=["open", "stop"],
+        )
+    )
+    assert goto["verdict"] == "ok"
+    assert goto["door"]["state_name"] == "stopped"
+    assert abs(goto["door"]["position"] - 80) <= 2
+
+
+def test_repeated_fault_injection_uses_explicit_schedule() -> None:
+    result = run_once(
+        scenario(
+            pty=False,
+            socketpair=True,
+            cycles=12,
+            fault=["corrupt-crc", "wrong-slave", "wrong-register", "bad-byte-count"],
+            fault_every_cycles=4,
+            fault_cycle=[6],
+        )
+    )
+    assert result["verdict"] == "ok"
+    # cycle 1, cycle 4, explicit cycle 6, and cycle 8 each run four no-response checks.
+    assert result["fault_checks"] == 16
+    assert result["fault_recoveries"] == 16
+    assert result["fault_unexpected_responses"] == 0
 
 
 class PseudoSerialPair:

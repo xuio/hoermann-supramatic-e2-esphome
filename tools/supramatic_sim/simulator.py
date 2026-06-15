@@ -9,10 +9,13 @@ import random
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TextIO
-from typing import Callable
+from typing import Callable, TextIO
 
 from . import protocol
+from .door_model import (
+    DoorModel,
+    POSITION_OPEN,
+)
 from .protocol import BroadcastState
 from .transport import Transport
 
@@ -23,6 +26,28 @@ POLL_TO_NEXT_BROADCAST_GAP_US = 26_000
 DEFAULT_MISSED_POLL_THRESHOLD = 5
 DEFAULT_SPEED_FACTOR = 20.0
 DEFAULT_RESPONSE_TIMEOUT_S = 0.03
+DEFAULT_DOOR_TRAVEL_CYCLES = 260
+
+
+SCENARIOS = {
+    "steady",
+    "open-from-closed",
+    "close-from-open",
+    "stop-mid-opening",
+    "reverse-open-to-close",
+    "reverse-close-to-open",
+    "half-position",
+    "vent-position",
+    "light-toggle",
+    "closing-obstruction",
+    "goto-position",
+}
+
+
+COMMAND_TO_SCENARIO = {
+    "open": "open-from-closed",
+    "close": "close-from-open",
+}
 
 
 @dataclass
@@ -39,6 +64,9 @@ class SimulationReport:
     fault_unexpected_responses: int = 0
     ignored_responses: int = 0
     button_observations: dict[str, int] = field(default_factory=dict)
+    button_phase_observations: dict[str, int] = field(default_factory=dict)
+    emulated_button_observations: dict[str, int] = field(default_factory=dict)
+    emulated_button_phase_observations: dict[str, int] = field(default_factory=dict)
     verdict: str = "ok"
     latencies_ms: list[float] = field(default_factory=list)
     latency_sum_ms: float = 0.0
@@ -46,6 +74,8 @@ class SimulationReport:
     latency_max_seen_ms: float | None = None
     elapsed_s: float | None = None
     notes: list[str] = field(default_factory=list)
+    scenario: str = "steady"
+    door: dict[str, object] = field(default_factory=dict)
 
     def record_latency(self, latency_ms: float) -> None:
         self.latencies_ms.append(latency_ms)
@@ -70,6 +100,9 @@ class SimulationReport:
             "fault_unexpected_responses": self.fault_unexpected_responses,
             "ignored_responses": self.ignored_responses,
             "button_observations": self.button_observations,
+            "button_phase_observations": self.button_phase_observations,
+            "emulated_button_observations": self.emulated_button_observations,
+            "emulated_button_phase_observations": self.emulated_button_phase_observations,
             "latency_samples": samples,
             "latency_min_ms": self.latency_min_seen_ms,
             "latency_mean_ms": (self.latency_sum_ms / samples) if samples else None,
@@ -94,6 +127,9 @@ class SimulationReport:
             "fault_unexpected_responses": self.fault_unexpected_responses,
             "ignored_responses": self.ignored_responses,
             "button_observations": self.button_observations,
+            "button_phase_observations": self.button_phase_observations,
+            "emulated_button_observations": self.emulated_button_observations,
+            "emulated_button_phase_observations": self.emulated_button_phase_observations,
             "latency_min_ms": self.latency_min_seen_ms,
             "latency_mean_ms": (self.latency_sum_ms / len(latencies)) if latencies else None,
             "latency_p99_ms": percentile(latencies, 99) if latencies else None,
@@ -101,6 +137,8 @@ class SimulationReport:
             "elapsed_s": self.elapsed_s,
             "verdict": self.verdict,
             "notes": self.notes,
+            "scenario": self.scenario,
+            "door": self.door,
         }
 
     def write(self, path: Path) -> None:
@@ -146,6 +184,14 @@ class SupraMaticSimulator:
         progress_path: Path | None = None,
         progress_interval_s: float = 60.0,
         progress_fsync: bool = True,
+        scenario: str = "steady",
+        door_model: DoorModel | None = None,
+        command_sender: Callable[[str], str] | None = None,
+        fault_every_cycles: int = 0,
+        fault_cycles: set[int] | None = None,
+        goto_position: int = 80,
+        strict_scenario_verdict: bool = True,
+        emulate_commands: bool = False,
     ) -> None:
         self.transport = transport
         self.slave_id = slave_id
@@ -159,6 +205,17 @@ class SupraMaticSimulator:
         self.expected_buttons = expected_buttons or set()
         self.rx_buffer = bytearray()
         self.report = SimulationReport()
+        self.scenario = scenario
+        self.report.scenario = scenario
+        self.door = door_model or DoorModel()
+        self.command_sender = command_sender or self._transport_command
+        self.fault_every_cycles = fault_every_cycles
+        self.fault_cycles = fault_cycles or set()
+        self.goto_position = max(0, min(POSITION_OPEN, goto_position))
+        self.strict_scenario_verdict = strict_scenario_verdict
+        self.emulate_commands = emulate_commands
+        self.scenario_actions = self.build_scenario_actions(scenario)
+        self.seen_button_presses: set[str] = set()
         self.trace_start_s = time.monotonic()
         self.trace_file: TextIO | None = None
         if trace_path is not None:
@@ -169,6 +226,43 @@ class SupraMaticSimulator:
         if progress_path is not None:
             progress_path.parent.mkdir(parents=True, exist_ok=True)
             self.progress_file = progress_path.open("w", encoding="utf-8")
+
+    def _transport_command(self, button: str) -> str:
+        return self.transport.command(f"press {button}")
+
+    def build_scenario_actions(self, scenario: str) -> dict[int, list[tuple[str, str]]]:
+        if scenario not in SCENARIOS:
+            raise ValueError(f"unknown scenario: {scenario}")
+        if scenario == "steady":
+            return {}
+        if scenario == "open-from-closed":
+            return {2: [("button", "open")]}
+        if scenario == "close-from-open":
+            self.door = DoorModel.open(**self.door.as_dict()["parameters"])  # type: ignore[arg-type]
+            return {2: [("button", "close")]}
+        if scenario == "stop-mid-opening":
+            return {2: [("button", "open")], 12: [("button", "stop")]}
+        if scenario == "reverse-open-to-close":
+            return {2: [("button", "open")], 12: [("button", "close")]}
+        if scenario == "reverse-close-to-open":
+            self.door = DoorModel.open(**self.door.as_dict()["parameters"])  # type: ignore[arg-type]
+            return {2: [("button", "close")], 12: [("button", "open")]}
+        if scenario == "half-position":
+            return {2: [("button", "half")]}
+        if scenario == "vent-position":
+            return {2: [("button", "vent")]}
+        if scenario == "light-toggle":
+            return {2: [("button", "light")]}
+        if scenario == "closing-obstruction":
+            self.door = DoorModel.open(**self.door.as_dict()["parameters"])  # type: ignore[arg-type]
+            if self.door.obstruction_cycle is None:
+                self.door.obstruction_cycle = 16
+            return {2: [("button", "close")]}
+        if scenario == "goto-position":
+            initial = DoorModel.closed(**self.door.as_dict()["parameters"])  # type: ignore[arg-type]
+            self.door = initial
+            return {2: [("button", "open")]}
+        return {}
 
     def close(self) -> None:
         if self.trace_file is not None:
@@ -280,6 +374,12 @@ class SupraMaticSimulator:
         duration_s: float | None = None,
     ) -> SimulationReport:
         faults = faults or set()
+        legacy_light_command = command == "light" and self.scenario == "steady"
+        if command in COMMAND_TO_SCENARIO and self.scenario == "steady":
+            self.scenario = COMMAND_TO_SCENARIO[command]
+            self.report.scenario = self.scenario
+            self.strict_scenario_verdict = False
+            self.scenario_actions = self.build_scenario_actions(self.scenario)
         deadline_s = time.monotonic() + duration_s if duration_s is not None else None
         self.progress("start", cycle=0, cycles=cycles, duration_s=duration_s, force=True)
         self.run_bus_scan()
@@ -302,7 +402,7 @@ class SupraMaticSimulator:
             if self.report.consecutive_misses >= self.missed_poll_threshold:
                 self.report.verdict = "error-04"
                 break
-            self.run_cycle(cycle, faults=faults, command=command)
+            self.run_cycle(cycle, faults=faults, legacy_light_command=legacy_light_command)
             cycle += 1
             self.progress("progress", cycle=cycle, cycles=cycles, duration_s=duration_s)
 
@@ -314,7 +414,11 @@ class SupraMaticSimulator:
             self.report.verdict = "fault-failed"
         elif self.report.consecutive_misses >= self.missed_poll_threshold:
             self.report.verdict = "error-04"
-        elif self.report.verdict == "ok":
+        elif self.report.verdict == "ok" and self.strict_scenario_verdict:
+            self.apply_scenario_verdict()
+        self.report.door = self.door.as_dict()
+        if self.report.verdict == "ok":
+            self.report.notes.append(f"scenario={self.scenario}")
             if self.transport.__class__.__name__ == "SerialTransport":
                 if getattr(self.transport, "low_latency_enabled", False):
                     self.report.notes.append(
@@ -330,9 +434,43 @@ class SupraMaticSimulator:
                     )
             else:
                 self.report.notes.append("pty/socketpair simulation does not model parity, baud tolerance, or wire timing")
+            if self.emulate_commands:
+                self.report.notes.append(
+                    "ESPHome commands were emulated by the simulator; decoded HCP2 button observations still require a real command path"
+                )
         self.report.elapsed_s = time.monotonic() - self.trace_start_s
         self.progress("final", cycle=self.report.polls_sent, cycles=cycles, duration_s=duration_s, force=True)
         return self.report
+
+    def apply_scenario_verdict(self) -> None:
+        if self.scenario == "open-from-closed" and self.door.state != 0x20:
+            self.report.verdict = "door-scenario-failed"
+            self.report.notes.append(f"door did not reach open: {self.door.as_dict()}")
+        elif self.scenario == "close-from-open" and self.door.state != 0x40:
+            self.report.verdict = "door-scenario-failed"
+            self.report.notes.append(f"door did not reach closed: {self.door.as_dict()}")
+        elif self.scenario == "stop-mid-opening" and self.door.state != 0x00:
+            self.report.verdict = "door-scenario-failed"
+            self.report.notes.append(f"door did not stop mid-opening: {self.door.as_dict()}")
+        elif self.scenario == "half-position" and self.door.state != 0x80:
+            self.report.verdict = "door-scenario-failed"
+            self.report.notes.append(f"door did not reach half position: {self.door.as_dict()}")
+        elif self.scenario == "vent-position" and self.door.state != 0x0A:
+            self.report.verdict = "door-scenario-failed"
+            self.report.notes.append(f"door did not reach vent position: {self.door.as_dict()}")
+        elif self.scenario == "closing-obstruction" and self.door.incomplete_cycles < 1:
+            self.report.verdict = "door-scenario-failed"
+            self.report.notes.append("obstruction scenario did not inject an obstruction")
+        elif self.scenario == "light-toggle" and self.door.light_word != 0x00:
+            self.report.verdict = "door-scenario-failed"
+            self.report.notes.append(f"light toggle did not change broadcast light word: {self.door.as_dict()}")
+        elif self.scenario == "goto-position":
+            tolerance = max(2, self.door.overshoot_raw_ticks + 1)
+            if abs(self.door.position - self.goto_position) > tolerance or self.door.state != 0x00:
+                self.report.verdict = "door-scenario-failed"
+                self.report.notes.append(
+                    f"goto target {self.goto_position} missed with tolerance {tolerance}: {self.door.as_dict()}"
+                )
 
     def run_bus_scan(self) -> None:
         start = time.monotonic()
@@ -352,41 +490,87 @@ class SupraMaticSimulator:
             self.report.notes.append(f"bus scan failed: {frame.hex() if frame else 'timeout'}")
             self.trace("bus_scan_miss", response=frame.hex() if frame else None)
 
-    def run_cycle(self, cycle: int, *, faults: set[str], command: str | None) -> None:
-        state = self.broadcast_for_cycle(cycle, command)
+    def run_cycle(self, cycle: int, *, faults: set[str], legacy_light_command: bool = False) -> None:
+        state = self.broadcast_for_cycle(cycle)
+        self.trace(
+            "broadcast_tx",
+            target=state.target,
+            current=state.current,
+            state=state.state,
+            light=state.light,
+            scenario=self.scenario,
+        )
         self.write_frame(protocol.broadcast_status(state))
         self.scaled_sleep(BROADCAST_TO_POLL_GAP_US, jitter="jitter" in faults)
 
         counter = cycle & 0xFF
-        if cycle == 1:
+        if self.should_inject_faults(cycle):
             self.inject_faults(faults, counter)
 
-        if command == "open" and cycle == 2:
-            ack = self.transport.command("press open")
-            if not ack.startswith("OK"):
-                self.report.notes.append(f"press open rejected: {ack}")
-        elif command == "close" and cycle == 2:
-            ack = self.transport.command("press close")
-            if not ack.startswith("OK"):
-                self.report.notes.append(f"press close rejected: {ack}")
-        elif command == "light" and cycle == 2:
+        for kind, value in self.scenario_actions.get(cycle, []):
+            if kind == "button":
+                self.issue_button(value)
+                if self.report.verdict != "ok":
+                    return
+
+        if self.scenario == "goto-position" and cycle > 2 and "stop" not in self.seen_button_presses:
+            position_step = max(1, round(POSITION_OPEN / self.door.travel_cycles))
+            stop_lead = max(position_step, self.door.overshoot_raw_ticks)
+            if state.current + stop_lead >= self.goto_position:
+                self.issue_button("stop")
+                if self.report.verdict != "ok":
+                    return
+
+        if legacy_light_command and cycle == 2:
             self.run_light_command(0x02, enabled=True)
 
         self.send_status_poll(counter, split="split" in faults)
         if self.report.verdict != "ok":
             return
+        self.door.tick()
         self.scaled_sleep(POLL_TO_NEXT_BROADCAST_GAP_US, jitter="jitter" in faults)
 
-    def broadcast_for_cycle(self, cycle: int, command: str | None) -> BroadcastState:
-        if command == "open":
-            position = min(200, cycle * 8)
-            state = 0x20 if position >= 200 else 0x01
-            return BroadcastState(target=200, current=position, state=state)
-        if command == "close":
-            position = max(0, 200 - cycle * 8)
-            state = 0x40 if position <= 0 else 0x02
-            return BroadcastState(target=0, current=position, state=state)
-        return protocol.BROADCAST_CLOSED
+    def should_inject_faults(self, cycle: int) -> bool:
+        if cycle == 1:
+            return True
+        if cycle in self.fault_cycles:
+            return True
+        return self.fault_every_cycles > 0 and cycle > 0 and cycle % self.fault_every_cycles == 0
+
+    def issue_button(self, button: str) -> None:
+        deadline = time.monotonic() + 0.3
+        while True:
+            try:
+                ack = self.command_sender(button)
+            except Exception as exc:
+                self.report.verdict = "command-send-failed"
+                self.report.notes.append(f"press {button} failed: {type(exc).__name__}: {exc}")
+                return
+            if ack != "ERR busy" or time.monotonic() >= deadline:
+                break
+            time.sleep(0.01)
+        if not ack.startswith("OK"):
+            self.report.verdict = "command-send-failed"
+            self.report.notes.append(f"press {button} rejected: {ack}")
+            return
+        self.trace("command_request", button=button, ack=ack)
+        if self.emulate_commands:
+            self.apply_emulated_button(button)
+
+    def apply_emulated_button(self, button: str) -> None:
+        self.report.emulated_button_observations[button] = (
+            self.report.emulated_button_observations.get(button, 0) + 1
+        )
+        key = f"{button}:press"
+        self.report.emulated_button_phase_observations[key] = (
+            self.report.emulated_button_phase_observations.get(key, 0) + 1
+        )
+        self.seen_button_presses.add(button)
+        self.door.command(button)
+        self.trace("emulated_esphome_command", button=button, phase="press")
+
+    def broadcast_for_cycle(self, cycle: int) -> BroadcastState:
+        return self.door.broadcast_state()
 
     def send_status_poll(self, counter: int, *, split: bool = False) -> None:
         frame = protocol.status_poll(counter, self.slave_id)
@@ -400,9 +584,17 @@ class SupraMaticSimulator:
             context=f"status poll {counter:02x}",
         )
         if response is not None:
-            button = protocol.decode_status_button(response)
+            decoded_button = protocol.decode_status_button_phase(response)
+            button = decoded_button[0] if decoded_button is not None else None
+            button_phase = decoded_button[1] if decoded_button is not None else None
             if button is not None:
                 self.report.button_observations[button] = self.report.button_observations.get(button, 0) + 1
+            if button is not None and button_phase is not None:
+                key = f"{button}:{button_phase}"
+                self.report.button_phase_observations[key] = self.report.button_phase_observations.get(key, 0) + 1
+                if button_phase == "press" and button not in self.seen_button_presses:
+                    self.seen_button_presses.add(button)
+                    self.door.command(button)
             latency_ms = (time.monotonic() - start) * 1000.0
             self.report.record_latency(latency_ms)
             self.report.replies += 1
@@ -414,6 +606,7 @@ class SupraMaticSimulator:
                 latency_ms=latency_ms,
                 poll_index=self.report.polls_sent,
                 button=button,
+                button_phase=button_phase,
             )
         else:
             self.report.misses += 1
@@ -457,6 +650,17 @@ class SupraMaticSimulator:
             corrupt = bytearray(valid)
             corrupt[-1] ^= 0x55
             self.expect_no_response(bytes(corrupt), "corrupt-crc")
+        if "wrong-slave" in faults:
+            wrong_slave = protocol.status_poll(counter, (self.slave_id % 247) + 1)
+            self.expect_no_response(wrong_slave, "wrong-slave")
+        if "wrong-register" in faults:
+            wrong_register = bytearray(valid[:-2])
+            wrong_register[3] ^= 0x01
+            self.expect_no_response(protocol.append_crc(bytes(wrong_register)), "wrong-register")
+        if "bad-byte-count" in faults:
+            bad_byte_count = bytearray(valid[:-2])
+            bad_byte_count[10] = 0x06
+            self.expect_no_response(protocol.append_crc(bytes(bad_byte_count)), "bad-byte-count")
         if "truncated" in faults:
             self.expect_no_response(valid[:8], "truncated")
         if "duplicate" in faults:

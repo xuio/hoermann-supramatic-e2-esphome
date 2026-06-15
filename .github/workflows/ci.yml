@@ -323,6 +323,38 @@ jobs:
           restore
           trap - EXIT
 
+      - name: Run Wokwi native LP-UART scenario matrix
+        if: ${{ env.WOKWI_CLI_TOKEN != '' }}
+        run: |
+          set -o pipefail
+          cp emulation/wokwi/wokwi.toml /tmp/hcp2-wokwi.toml
+          restore() { cp /tmp/hcp2-wokwi.toml emulation/wokwi/wokwi.toml; }
+          trap restore EXIT
+          cp emulation/wokwi/wokwi.lp-probe.toml emulation/wokwi/wokwi.toml
+          wokwi-cli emulation/wokwi \
+            --diagram-file diagram.opening.json \
+            --scenario opening.yaml \
+            --timeout 30000 \
+            --fail-text HCP2_WOKWI_VERDICT_FAIL \
+            --serial-log-file emulation/wokwi/opening.serial.log | tee emulation/wokwi/opening.full.log
+          grep -q "HCP2_WOKWI_VERDICT_OK reason=steady-state" emulation/wokwi/opening.full.log
+          wokwi-cli emulation/wokwi \
+            --diagram-file diagram.light-command.json \
+            --scenario light-command.yaml \
+            --timeout 30000 \
+            --fail-text HCP2_WOKWI_VERDICT_FAIL \
+            --serial-log-file emulation/wokwi/light-command.serial.log | tee emulation/wokwi/light-command.full.log
+          grep -q "HCP2_WOKWI_VERDICT_OK reason=steady-state" emulation/wokwi/light-command.full.log
+          wokwi-cli emulation/wokwi \
+            --diagram-file diagram.fault-recovery.json \
+            --scenario fault-recovery.yaml \
+            --timeout 30000 \
+            --fail-text HCP2_WOKWI_VERDICT_FAIL \
+            --serial-log-file emulation/wokwi/fault-recovery.serial.log | tee emulation/wokwi/fault-recovery.full.log
+          grep -q "HCP2_WOKWI_VERDICT_OK reason=steady-state" emulation/wokwi/fault-recovery.full.log
+          restore
+          trap - EXIT
+
       - name: Run Wokwi steady-state scenario
         if: ${{ env.WOKWI_CLI_TOKEN != '' }}
         run: |

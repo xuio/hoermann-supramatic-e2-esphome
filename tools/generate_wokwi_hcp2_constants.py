@@ -19,6 +19,9 @@ def c_array(name: str, data: bytes) -> str:
 
 def render() -> str:
     closed = protocol.broadcast_status(protocol.BROADCAST_CLOSED)
+    open_ = protocol.broadcast_status(protocol.BROADCAST_OPEN)
+    opening = protocol.broadcast_status(protocol.BroadcastState(target=200, current=0, state=0x01))
+    light_command = protocol.light_command(0x02, True, protocol.SLAVE_ID)
     scan_request = protocol.bus_scan_request(protocol.SLAVE_ID)
     poll0 = protocol.status_poll(0, protocol.SLAVE_ID)
     return "".join(
@@ -39,6 +42,14 @@ def render() -> str:
             c_array("HCP2_WOKWI_STATUS_POLL_COUNTER0", poll0),
             "\n",
             c_array("HCP2_WOKWI_BROADCAST_CLOSED", closed),
+            "\n",
+            c_array("HCP2_WOKWI_BROADCAST_OPENING", opening),
+            "\n",
+            c_array("HCP2_WOKWI_BROADCAST_OPEN", open_),
+            "\n",
+            c_array("HCP2_WOKWI_LIGHT_COMMAND_COUNTER2", light_command),
+            "\n",
+            c_array("HCP2_WOKWI_LIGHT_COMMAND_RESPONSE_COUNTER2", protocol.COMMAND_RESPONSE_BY_COUNTER[0x02]),
         ]
     )
 

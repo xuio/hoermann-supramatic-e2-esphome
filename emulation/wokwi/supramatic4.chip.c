@@ -16,6 +16,9 @@
 typedef enum {
   MODE_STEADY = 0,
   MODE_RESTART = 1,
+  MODE_OPENING = 2,
+  MODE_LIGHT_COMMAND = 3,
+  MODE_FAULT_RECOVERY = 4,
 } sim_mode_t;
 
 typedef enum {
@@ -23,6 +26,8 @@ typedef enum {
   PHASE_WAIT_SCAN,
   PHASE_BEFORE_POLL,
   PHASE_WAIT_POLL,
+  PHASE_WAIT_COMMAND,
+  PHASE_WAIT_FAULT_SILENCE,
   PHASE_NEXT_CYCLE,
   PHASE_DONE,
   PHASE_FAILED,
@@ -51,6 +56,9 @@ typedef struct {
   uint32_t max_consecutive_misses;
   uint32_t cycles_done;
   uint32_t command_replies;
+  uint32_t fault_checks;
+  uint32_t fault_recoveries;
+  uint32_t fault_unexpected_responses;
   uint32_t missed_threshold;
   uint32_t latency_min_us;
   uint32_t latency_max_us;
@@ -60,6 +68,8 @@ typedef struct {
   bool de_state;
   bool saw_miss;
   bool recovered_after_miss;
+  bool fault_injected;
+  bool command_sent;
   bool verdict_printed;
 } chip_state_t;
 
@@ -129,6 +139,12 @@ static bool send_frame(chip_state_t *chip, const uint8_t *frame, uint32_t len) {
   return true;
 }
 
+static void append_crc(uint8_t *frame, uint32_t len) {
+  const uint16_t crc = crc16_modbus(frame, len - 2u);
+  frame[len - 2u] = (uint8_t) (crc & 0xFFu);
+  frame[len - 1u] = (uint8_t) ((crc >> 8u) & 0xFFu);
+}
+
 static bool send_scan(chip_state_t *chip) {
   chip->rx_len = 0;
   chip->poll_started_us = now_us();
@@ -141,23 +157,74 @@ static bool send_scan(chip_state_t *chip) {
 }
 
 static bool send_broadcast(chip_state_t *chip) {
+  uint8_t frame[HCP2_WOKWI_BROADCAST_CLOSED_LEN];
+
   chip->phase = PHASE_BEFORE_POLL;
-  if (!send_frame(chip, HCP2_WOKWI_BROADCAST_CLOSED, HCP2_WOKWI_BROADCAST_CLOSED_LEN)) {
+  memcpy(frame, HCP2_WOKWI_BROADCAST_CLOSED, sizeof(frame));
+  if (chip->mode == MODE_OPENING) {
+    uint32_t current = chip->cycles_done * 12u;
+    if (current > 200u) {
+      current = 200u;
+    }
+    memcpy(frame, HCP2_WOKWI_BROADCAST_OPENING, sizeof(frame));
+    frame[10] = (uint8_t) current;
+    if (current >= 200u) {
+      memcpy(frame, HCP2_WOKWI_BROADCAST_OPEN, sizeof(frame));
+    } else {
+      append_crc(frame, sizeof(frame));
+    }
+  }
+  if (!send_frame(chip, frame, sizeof(frame))) {
     return false;
   }
   timer_start(chip->timer, HCP2_WOKWI_BROADCAST_TO_POLL_GAP_US, false);
   return true;
 }
 
-static bool send_status_poll(chip_state_t *chip) {
+static bool send_light_command(chip_state_t *chip) {
+  chip->rx_len = 0;
+  chip->command_sent = true;
+  chip->phase = PHASE_WAIT_COMMAND;
+  if (!send_frame(chip, HCP2_WOKWI_LIGHT_COMMAND_COUNTER2, HCP2_WOKWI_LIGHT_COMMAND_COUNTER2_LEN)) {
+    return false;
+  }
+  timer_start(chip->timer, HCP2_WOKWI_RESPONSE_TIMEOUT_US, false);
+  return true;
+}
+
+static bool send_fault_probe(chip_state_t *chip, uint8_t counter) {
   uint8_t frame[HCP2_WOKWI_STATUS_POLL_COUNTER0_LEN];
-  uint16_t crc;
 
   memcpy(frame, HCP2_WOKWI_STATUS_POLL_COUNTER0, sizeof(frame));
-  frame[11] = (uint8_t) (chip->cycles_done & 0xFFu);
-  crc = crc16_modbus(frame, sizeof(frame) - 2u);
-  frame[sizeof(frame) - 2u] = (uint8_t) (crc & 0xFFu);
-  frame[sizeof(frame) - 1u] = (uint8_t) ((crc >> 8u) & 0xFFu);
+  frame[11] = counter;
+  append_crc(frame, sizeof(frame));
+  frame[sizeof(frame) - 1u] ^= 0x55u;
+
+  chip->rx_len = 0;
+  chip->fault_checks++;
+  chip->fault_injected = true;
+  chip->phase = PHASE_WAIT_FAULT_SILENCE;
+  if (!send_frame(chip, frame, sizeof(frame))) {
+    return false;
+  }
+  timer_start(chip->timer, 9000u, false);
+  return true;
+}
+
+static bool send_status_poll(chip_state_t *chip) {
+  uint8_t frame[HCP2_WOKWI_STATUS_POLL_COUNTER0_LEN];
+  uint8_t counter = (uint8_t) (chip->cycles_done & 0xFFu);
+
+  if (chip->mode == MODE_LIGHT_COMMAND && !chip->command_sent && chip->cycles_done == 2u) {
+    return send_light_command(chip);
+  }
+  if (chip->mode == MODE_FAULT_RECOVERY && !chip->fault_injected && chip->cycles_done == 2u) {
+    return send_fault_probe(chip, counter);
+  }
+
+  memcpy(frame, HCP2_WOKWI_STATUS_POLL_COUNTER0, sizeof(frame));
+  frame[11] = counter;
+  append_crc(frame, sizeof(frame));
 
   chip->rx_len = 0;
   chip->polls_sent++;
@@ -214,6 +281,15 @@ static void finish_if_done(chip_state_t *chip) {
     set_verdict(chip, false, "steady-miss");
     return;
   }
+  if (chip->mode == MODE_LIGHT_COMMAND && chip->command_replies == 0u) {
+    set_verdict(chip, false, "light-command-missing");
+    return;
+  }
+  if (chip->mode == MODE_FAULT_RECOVERY &&
+      (chip->fault_checks == 0u || chip->fault_recoveries == 0u || chip->fault_unexpected_responses != 0u)) {
+    set_verdict(chip, false, "fault-recovery-missing");
+    return;
+  }
   if (attr_read(chip->require_recovery_attr) != 0u && !chip->recovered_after_miss) {
     set_verdict(chip, false, "restart-no-recovery");
     return;
@@ -242,6 +318,11 @@ static void process_response(chip_state_t *chip, const uint8_t *frame, uint8_t l
     return;
   }
   trace_frame("slave_frame", frame, len);
+  if (chip->phase == PHASE_WAIT_FAULT_SILENCE) {
+    chip->fault_unexpected_responses++;
+    set_verdict(chip, false, "fault-produced-response");
+    return;
+  }
   if (len == HCP2_WOKWI_SCAN_RESPONSE_LEN && memcmp(frame, HCP2_WOKWI_SCAN_RESPONSE, len) == 0 &&
       chip->phase == PHASE_WAIT_SCAN) {
     trace_latency((uint32_t) (now_us() - chip->poll_started_us));
@@ -260,8 +341,13 @@ static void process_response(chip_state_t *chip, const uint8_t *frame, uint8_t l
     }
     return;
   }
-  if (frame[2] == 4u) {
+  if (frame[2] == 4u && chip->phase == PHASE_WAIT_COMMAND &&
+      len == HCP2_WOKWI_LIGHT_COMMAND_RESPONSE_COUNTER2_LEN &&
+      memcmp(frame, HCP2_WOKWI_LIGHT_COMMAND_RESPONSE_COUNTER2, len) == 0) {
     chip->command_replies++;
+    chip->phase = PHASE_NEXT_CYCLE;
+    timer_start(chip->timer, HCP2_WOKWI_POLL_TO_NEXT_BROADCAST_GAP_US, false);
+    return;
   }
 }
 
@@ -330,6 +416,13 @@ static void on_timer(void *user_data) {
       break;
     case PHASE_BEFORE_POLL:
       (void) send_status_poll(chip);
+      break;
+    case PHASE_WAIT_FAULT_SILENCE:
+      chip->fault_recoveries++;
+      (void) send_status_poll(chip);
+      break;
+    case PHASE_WAIT_COMMAND:
+      set_verdict(chip, false, "command-timeout");
       break;
     case PHASE_WAIT_POLL:
       record_poll_miss(chip);
@@ -401,7 +494,8 @@ void chip_init(void) {
   if (chip->cycles_target == 0u) {
     chip->cycles_target = 200u;
   }
-  chip->mode = attr_read(chip->mode_attr) == MODE_RESTART ? MODE_RESTART : MODE_STEADY;
+  const uint32_t requested_mode = attr_read(chip->mode_attr);
+  chip->mode = requested_mode <= MODE_FAULT_RECOVERY ? (sim_mode_t) requested_mode : MODE_STEADY;
   chip->missed_threshold = attr_read(chip->missed_threshold_attr);
   if (chip->missed_threshold == 0u) {
     chip->missed_threshold = HCP2_WOKWI_DEFAULT_MISSED_POLL_THRESHOLD;

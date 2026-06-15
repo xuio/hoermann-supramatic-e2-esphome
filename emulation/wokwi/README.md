@@ -129,6 +129,26 @@ grep -q "HCP2_WOKWI_VERDICT_OK reason=steady-state" emulation/wokwi/lp-uart-stea
 cp /tmp/hcp2-wokwi.toml emulation/wokwi/wokwi.toml
 ```
 
+Run the optional native LP-UART scenario matrix. These modes keep using the
+generated Python protocol constants, but vary the custom-chip master behavior:
+moving broadcasts, a light command-argument frame, and a bad-CRC poll followed
+by recovery on the next valid poll.
+
+```sh
+cp emulation/wokwi/wokwi.toml /tmp/hcp2-wokwi.toml
+cp emulation/wokwi/wokwi.lp-probe.toml emulation/wokwi/wokwi.toml
+wokwi-cli emulation/wokwi --diagram-file diagram.opening.json \
+  --scenario opening.yaml --timeout 30000 --fail-text HCP2_WOKWI_VERDICT_FAIL | tee emulation/wokwi/opening.full.log
+grep -q "HCP2_WOKWI_VERDICT_OK reason=steady-state" emulation/wokwi/opening.full.log
+wokwi-cli emulation/wokwi --diagram-file diagram.light-command.json \
+  --scenario light-command.yaml --timeout 30000 --fail-text HCP2_WOKWI_VERDICT_FAIL | tee emulation/wokwi/light-command.full.log
+grep -q "HCP2_WOKWI_VERDICT_OK reason=steady-state" emulation/wokwi/light-command.full.log
+wokwi-cli emulation/wokwi --diagram-file diagram.fault-recovery.json \
+  --scenario fault-recovery.yaml --timeout 30000 --fail-text HCP2_WOKWI_VERDICT_FAIL | tee emulation/wokwi/fault-recovery.full.log
+grep -q "HCP2_WOKWI_VERDICT_OK reason=steady-state" emulation/wokwi/fault-recovery.full.log
+cp /tmp/hcp2-wokwi.toml emulation/wokwi/wokwi.toml
+```
+
 The upstream report text is in [`UPSTREAM_REPRO.md`](UPSTREAM_REPRO.md). It
 records the official-example control run, IDF rebuild, minimal LP shared-variable
 probe, HP-UART positive control, and LP-UART register probe in a form suitable

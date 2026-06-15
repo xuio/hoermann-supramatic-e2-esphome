@@ -77,6 +77,35 @@ connects while the same virtual SupraMatic master verifies poll replies. With
 misses, max consecutive misses, and worst latency across runs. Per-run traces
 are written as `*.runNN.jsonl`.
 
+The same HIL runner can execute named SupraMatic scenarios and schedule ESPHome
+native-API commands while the RS-485 master keeps polling:
+
+```bash
+uv run garage-hcp2-hil-load --serial /dev/serial/by-id/usb-1a86_USB_Single_Serial_5ACC032762-if00 \
+  --esp-host supramatic-4-tester.local \
+  --esp-expected-name supramatic-4-tester \
+  --esp-cover-object-id garage_door_hcp2_tester \
+  --esp-button-object-id half=garage_door_hcp2_tester_half_command \
+  --esp-button-object-id vent=garage_door_hcp2_tester_vent_command \
+  --esp-button-object-id light=garage_door_hcp2_tester_light_command \
+  --scenario goto-position --goto-position-raw 80 \
+  --expect-button open --expect-button stop \
+  --output captures/hcp2/hil-load/goto-position.json
+```
+
+When native-API entities are not configured, named scenarios automatically use emulated
+ESPHome commands: the simulator records the accepted command and advances only the
+virtual door model. This is useful for HIL poll-reliability and movement-model coverage
+against a serial DUT, but it is not proof that the firmware emitted the matching HCP2
+button bytes. Use `--command-mode native-api` plus `--expect-button` for that.
+
+```bash
+uv run garage-hcp2-hil-load --serial /dev/serial/by-id/usb-1a86_USB_Single_Serial_5ACC032762-if00 \
+  --scenario open-from-closed --command-mode emulated \
+  --door-travel-cycles 260 --cycles 320 \
+  --output captures/hcp2/hil-load/emulated-open.json
+```
+
 For 24h reliability soaks, do not enable the full per-poll `--trace`; it grows
 too large to be useful. Run at real cadence with low-volume progress snapshots
 and abort on the first missed status poll:

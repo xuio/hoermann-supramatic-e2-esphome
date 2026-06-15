@@ -1,0 +1,8 @@
+name: HCP2 Wokwi command-argument scenario
+version: 1
+author: garage-door-controller
+
+steps:
+  - wait-serial: "HCP2_BRINGUP_MODE lp-in-loop"
+  - wait-serial: "HCP2_SUPERVISOR_REAL_MAILBOX_OK"
+  - delay: 20s

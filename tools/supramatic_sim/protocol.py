@@ -17,13 +17,17 @@ COMMAND_RESPONSE_BY_COUNTER = {
     0x02: bytes.fromhex("021704020004FD08DE"),
     0x1C: bytes.fromhex("0217041C0004FD0EF6"),
 }
+BUTTON_STATUS_PHASES = {
+    "open": {"press": (0x02, 0x10, 0x00), "release": (0x01, 0x10, 0x00)},
+    "close": {"press": (0x02, 0x20, 0x00), "release": (0x01, 0x20, 0x00)},
+    "stop": {"press": (0x02, 0x40, 0x00), "release": (0x01, 0x40, 0x00)},
+    "vent": {"press": (0x02, 0x00, 0x40), "release": (0x01, 0x00, 0x40)},
+    "half": {"press": (0x02, 0x00, 0x04), "release": (0x01, 0x00, 0x04)},
+    "light": {"press": (0x10, 0x00, 0x02), "release": (0x08, 0x00, 0x02)},
+}
 BUTTON_STATUS_ENCODINGS = {
-    "open": {(0x02, 0x10, 0x00), (0x01, 0x10, 0x00)},
-    "close": {(0x02, 0x20, 0x00), (0x01, 0x20, 0x00)},
-    "stop": {(0x02, 0x40, 0x00), (0x01, 0x40, 0x00)},
-    "vent": {(0x02, 0x00, 0x40), (0x01, 0x00, 0x40)},
-    "half": {(0x02, 0x00, 0x04), (0x01, 0x00, 0x04)},
-    "light": {(0x10, 0x00, 0x02), (0x08, 0x00, 0x02)},
+    name: set(phases.values())
+    for name, phases in BUTTON_STATUS_PHASES.items()
 }
 
 
@@ -178,10 +182,16 @@ def response_counter(frame: bytes) -> int | None:
 
 
 def decode_status_button(frame: bytes) -> str | None:
+    decoded = decode_status_button_phase(frame)
+    return decoded[0] if decoded is not None else None
+
+
+def decode_status_button_phase(frame: bytes) -> tuple[str, str] | None:
     if decode_response_kind(frame) != "status" or len(frame) < 10:
         return None
     encoding = (frame[7], frame[8], frame[9])
-    for name, encodings in BUTTON_STATUS_ENCODINGS.items():
-        if encoding in encodings:
-            return name
+    for name, phases in BUTTON_STATUS_PHASES.items():
+        for phase, phase_encoding in phases.items():
+            if encoding == phase_encoding:
+                return name, phase
     return None
