@@ -12,10 +12,20 @@
 #include "mbedtls/sha1.h"
 #endif
 
+#if __has_include("esphome/core/version.h")
+#include "esphome/core/version.h"
+#endif
+#ifndef ESPHOME_VERSION
+#define ESPHOME_VERSION "unknown"
+#endif
+
 namespace esphome {
 namespace hcp2bridge {
 
 static const char *const TAG = "hcp2bridge";
+
+// Compile-time firmware build stamp (additive /stats field; cheap literal).
+static const char *const HCP2BRIDGE_BUILD_INFO = ESPHOME_VERSION " " __DATE__ " " __TIME__;
 
 #ifdef USE_ESP32
 std::string HCP2Bridge::http_debug_door_json_() {
@@ -240,6 +250,18 @@ std::string HCP2Bridge::http_debug_stats_json_() {
   json += std::to_string(this->get_lp_reset_count());
   json += ",\"hp_resets\":";
   json += std::to_string(this->get_hp_reset_count());
+  json += ",\"build\":\"";
+  json += HCP2BRIDGE_BUILD_INFO;
+  json += "\",\"command_sequence\":";
+  json += std::to_string(this->get_command_sequence());
+  json += ",\"last_command\":\"";
+  json += button_name_(this->last_commanded_button_);
+  json += "\",\"last_command_age_ms\":";
+  if (this->last_commanded_ms_ != 0u) {
+    json += std::to_string(static_cast<uint32_t>(millis() - this->last_commanded_ms_));
+  } else {
+    json += "null";
+  }
   json += ",\"protocol_log\":";
   json += this->protocol_log_summary_json_();
   json += ",\"websocket\":{\"connected\":";
@@ -285,92 +307,210 @@ std::string HCP2Bridge::http_debug_index_html_() {
 <html>
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>HCP2 Bridge Debug</title>
 <link rel="icon" href="data:,">
 <style>
-:root{color-scheme:light dark;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#111827;color:#e5e7eb}
-body{margin:0;padding:18px;line-height:1.35}
-h1{font-size:22px;margin:0 0 12px}
-h2{font-size:15px;margin:0 0 10px;color:#cbd5e1}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
-.panel{border:1px solid #334155;border-radius:8px;background:#0f172a;padding:12px}
-.status{display:inline-flex;align-items:center;gap:8px;border-radius:999px;padding:7px 10px;font-weight:700}
+:root{
+  color-scheme:dark;
+  --bg:#0b1220;--panel:#0f172a;--panel2:#020617;--line:#1f2937;--line2:#334155;
+  --txt:#e5e7eb;--muted:#94a3b8;--key:#94a3b8;
+  --ok:#10b981;--warn:#f59e0b;--fail:#ef4444;--rx:#22d3ee;--tx:#f59e0b;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--txt);line-height:1.35;padding-bottom:24px}
+h1{font-size:18px;margin:0}
+h2{font-size:13px;margin:0 0 8px;color:#cbd5e1;text-transform:uppercase;letter-spacing:.04em}
+a{color:#7dd3fc}
+.wrap{padding:0 14px}
+/* ---- sticky status header (region 0) ---- */
+#hdr{position:sticky;top:0;z-index:10;background:var(--bg);border-bottom:1px solid var(--line);
+  padding:calc(env(safe-area-inset-top) + 10px) 14px 10px}
+.hdrtop{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.status{display:inline-flex;align-items:center;gap:8px;border-radius:999px;padding:7px 12px;font-weight:700;font-size:14px}
 .ok{background:#064e3b;color:#d1fae5}.fail{background:#7f1d1d;color:#fee2e2}.unknown{background:#374151;color:#f3f4f6}
-.row{display:flex;justify-content:space-between;gap:12px;border-bottom:1px solid #1f2937;padding:5px 0;font-size:13px}
+#updated{color:var(--muted);font-size:12px}
+#reasons{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+#reasons .rchip{background:#7f1d1d;color:#fee2e2;border-radius:6px;padding:2px 8px;font-size:12px;font-family:var(--mono)}
+/* vital chips */
+#vitals{display:flex;gap:8px;margin-top:10px;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:2px}
+.chip{flex:0 0 auto;min-width:84px;border:1px solid var(--line2);border-radius:8px;background:var(--panel);padding:6px 9px}
+.chip .cl{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;white-space:nowrap}
+.chip .cv{font-family:var(--mono);font-size:16px;font-weight:600;white-space:nowrap}
+.chip .cu{font-size:10px;color:var(--muted)}
+.chip.ok .cv{color:var(--ok)}.chip.warn .cv{color:var(--warn)}.chip.fail .cv{color:var(--fail)}.chip.off .cv{color:var(--muted)}
+.dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--muted);vertical-align:middle;margin-left:4px}
+.dot.beat{background:var(--ok);animation:beat .5s ease-out}
+@keyframes beat{from{transform:scale(1.9);opacity:.4}to{transform:scale(1);opacity:1}}
+/* stale / disconnected overlays on the header */
+#hdr.stale{filter:saturate(.35);border-bottom:1px dashed var(--warn)}
+#hdr.stale::after,#hdr.disconnected::after{content:attr(data-banner);display:block;margin-top:8px;font-size:12px;
+  font-family:var(--mono);color:#fde68a}
+#hdr.disconnected{filter:grayscale(.5)}
+#hdr.disconnected::after{color:#fca5a5}
+/* ---- panels / grid ---- */
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin-top:12px}
+.panel{border:1px solid var(--line2);border-radius:8px;background:var(--panel);padding:12px}
+.row{display:flex;justify-content:space-between;gap:12px;border-bottom:1px solid var(--line);padding:5px 0;font-size:13px}
 .row:last-child{border-bottom:0}
-.key{color:#94a3b8}.value{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;text-align:right}
-button,a.button{display:inline-block;margin:0 6px 8px 0;border:1px solid #475569;border-radius:6px;background:#1e293b;color:#e5e7eb;padding:7px 10px;text-decoration:none;cursor:pointer}
+.key{color:var(--key)}.value{font-family:var(--mono);text-align:right;white-space:nowrap}
+.value.ok{color:var(--ok)}.value.warn{color:var(--warn)}.value.fail{color:var(--fail)}
+.muted{color:var(--muted);font-size:12px}
+/* door bar */
+#posbar{position:relative;height:14px;border-radius:7px;background:#0b1220;border:1px solid var(--line2);margin:8px 0;overflow:hidden}
+#posfill{position:absolute;left:0;top:0;bottom:0;background:linear-gradient(90deg,#0e7490,#22d3ee);width:0}
+#postick{position:absolute;top:-2px;bottom:-2px;width:2px;background:#fbbf24}
+.badges{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.badge{border:1px solid var(--line2);border-radius:6px;padding:2px 8px;font-size:12px;font-family:var(--mono);color:var(--muted)}
+.badge.on{color:#fde68a;border-color:#a16207}.badge.alert{color:#fee2e2;border-color:#b91c1c;background:#450a0a}
+/* timing */
+#jitterSpark{width:100%;height:34px;display:block;margin-top:4px}
+/* buttons */
+button,a.button,select,input[type=text]{font:inherit;border:1px solid var(--line2);border-radius:6px;background:#1e293b;color:var(--txt);
+  padding:8px 11px;text-decoration:none;cursor:pointer;min-height:40px}
 button:hover,a.button:hover{background:#334155}
-label{font-size:13px;color:#cbd5e1}
-	pre{white-space:pre-wrap;overflow:auto;max-height:48vh;background:#020617;border:1px solid #1f2937;border-radius:6px;padding:10px;font-size:12px}
-	#log{height:60vh;max-height:none;overflow-anchor:none}
-.muted{color:#94a3b8;font-size:12px}
-.reasons{margin-top:8px;color:#fecaca;font-size:13px}
+button.pri{border-color:#0e7490}
+button.on{background:#0e7490;border-color:#22d3ee}
+input[type=text]{cursor:text;min-width:120px}
+label.flt{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:#cbd5e1}
+.toolbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px}
+.toolbar .sp{flex:1 1 auto}
+/* log */
+#logwrap{position:relative}
+pre{white-space:pre-wrap;overflow:auto;background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:10px;font-size:12px;margin:0}
+#log{height:60vh;overflow-anchor:none}
+#raw{max-height:48vh}
+#logNewPill{position:absolute;right:14px;bottom:12px;display:none;background:#0e7490;color:#e0f2fe;border:1px solid #22d3ee;
+  border-radius:999px;padding:6px 12px;font-size:12px;cursor:pointer}
+#logNewPill.show{display:block}
+/* table mode */
+#logtbl{display:none;height:60vh;overflow:auto;background:var(--panel2);border:1px solid var(--line);border-radius:6px;font-size:12px}
+#logtbl.show{display:block}#log.hide{display:none}
+.lgrid{display:grid;grid-template-columns:62px 78px 56px 38px 130px 110px 52px 40px 1fr;gap:0;font-family:var(--mono)}
+.lgrid>div{padding:2px 6px;border-bottom:1px solid #0b1324;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lh>div{position:sticky;top:0;background:#0b1324;color:var(--muted);border-bottom:1px solid var(--line2)}
+.lr.rx .c-dir{color:var(--rx)}.lr.tx .c-dir{color:var(--tx)}
+.lr.err{border-left:3px solid var(--fail)}.lr.err .c-crc{color:var(--fail)}
+.lr.cmderr .c-fr{color:var(--fail)}
+details{margin-top:12px}summary{cursor:pointer;color:#cbd5e1;font-size:13px;padding:6px 0;user-select:none}
+.linkrow{display:flex;justify-content:space-between;gap:10px;font-size:12px;padding:3px 0;border-bottom:1px solid var(--line)}
+.linkrow .value{font-family:var(--mono)}
+@media (max-width:560px){#log,#logtbl{height:52vh}.chip{min-width:74px}}
 </style>
 </head>
 <body>
-<h1>HCP2 Bridge Debug</h1>
-<div class="panel">
-  <span id="verdict" class="status unknown">loading</span>
-  <span id="updated" class="muted"></span>
-  <div id="reasons" class="reasons"></div>
+<header id="hdr">
+  <div class="hdrtop">
+    <span id="verdict" class="status unknown">loading</span>
+    <h1>HCP2 Bridge Debug</h1>
+    <span class="sp" style="flex:1"></span>
+    <span id="updated"></span>
+  </div>
+  <div id="reasons"></div>
+  <div id="vitals"></div>
+</header>
+<div class="wrap">
+<div class="grid">
+  <section class="panel"><h2>Door</h2>
+    <div id="posbar"><div id="posfill"></div><div id="postick"></div></div>
+    <div id="door"></div>
+    <div class="badges" id="doorBadges"></div>
+    <div class="muted" id="lastCmd" style="margin-top:6px"></div>
+  </section>
+  <section class="panel"><h2>Bus timing <span class="muted" id="timingMode"></span></h2>
+    <div id="timing"></div>
+    <canvas id="jitterSpark"></canvas>
+    <div class="muted" id="timingNote"></div>
+  </section>
+  <section class="panel"><h2>Counters</h2><div id="counters"></div></section>
 </div>
-<div class="grid" style="margin-top:12px">
-  <section class="panel"><h2>Health</h2><div id="continuity"></div></section>
-  <section class="panel"><h2>Door</h2><div id="door"></div></section>
-  <section class="panel"><h2>Checks</h2><div id="counters"></div></section>
-  <section class="panel"><h2>LP Core</h2><div id="timing"></div></section>
-  <section class="panel"><h2>Stats</h2><div id="statsPanel"></div></section>
-  <section class="panel"><h2>Protocol Log</h2><div id="protocolPanel"></div></section>
-  <section class="panel"><h2>HP</h2><div id="hpPanel"></div></section>
-</div>
+
 <section class="panel" style="margin-top:12px">
-  <h2>RAM Protocol Log</h2>
-  <button onclick="controlLog('start')">Start</button>
-  <button onclick="controlLog('stop')">Stop</button>
-  <button onclick="controlLog('clear')">Clear</button>
-  <button onclick="refreshLog()">Refresh Log</button>
-	  <button onclick="connectLogStream(true)">Reconnect Stream</button>
-  <button onclick="downloadCachedLog()">Download JSON</button>
-  <a class="button" href="/hcp2_log" download="hcp2-log.ndjson">Device NDJSON</a>
-  <a class="button" href="/hcp2_log.bin" download="hcp2-log.bin">Device Raw</a>
-  <div id="logSummary" class="muted"></div>
+  <h2>Live packet log</h2>
+  <div class="toolbar">
+    <button id="pauseBtn" onclick="togglePause()">Pause</button>
+    <button id="modeBtn" onclick="toggleMode()">Table view</button>
+    <label class="flt"><input type="checkbox" id="fErr" onchange="onFilter()">errors only</label>
+    <select id="fDir" onchange="onFilter()"><option value="">dir: all</option><option value="rx">rx</option><option value="tx">tx</option></select>
+    <select id="fFrame" onchange="onFilter()"><option value="">frame: all</option><option>status_poll</option><option>broadcast_status</option><option>command_arg</option><option>bus_scan</option><option>other_valid</option></select>
+    <select id="fType" onchange="onFilter()"><option value="">type: all</option><option>protocol</option><option>state</option><option>command</option><option>lp_trace</option><option>control</option></select>
+    <input type="text" id="fText" placeholder="filter text / hex" oninput="onFilter()">
+    <span class="sp"></span>
+    <button onclick="copyRaw()">Copy raw</button>
+    <button onclick="copyDecoded()">Copy decoded</button>
+    <button onclick="clearLocalView()">Clear view</button>
+    <button class="pri" onclick="downloadCachedLog()">Download JSON</button>
+    <button onclick="connectLogStream(true)">Reconnect Stream</button>
+  </div>
   <div id="logStream" class="muted">stream disconnected</div>
   <div id="logCache" class="muted">cache empty</div>
-  <pre id="log"></pre>
+  <div id="logwrap">
+    <pre id="log"></pre>
+    <div id="logtbl"></div>
+    <div id="logNewPill" onclick="jumpToBottom()">&#8595; new records</div>
+  </div>
 </section>
-<section class="panel" style="margin-top:12px">
-  <h2>Raw JSON</h2>
-  <button onclick="loadRaw('/health')">Health</button>
-  <button onclick="loadRaw('/stats')">Stats</button>
-  <button onclick="loadRaw('/support')">Support</button>
-  <pre id="raw"></pre>
-</section>
+
+<details id="drawer">
+  <summary>Diagnostics &amp; device controls</summary>
+  <div class="grid" style="margin-top:10px">
+    <section class="panel"><h2>Link diagnostics</h2><div id="linkDiag"></div></section>
+    <section class="panel"><h2>LP core</h2><div id="lpPanel"></div></section>
+    <section class="panel"><h2>HP resets</h2><div id="hpPanel"></div></section>
+    <section class="panel"><h2>Device log storage</h2><div id="protocolPanel"></div></section>
+    <section class="panel"><h2>Stats</h2><div id="statsPanel"></div></section>
+  </div>
+  <section class="panel" style="margin-top:12px">
+    <h2>Device protocol log</h2>
+    <div class="toolbar">
+      <button onclick="controlLog('start')">Start capture</button>
+      <button onclick="controlLog('stop')">Stop capture</button>
+      <button onclick="controlLog('clear')">Clear device buffer</button>
+      <button onclick="refreshLog()">Refresh from device</button>
+      <a class="button" href="/hcp2_log" download="hcp2-log.ndjson">Device NDJSON</a>
+      <a class="button" href="/hcp2_log.bin" download="hcp2-log.bin">Device Raw</a>
+    </div>
+    <div id="logSummary" class="muted"></div>
+  </section>
+  <section class="panel" style="margin-top:12px">
+    <h2>Raw JSON</h2>
+    <div class="toolbar">
+      <button onclick="loadRaw('/health')">Health</button>
+      <button onclick="loadRaw('/stats')">Stats</button>
+      <button onclick="loadRaw('/support')">Support</button>
+    </div>
+    <pre id="raw"></pre>
+  </section>
+</details>
+</div>
 <script>
 const $=id=>document.getElementById(id);
-let logSocket=null;
-let logReconnectTimer=null;
-let logLines=[];
-let logCache=[];
-let logCacheBytes=0;
-let refreshBusy=false;
-let logLoadBusy=false;
-let rawPath=null;
-let rawBusy=false;
-let lastHealthStreamMs=0;
-let lastHealthOkMs=0;
-	let logReconnectDelayMs=1000;
-	let logRenderQueued=false;
-	let logSeenSeqs=new Set();
-	let logPendingAppend=[];
-	let logPendingReplace=null;
-	let logRenderStickToBottom=true;
-	const logStickThresholdPx=24;
-	const maxCacheAgeMs=30*60*1000;
-	const maxCacheBytes=100*1024*1024;
-function row(k,v){return `<div class="row"><span class="key">${k}</span><span class="value">${v??''}</span></div>`}
-function setRows(id,items){$(id).innerHTML=items.map(([k,v])=>row(k,v)).join('')}
+const RESPONSE_DELAY_US=4200;        // HCP2_DEFAULT_RESPONSE_DELAY_US
+const STALE_MS=2000;                 // matches the firmware health-push fallback window
+const LOG_DISPLAY_MAX=5000;          // rendered lines; full history stays in logCache for export
+const JITTER_RING=2048, POLL_RING=600;
+let logSocket=null,logReconnectTimer=null;
+let logLines=[],logCache=[],logCacheBytes=0;
+let refreshBusy=false,logLoadBusy=false,rawPath=null,rawBusy=false;
+let lastHealthStreamMs=0,lastHealthOkMs=0;
+let logReconnectDelayMs=1000,logRenderQueued=false;
+let logSeenSeqs=new Set(),logPendingAppend=[],logPendingReplace=null;
+let logRenderStickToBottom=true;
+const logStickThresholdPx=24;
+const maxCacheAgeMs=30*60*1000;
+const maxCacheBytes=100*1024*1024;
+let displayPaused=false,tableMode=false;
+let logEnabled=true;
+let lastHeartbeat=null,lastHealth=null;
+// derived-metric state (best-effort, client-side; reset on reconnect / source switch)
+let dv=newDerive();
+function newDerive(){return{src:null,pendUs:null,jit:[],polls:[],miss:0,maxMiss:0,lastJit:null}}
+function resetDerived(){dv=newDerive()}
+
+function row(k,v,cls){return `<div class="row"><span class="key">${k}</span><span class="value${cls?(' '+cls):''}">${v??''}</span></div>`}
+function setRows(id,items){$(id).innerHTML=items.map(r=>row(r[0],r[1],r[2])).join('')}
 function label(k){return String(k).replaceAll('_',' ')}
 function fmt(v){
   if(v===undefined||v===null)return '';
@@ -379,220 +519,252 @@ function fmt(v){
   if(typeof v==='object')return JSON.stringify(v);
   return String(v);
 }
-function objectRows(obj,priority=[]){
-  const source=obj||{};
-  const seen=new Set();
-  const rows=[];
+function objectRows(obj,priority){
+  const source=obj||{},seen=new Set(),rows=[];
   function add(k){
     if(seen.has(k)||!Object.prototype.hasOwnProperty.call(source,k))return;
     const v=source[k];
     if(v&&typeof v==='object'&&!Array.isArray(v))return;
-    seen.add(k);
-    rows.push([label(k),fmt(v)]);
+    seen.add(k);rows.push([label(k),fmt(v)]);
   }
-  priority.forEach(add);
+  (priority||[]).forEach(add);
   Object.keys(source).sort().forEach(add);
   return rows;
 }
-function setObjectRows(id,obj,priority=[]){setRows(id,objectRows(obj,priority))}
-function sleep(ms){return new Promise(resolve=>setTimeout(resolve,ms))}
+function setObjectRows(id,obj,priority){setRows(id,objectRows(obj,priority))}
+function sleep(ms){return new Promise(r=>setTimeout(r,ms))}
 async function getJson(path,attempts=3){
   let lastError=null;
   for(let attempt=0;attempt<attempts;attempt++){
     try{
       const r=await fetch(path,{cache:'no-store'});
       const t=await r.text();
-      try{return JSON.parse(t)}catch(e){throw new Error(`${path} returned ${r.status}: ${t.slice(0,48)||'non-JSON'}`)}
-    }catch(e){
-      lastError=e;
-      if(attempt+1<attempts)await sleep(150*(attempt+1));
-    }
+      try{return JSON.parse(t)}catch(e){throw new Error(`${path} returned ${r.status}`)}
+    }catch(e){lastError=e;if(attempt+1<attempts)await sleep(150*(attempt+1))}
   }
   throw lastError||new Error(path+' unavailable');
 }
+
+/* ---------------- health + vitals ---------------- */
+function chip(id,label,val,unit,cls){
+  return `<div class="chip ${cls||''}"><div class="cl">${label}</div><div class="cv">${val}${id==='vHeart'?'<span id="heartDot" class="dot"></span>':''}</div><div class="cu">${unit||''}</div></div>`;
+}
+function humanUptime(ms){
+  if(ms==null)return '—';
+  let s=Math.floor(ms/1000);const d=Math.floor(s/86400);s-=d*86400;const h=Math.floor(s/3600);s-=h*3600;const m=Math.floor(s/60);s-=m*60;
+  if(d)return d+'d'+h+'h';if(h)return h+'h'+m+'m';if(m)return m+'m'+s+'s';return s+'s';
+}
+function pct(arr,p){if(!arr.length)return null;const a=arr.slice().sort((x,y)=>x-y);const i=Math.min(a.length-1,Math.floor(p/100*a.length));return a[i]}
 function applyHealth(health,source='http'){
+  lastHealth=health;
   const stats=health.stats||{};
   const ok=health.verdict==='ok';
   if(source==='stream')lastHealthStreamMs=Date.now();
   lastHealthOkMs=Date.now();
   $('verdict').className='status '+(ok?'ok':'fail');
   $('verdict').textContent=ok?'continuity ok':'continuity problem';
-  $('updated').textContent=' updated '+new Date().toLocaleTimeString()+` via ${source}`;
-  $('reasons').textContent=(health.reasons&&health.reasons.length)?'Reasons: '+health.reasons.join(', '):'';
-  const c=health.checks||{};
-  const door=Object.assign({position:stats.position,state:stats.state},health.door||{});
-  const lp=health.lp||{};
-  const hp=health.hp||{};
-  const p=stats.protocol_log||{};
-  setObjectRows('continuity',{verdict:health.verdict,safe_for_ota_restart:health.safe_for_ota_restart,reasons:health.reasons||[]},['verdict','safe_for_ota_restart','reasons']);
-  setObjectRows('door',door,['state','position','state_raw','target_position_raw','current_position_raw','light','obstruction']);
-  setObjectRows('counters',c,['lp_mode','lp_seen','bus_online','valid_broadcast','polls_seen','polls_answered','pending_response','raw_missed_polls','missed_polls']);
-  setObjectRows('timing',lp,['health_flags','max_loop_us','max_rx_fifo','max_poll_rx_to_schedule_us','max_response_schedule_to_tx_start_us','max_response_tx_us','max_de_hold_us','last_poll_age_ms']);
-  setObjectRows('statsPanel',stats,['protocol','mode','uptime_ms','bus_online','valid_broadcast','state','position','polls_seen','polls_answered','missed_polls','raw_missed_polls','pending_response']);
-  setObjectRows('protocolPanel',p,['enabled','used','capacity','overwritten_records','overwritten_bytes','dropped_records','dropped_bytes','next_seq','storage','mode','flash_writes','ready']);
+  $('updated').textContent='updated '+new Date().toLocaleTimeString()+' via '+source+(stats.build?(' · fw '+stats.build):'');
+  $('reasons').innerHTML=(health.reasons||[]).map(r=>`<span class="rchip">${r}</span>`).join('');
+  const c=health.checks||{},lp=health.lp||{},hp=health.hp||{},p=stats.protocol_log||{};
+  logEnabled=p.enabled!==false;
+  // counters: keep bound to health.checks exactly (test contract) -- no extra nodes
+  setObjectRows('counters',c,['polls_seen','polls_answered','pending_response','raw_missed_polls','missed_polls','tx_aborts','collisions','loop_overruns','rx_starvations','stuck_de_recoveries','health_flags','last_poll_age_ms','bus_online','valid_broadcast','lp_mode','lp_seen']);
+  // statsPanel: render the WHOLE stats object (priority only reorders; all keys survive for the E2E fallback)
+  setObjectRows('statsPanel',stats,['protocol','mode','uptime_ms','bus_online','valid_broadcast','state','position','polls_seen','polls_answered','missed_polls','raw_missed_polls','pending_response','crc_errors','rx_errors','tx_aborts','collisions','lp_heartbeat','lp_resets','hp_resets']);
+  setObjectRows('lpPanel',lp,['health_flags','max_loop_us','max_rx_fifo','max_poll_rx_to_schedule_us','max_response_schedule_to_tx_start_us','max_response_tx_us','max_de_hold_us','last_poll_age_ms','loop_overruns','rx_starvations','stuck_de_recoveries','mailbox_repairs']);
   setObjectRows('hpPanel',hp,['resets','panic_resets','wdt_resets','brownout_resets']);
-  $('logSummary').textContent=`log ${p.enabled?'enabled':'disabled'}, ${p.used||0}/${p.capacity||0} bytes, overwritten ${p.overwritten_records||0} records`;
+  setObjectRows('protocolPanel',p,['enabled','used','capacity','overwritten_records','overwritten_bytes','dropped_records','dropped_bytes','next_seq','storage','mode','flash_writes','ready']);
+  renderDoor(health,stats);
+  renderTiming(stats,lp);
+  renderLinkDiag(stats);
+  renderVitals(health,stats,c,lp);
+  $('logSummary').textContent=`device log ${p.enabled?'enabled':'disabled'}, ${p.used||0}/${p.capacity||0} bytes, overwritten ${p.overwritten_records||0}`;
   updateLogCacheSummary();
+  applyStale();
 }
-function requestRefresh(){refresh().catch(()=>{})}
-async function refresh(){
-  if(refreshBusy)return;
-  refreshBusy=true;
-  try{
-    const health=await getJson('/health');
-    applyHealth(health,'http');
-  }catch(e){
-    if(!lastHealthOkMs){
-      $('verdict').className='status unknown';
-      $('verdict').textContent='debug fetch failed';
-    }
-    $('updated').textContent=' last fetch failed '+new Date().toLocaleTimeString();
-    $('reasons').textContent=e.message;
-  }finally{
-    refreshBusy=false;
+function renderVitals(health,stats,c,lp){
+  const off=!logEnabled;
+  const beat=(lastHeartbeat!=null&&stats.lp_heartbeat>lastHeartbeat);
+  lastHeartbeat=stats.lp_heartbeat;
+  const age=c.last_poll_age_ms;
+  const ageCls=age==null?'':(age>1000?'fail':age>250?'warn':'ok');
+  const jp95=dv.jit.length?pct(dv.jit,95):null;
+  const rate=pollRate();
+  const items=[
+    chip('vLink','WS link',linkState(),'',linkClass()),
+    chip('vBus','bus',stats.bus_online?'online':'offline','',stats.bus_online?'ok':'fail'),
+    chip('vHeart','LP beat',stats.lp_heartbeat??'—','',off?'off':'ok'),
+    chip('vAge','poll age',age??'—','ms',ageCls),
+    chip('vMiss','missed/consec',off?'—':((c.missed_polls??0)+'/'+dv.maxMiss),off?'(log off)':'',(!off&&(c.missed_polls||dv.maxMiss)?'fail':'ok')),
+    chip('vRate','poll rate',off?'—':(rate==null?'—':rate.toFixed(1)),off?'(log off)':'Hz',off?'off':'ok'),
+    chip('vJit','jitter p95',off?'—':(jp95==null?'—':jp95),off?'(log off)':'µs',off?'off':(jp95!=null&&Math.abs(jp95)>800?'warn':'ok')),
+    chip('vUp','uptime',humanUptime(stats.uptime_ms),'','')
+  ];
+  $('vitals').innerHTML=items.join('');
+  if(beat){const d=$('heartDot');if(d){d.classList.add('beat');setTimeout(()=>d.classList.remove('beat'),480)}}
+}
+function linkState(){
+  if(logSocket&&logSocket.readyState===WebSocket.OPEN){
+    return (Date.now()-lastHealthStreamMs>STALE_MS)?'stale':'connected';
+  }
+  return 'down';
+}
+function linkClass(){const s=linkState();return s==='connected'?'ok':s==='stale'?'warn':'fail'}
+function renderDoor(health,stats){
+  const d=Object.assign({position:stats.position,state:stats.state},health.door||{});
+  const pos=(typeof stats.position==='number')?stats.position:(d.current_position_raw!=null?d.current_position_raw/200:0);
+  const tgt=(d.target_position_raw!=null)?d.target_position_raw/200:pos;
+  $('posfill').style.width=Math.max(0,Math.min(1,pos))*100+'%';
+  $('postick').style.left=Math.max(0,Math.min(1,tgt))*100+'%';
+  setObjectRows('door',d,['state','position','state_raw','target_position_raw','current_position_raw']);
+  const b=[];
+  b.push(`<span class="badge ${d.light?'on':''}">light ${d.light?'on':'off'}</span>`);
+  b.push(`<span class="badge ${d.obstruction?'alert':''}">obstruction ${d.obstruction?'YES':'no'}</span>`);
+  $('doorBadges').innerHTML=b.join('');
+  if(dv.lastCmd){
+    const a=dv.lastCmd;
+    $('lastCmd').textContent=`last command: ${a.button} (${a.ok?'ok':'rejected'}${a.reason?', '+a.reason:''}) — ack ${a.ack||'pending'}`;
+  }else if(stats.last_command&&stats.last_command!=='none'){
+    const age=stats.last_command_age_ms;
+    $('lastCmd').textContent=`last command: ${stats.last_command}${age!=null?(' ('+Math.round(age/1000)+'s ago)'):''} — from device`;
   }
 }
+function renderTiming(stats,lp){
+  $('timingMode').textContent='('+(stats.mode||'lp')+' core)';
+  const off=!logEnabled;
+  const j=dv.jit;
+  const rows=[
+    ['response-delay jitter',off?'(log off)':'',''],
+    ['  last',off?'—':(dv.lastJit==null?'—':dv.lastJit+' µs')],
+    ['  p50',off?'—':(j.length?pct(j,50)+' µs':'—')],
+    ['  p95',off?'—':(j.length?pct(j,95)+' µs':'—')],
+    ['  p99',off?'—':(j.length?pct(j,99)+' µs':'—')],
+    ['  max (derived)',off?'—':(j.length?Math.max.apply(null,j)+' µs':'—')],
+    ['fw max sched→tx',lp.max_response_schedule_to_tx_start_us!=null?lp.max_response_schedule_to_tx_start_us+' µs':'—'],
+    ['fw max wire tx (max only)',lp.max_response_tx_us!=null?lp.max_response_tx_us+' µs':'—'],
+    ['fw max DE hold (max only)',lp.max_de_hold_us!=null?lp.max_de_hold_us+' µs':'—'],
+    ['poll rate',off?'(log off)':(pollRate()==null?'—':pollRate().toFixed(1)+' Hz')],
+    ['samples',off?'—':String(j.length)]
+  ];
+  setRows('timing',rows.map(r=>[r[0],r[1]]));
+  $('timingNote').innerHTML=off
+    ?'Derived timing needs the device protocol log. <a href="javascript:controlLog(\'start\')">Start capture</a>.'
+    :'Jitter = (TX start − poll RX) − 4200&micro;s configured delay; not on-wire latency.';
+  drawSpark();
+}
+function pollRate(){
+  if(dv.polls.length<2)return null;
+  const now=dv.polls[dv.polls.length-1],first=dv.polls[0];
+  const span=now-first;if(span<=0)return null;
+  return (dv.polls.length-1)/span*1000;
+}
+function drawSpark(){
+  const cv=$('jitterSpark');if(!cv)return;
+  const w=cv.clientWidth||300,h=34;cv.width=w;cv.height=h;
+  const ctx=cv.getContext('2d');ctx.clearRect(0,0,w,h);
+  const j=dv.jit;if(j.length<2)return;
+  const show=j.slice(-Math.min(j.length,w));
+  let mn=Math.min.apply(null,show),mx=Math.max.apply(null,show);if(mn===mx){mn-=1;mx+=1}
+  ctx.strokeStyle='#22d3ee';ctx.lineWidth=1;ctx.beginPath();
+  show.forEach((v,i)=>{const x=i/(show.length-1)*w,y=h-((v-mn)/(mx-mn))*(h-4)-2;i?ctx.lineTo(x,y):ctx.moveTo(x,y)});
+  ctx.stroke();
+}
+function renderLinkDiag(stats){
+  const w=stats.websocket||{},p=stats.protocol_log||{};
+  const rows=[
+    ['ws connected',String(!!w.connected),w.connected?'ok':'fail'],
+    ['ws reconnects (client)',String(clientReconnects)],
+    ['ws rejects (server)',String(w.rejects??0),(w.rejects?'warn':'')],
+    ['ws peer closes',String(w.peer_closes??0)],
+    ['ws read failures',String(w.read_failures??0),(w.read_failures?'warn':'')],
+    ['ws write failures',String(w.write_failures??0),(w.write_failures?'fail':'')],
+    ['ws last close',String(w.last_close_reason??'none')],
+    ['log dropped records',String(p.dropped_records??0),(p.dropped_records?'warn':'')],
+    ['log overwritten',String(p.overwritten_records??0)],
+    ['ui records cached',String(logCache.length)],
+    ['ui records deduped',String(dedupeDrops)],
+    ['ui cache bytes',((logCacheBytes/1024).toFixed(1))+' KiB']
+  ];
+  $('linkDiag').innerHTML=rows.map(r=>`<div class="linkrow"><span class="key">${r[0]}</span><span class="value ${r[2]||''}">${r[1]}</span></div>`).join('');
+}
+let clientReconnects=0,dedupeDrops=0;
+function applyStale(){
+  const hdr=$('hdr');
+  hdr.classList.remove('stale','disconnected');
+  const open=logSocket&&logSocket.readyState===WebSocket.OPEN;
+  if(open){
+    if(Date.now()-lastHealthStreamMs>STALE_MS){
+      hdr.classList.add('stale');
+      hdr.dataset.banner='STALE — no live update for '+Math.round((Date.now()-lastHealthStreamMs)/1000)+'s';
+    }
+  }else if(!lastHealthOkMs||Date.now()-lastHealthOkMs>STALE_MS){
+    hdr.classList.add('disconnected');
+    hdr.dataset.banner='LINK DOWN — stream disconnected';
+    if($('verdict').className.indexOf('fail')<0){$('verdict').className='status unknown';$('verdict').textContent='link down'}
+  }
+}
+
+/* ---------------- derived metrics from packet records ---------------- */
+function deriveRecord(e){
+  if(!e||typeof e!=='object')return;
+  if(e.type==='command'){dv.lastCmd={button:e.button,ok:e.ok,reason:e.reason,ms:e.ms,ack:null};return}
+  if(e.type==='state'&&dv.lastCmd&&!dv.lastCmd.ack){
+    if(e.ms-dv.lastCmd.ms<4000){
+      const b=dv.lastCmd.button;
+      if((b==='open'&&/open/i.test(e.state))||(b==='close'&&/clos/i.test(e.state))||(b==='stop'&&/stop|stand/i.test(e.state)))
+        dv.lastCmd.ack='ok';
+    }
+    return;
+  }
+  if(e.type!=='protocol'||typeof e.event_us!=='number')return;
+  if(dv.src!==null&&e.source!==dv.src){dv.pendUs=null;dv.polls=[];dv.miss=0} // source switch: segment
+  dv.src=e.source;
+  if(e.event==='rx'&&e.frame==='status_poll'){
+    if(dv.pendUs!==null){dv.miss++;if(dv.miss>dv.maxMiss)dv.maxMiss=dv.miss}
+    dv.pendUs=e.event_us;
+    dv.polls.push(e.ms);if(dv.polls.length>POLL_RING)dv.polls.shift();
+    // drop poll timestamps older than 10s for the rate window
+    while(dv.polls.length>2&&dv.polls[dv.polls.length-1]-dv.polls[0]>10000)dv.polls.shift();
+  }else if(e.event==='tx'&&dv.pendUs!==null){
+    let raw=(e.event_us-dv.pendUs)>>>0;
+    dv.pendUs=null;dv.miss=0;
+    if(raw>0&&raw<1000000){
+      const jit=raw-RESPONSE_DELAY_US;
+      dv.lastJit=jit;dv.jit.push(jit);if(dv.jit.length>JITTER_RING)dv.jit.shift();
+    }
+  }
+}
+
+/* ---------------- rolling browser cache + export ---------------- */
 function resetLogCache(){logCache=[];logCacheBytes=0;logSeenSeqs=new Set();updateLogCacheSummary()}
 function pruneLogCache(now=Date.now()){
   const minMs=now-maxCacheAgeMs;
   while(logCache.length&&(logCache[0].received_ms<minMs||logCacheBytes>maxCacheBytes)){
-    const removed=logCache.shift();
-    logCacheBytes-=removed.bytes||0;
+    const removed=logCache.shift();logCacheBytes-=removed.bytes||0;
   }
   if(logCacheBytes<0)logCacheBytes=0;
 }
 function updateLogCacheSummary(){
   pruneLogCache();
   const kb=(logCacheBytes/1024).toFixed(1);
-  const oldest=logCache[0]?.received_at||'none';
-  const newest=logCache[logCache.length-1]?.received_at||'none';
-	  $('logCache').textContent=`visible ${logLines.length} lines; browser cache ${logCache.length} records, ${kb} KiB, newest 30 min / 100 MiB, ${oldest} to ${newest}`;
-	}
+  const oldest=logCache[0]?.received_at||'none',newest=logCache[logCache.length-1]?.received_at||'none';
+  $('logCache').textContent=`visible ${logLines.length} lines; browser cache ${logCache.length} records, ${kb} KiB (newest 30 min / 100 MiB), ${oldest} to ${newest}`;
+}
 function cacheLogLine(line,receivedMs=Date.now()){
   if(!line)return false;
-  let entry=null;
-  try{entry=JSON.parse(line)}catch(e){}
+  let entry=null;try{entry=JSON.parse(line)}catch(e){}
   if(entry&&typeof entry.seq==='number'){
-    if(logSeenSeqs.has(entry.seq))return false;
+    if(logSeenSeqs.has(entry.seq)){dedupeDrops++;return false}
     logSeenSeqs.add(entry.seq);
   }
   const record={received_at:new Date(receivedMs).toISOString(),received_ms:receivedMs,bytes:line.length,raw:line};
-  if(entry&&typeof entry==='object')record.entry=entry;else record.parse_error=true;
-  logCache.push(record);
-  logCacheBytes+=record.bytes;
-  pruneLogCache(receivedMs);
+  if(entry&&typeof entry==='object'){record.entry=entry;deriveRecord(entry)}else record.parse_error=true;
+  logCache.push(record);logCacheBytes+=record.bytes;pruneLogCache(receivedMs);
   return true;
 }
-	function logNearBottom(el=$('log')){return el.scrollHeight-el.scrollTop-el.clientHeight<=logStickThresholdPx}
-	function logDisplayHasContent(){
-	  return $('log').textContent.length>0||(logPendingReplace!==null&&logPendingReplace.length>0)||logPendingAppend.length>0;
-	}
-	function renderLogNow(){
-	  const el=$('log');
-	  const stick=logRenderStickToBottom&&logNearBottom(el);
-	  const scrollTop=el.scrollTop;
-	  if(logPendingReplace!==null){
-	    el.textContent=logPendingReplace;
-	    logPendingReplace=null;
-	  }
-	  if(logPendingAppend.length){
-	    el.appendChild(document.createTextNode(logPendingAppend.join('')));
-	    logPendingAppend=[];
-	  }
-	  if(stick)el.scrollTop=el.scrollHeight;else el.scrollTop=scrollTop;
-	}
-	function renderLog(stickToBottom=true){
-	  logRenderStickToBottom=logRenderStickToBottom&&stickToBottom;
-	  if(logRenderQueued)return;
-	  logRenderStickToBottom=stickToBottom;
-	  logRenderQueued=true;
-	  requestAnimationFrame(()=>{
-	    logRenderQueued=false;
-	    renderLogNow();
-  });
-}
-	function appendLogText(text,replace=false){
-	  const now=Date.now();
-	  const stickToBottom=replace||logNearBottom();
-	  if(replace){logLines=[];resetLogCache();logPendingAppend=[];logPendingReplace=''}
-	  let changed=replace;
-	  const newLines=[];
-	  for(const line of text.split('\n')){
-	    if(!line)continue;
-	    if(cacheLogLine(line,now)){
-	      logLines.push(line);
-	      newLines.push(line);
-	      changed=true;
-	    }
-	  }
-	  if(changed){
-	    if(replace){
-	      logPendingReplace=logLines.join('\n');
-	    }else if(newLines.length){
-	      const prefix=logDisplayHasContent()?'\n':'';
-	      logPendingAppend.push(prefix+newLines.join('\n'));
-	    }
-	    renderLog(stickToBottom);
-	  }
-	  updateLogCacheSummary();
-	}
-async function controlLog(action){
-  await fetch('/hcp2_log/'+action,{cache:'no-store'});
-  requestRefresh();
-	  if(action==='clear'){logLines=[];logPendingAppend=[];logPendingReplace='';resetLogCache();renderLog(true);await refreshLog(false)}else await refreshLog();
-	}
-	async function refreshLog(replace=true){
-	  if(logLoadBusy)return;
-	  logLoadBusy=true;
-	  try{
-    const r=await fetch('/hcp2_log',{cache:'no-store'});
-    const text=await r.text();
-    appendLogText(text,replace);
-  }catch(e){
-    $('logStream').textContent='log refresh failed: '+e.message;
-  }finally{
-	    logLoadBusy=false;
-	  }
-	}
-	function closeLogStream(){
-	  if(logReconnectTimer){clearTimeout(logReconnectTimer);logReconnectTimer=null}
-	  if(logSocket){logSocket.onclose=null;try{logSocket.close()}catch(e){};logSocket=null}
-	}
-	function connectLogStream(replace=false){
-	  closeLogStream();
-	  lastHealthStreamMs=Date.now();
-	  const scheme=location.protocol==='https:'?'wss':'ws';
-	  const path=replace?'/hcp2_log/ws?replace=1':'/hcp2_log/ws';
-	  const ws=new WebSocket(`${scheme}://${location.host}${path}`);
-  logSocket=ws;
-  $('logStream').textContent='stream connecting';
-  ws.onopen=()=>{$('logStream').textContent='stream connected';logReconnectDelayMs=1000;refreshLog(false)};
-  ws.onmessage=event=>{
-    let message=null;
-    try{message=JSON.parse(event.data)}catch(e){}
-    if(message&&message.type==='health'&&message.health){
-      applyHealth(message.health,'stream');
-      return;
-    }
-    if(message&&message.type==='log'&&typeof message.text==='string'){
-      appendLogText(message.text);
-      return;
-    }
-    appendLogText(event.data);
-  };
-  ws.onerror=()=>{try{ws.close()}catch(e){}};
-  ws.onclose=()=>{
-    if(logSocket===ws)logSocket=null;
-    const delay=logReconnectDelayMs;
-    logReconnectDelayMs=Math.min(logReconnectDelayMs*2,10000);
-    $('logStream').textContent=`stream disconnected; reconnecting in ${Math.round(delay/1000)}s`;
-	    logReconnectTimer=setTimeout(()=>connectLogStream(false),delay);
-	  };
-	}
-	window.addEventListener('pagehide',closeLogStream);
-	function cachedLogExport(){
+function cachedLogExport(){
   pruneLogCache();
-  return {
+  return{
     format:'hcp2-debug-log-cache-v1',
     exported_at:new Date().toISOString(),
     source:location.host,
@@ -603,36 +775,190 @@ async function controlLog(action){
 function downloadCachedLog(){
   const payload=JSON.stringify(cachedLogExport(),null,2);
   const blob=new Blob([payload],{type:'application/json'});
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement('a');
   const stamp=new Date().toISOString().replace(/[:.]/g,'-');
-  a.href=url;
-  a.download=`hcp2-debug-log-${stamp}.json`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
+  const fname=`hcp2-debug-log-${stamp}.json`;
+  if(navigator.share&&navigator.canShare){
+    try{const f=new File([blob],fname,{type:'application/json'});if(navigator.canShare({files:[f]})){navigator.share({files:[f],title:'HCP2 debug log'}).catch(()=>{});return}}catch(e){}
+  }
+  const url=URL.createObjectURL(blob),a=document.createElement('a');
+  a.href=url;a.download=fname;document.body.appendChild(a);a.click();a.remove();
   setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
-async function refreshRaw(){
-  if(!rawPath||rawBusy)return;
-  rawBusy=true;
-  try{
-    const data=await getJson(rawPath,2);
-    $('raw').textContent=JSON.stringify(data,null,2);
-  }catch(e){
-    $('raw').textContent='refresh failed: '+e.message;
-  }finally{
-    rawBusy=false;
+
+/* ---------------- live log display ---------------- */
+function matchFilter(line){
+  const err=$('fErr').checked,dir=$('fDir').value,fr=$('fFrame').value,ty=$('fType').value,txt=$('fText').value.toLowerCase();
+  if(!err&&!dir&&!fr&&!ty&&!txt)return true;
+  let e=null;try{e=JSON.parse(line)}catch(_){return !err&&!dir&&!fr&&!ty&&(!txt||line.toLowerCase().includes(txt))}
+  if(err&&!(e.event==='bad_crc'||e.event==='rx_error'||e.ok===false))return false;
+  if(dir&&e.event!==dir)return false;
+  if(fr&&e.frame!==fr)return false;
+  if(ty&&e.type!==ty)return false;
+  if(txt&&!line.toLowerCase().includes(txt))return false;
+  return true;
+}
+function logNearBottom(el=$('log')){return el.scrollHeight-el.scrollTop-el.clientHeight<=logStickThresholdPx}
+function logDisplayHasContent(){return $('log').textContent.length>0||(logPendingReplace!==null&&logPendingReplace.length>0)||logPendingAppend.length>0}
+function trimDisplay(){
+  if(logLines.length<=LOG_DISPLAY_MAX)return false;
+  if(!logNearBottom())return false;            // defer trim while user scrolled up
+  logLines=logLines.slice(-LOG_DISPLAY_MAX);
+  logPendingReplace=logLines.filter(matchFilter).join('\n');logPendingAppend=[];
+  return true;
+}
+function renderLogNow(){
+  if(displayPaused)return;
+  const el=$('log');
+  const stick=logRenderStickToBottom&&logNearBottom(el);
+  const scrollTop=el.scrollTop;
+  if(logPendingReplace!==null){el.textContent=logPendingReplace;logPendingReplace=null}
+  if(logPendingAppend.length){el.appendChild(document.createTextNode(logPendingAppend.join('')));logPendingAppend=[]}
+  if(stick){el.scrollTop=el.scrollHeight;$('logNewPill').classList.remove('show')}
+  else{el.scrollTop=scrollTop;if(logDisplayHasContent())$('logNewPill').classList.add('show')}
+  if(tableMode)renderTable();
+}
+function renderLog(stickToBottom=true){
+  logRenderStickToBottom=logRenderStickToBottom&&stickToBottom;
+  if(logRenderQueued)return;
+  logRenderStickToBottom=stickToBottom;logRenderQueued=true;
+  requestAnimationFrame(()=>{logRenderQueued=false;renderLogNow()});
+}
+function appendLogText(text,replace=false){
+  const now=Date.now();
+  const stickToBottom=replace||logNearBottom();
+  if(replace){logLines=[];resetLogCache();resetDerived();logPendingAppend=[];logPendingReplace=''}
+  let changed=replace;const newLines=[];
+  for(const line of text.split('\n')){
+    if(!line)continue;
+    if(cacheLogLine(line,now)){logLines.push(line);if(matchFilter(line))newLines.push(line);changed=true}
   }
+  if(changed){
+    if(replace){logPendingReplace=logLines.filter(matchFilter).join('\n')}
+    else if(newLines.length){const prefix=logDisplayHasContent()?'\n':'';logPendingAppend.push(prefix+newLines.join('\n'))}
+    trimDisplay();
+    renderLog(stickToBottom);
+  }
+  updateLogCacheSummary();
+}
+function rerenderDisplay(){
+  logPendingReplace=logLines.filter(matchFilter).join('\n');logPendingAppend=[];
+  logRenderQueued=false;renderLog(true);
+}
+function onFilter(){rerenderDisplay()}
+function togglePause(){
+  displayPaused=!displayPaused;
+  $('pauseBtn').textContent=displayPaused?'Resume':'Pause';
+  $('pauseBtn').classList.toggle('on',displayPaused);
+  if(!displayPaused){rerenderDisplay()}
+}
+function toggleMode(){
+  tableMode=!tableMode;
+  $('modeBtn').textContent=tableMode?'Text view':'Table view';
+  $('modeBtn').classList.toggle('on',tableMode);
+  $('log').classList.toggle('hide',tableMode);
+  $('logtbl').classList.toggle('show',tableMode);
+  if(tableMode)renderTable();
+}
+function decodeOne(e){
+  if(e.type==='protocol')return{dir:e.event,fr:e.frame,bt:'',crc:(e.event==='bad_crc'?'BAD':e.event==='rx_error'?'ERR':'ok'),len:e.len,hex:e.hex||''};
+  if(e.type==='command')return{dir:'cmd',fr:e.phase,bt:e.button,crc:e.ok===false?'NAK':'ok',len:'',hex:e.reason||''};
+  if(e.type==='state')return{dir:'st',fr:e.state,bt:'',crc:'',len:'',hex:'pos '+(e.current_position)+'/'+(e.target_position)};
+  if(e.type==='lp_trace')return{dir:'lp',fr:e.event,bt:'',crc:'',len:'',hex:'v='+e.value};
+  return{dir:e.type||'?',fr:'',bt:'',crc:'',len:'',hex:''};
+}
+function renderTable(){
+  const tbl=$('logtbl');
+  const stick=logNearBottom(tbl)||tbl.scrollTop===0;
+  const lines=logLines.filter(matchFilter).slice(-LOG_DISPLAY_MAX);
+  let prev={};const cells=['<div class="lgrid lh"><div>seq</div><div>ms</div><div>&Delta;ms</div><div>dir</div><div>frame</div><div>btn/evt</div><div>crc</div><div>len</div><div>hex</div></div>'];
+  for(const line of lines){
+    let e;try{e=JSON.parse(line)}catch(_){continue}
+    const d=decodeOne(e);const dm=(prev[e.frame||e.type]!=null)?(e.ms-prev[e.frame||e.type]):'';prev[e.frame||e.type]=e.ms;
+    let cls='lr '+(d.dir==='rx'?'rx':d.dir==='tx'?'tx':'');
+    if(d.crc==='BAD'||d.crc==='ERR')cls+=' err';if(d.crc==='NAK')cls+=' cmderr';
+    cells.push(`<div class="${cls}"><div>${e.seq??''}</div><div>${e.ms??''}</div><div>${dm}</div><div class="c-dir">${d.dir}</div><div class="c-fr">${d.fr||''}</div><div>${d.bt||''}</div><div class="c-crc">${d.crc||''}</div><div>${d.len}</div><div>${d.hex}</div></div>`);
+  }
+  tbl.innerHTML=cells.join('');
+  if(stick)tbl.scrollTop=tbl.scrollHeight;
+}
+function jumpToBottom(){const el=tableMode?$('logtbl'):$('log');el.scrollTop=el.scrollHeight;$('logNewPill').classList.remove('show')}
+function copyRaw(){const t=logLines.filter(matchFilter).map(l=>{const r=logCache.find(x=>x.raw===l);return r?r.raw:l}).join('\n');navigator.clipboard&&navigator.clipboard.writeText(t)}
+function copyDecoded(){
+  const t=logLines.filter(matchFilter).map(l=>{let e;try{e=JSON.parse(l)}catch(_){return l}const d=decodeOne(e);return [e.seq,e.ms,d.dir,d.fr,d.bt,d.crc,d.hex].filter(x=>x!=='').join(' ')}).join('\n');
+  navigator.clipboard&&navigator.clipboard.writeText(t);
+}
+function clearLocalView(){logLines=[];logPendingAppend=[];logPendingReplace='';resetLogCache();resetDerived();renderLog(true);if(tableMode)renderTable()}
+
+/* ---------------- device control + stream ---------------- */
+function requestRefresh(){refresh().catch(()=>{})}
+async function refresh(){
+  if(refreshBusy)return;refreshBusy=true;
+  try{applyHealth(await getJson('/health'),'http')}
+  catch(e){
+    if(!lastHealthOkMs){$('verdict').className='status unknown';$('verdict').textContent='debug fetch failed'}
+    $('updated').textContent='last fetch failed '+new Date().toLocaleTimeString();
+    applyStale();
+  }finally{refreshBusy=false}
+}
+async function controlLog(action){
+  await fetch('/hcp2_log/'+action,{cache:'no-store'});
+  requestRefresh();
+  if(action==='clear'){logLines=[];logPendingAppend=[];logPendingReplace='';resetLogCache();resetDerived();renderLog(true);await refreshLog(false)}
+  else await refreshLog();
+}
+async function refreshLog(replace=true){
+  if(logLoadBusy)return;logLoadBusy=true;
+  try{const r=await fetch('/hcp2_log',{cache:'no-store'});appendLogText(await r.text(),replace)}
+  catch(e){$('logStream').textContent='log refresh failed: '+e.message}
+  finally{logLoadBusy=false}
+}
+function closeLogStream(){
+  if(logReconnectTimer){clearTimeout(logReconnectTimer);logReconnectTimer=null}
+  if(logSocket){logSocket.onclose=null;try{logSocket.close()}catch(e){};logSocket=null}
+}
+function connectLogStream(replace=false){
+  closeLogStream();resetDerived();
+  lastHealthStreamMs=Date.now();
+  const scheme=location.protocol==='https:'?'wss':'ws';
+  const path=replace?'/hcp2_log/ws?replace=1':'/hcp2_log/ws';
+  const ws=new WebSocket(`${scheme}://${location.host}${path}`);
+  logSocket=ws;$('logStream').textContent='stream connecting';
+  ws.onopen=()=>{$('logStream').textContent='stream connected';logReconnectDelayMs=1000;refreshLog(false)};
+  ws.onmessage=event=>{
+    let message=null;try{message=JSON.parse(event.data)}catch(e){}
+    if(message&&message.type==='health'&&message.health){applyHealth(message.health,'stream');return}
+    if(message&&message.type==='log'&&typeof message.text==='string'){appendLogText(message.text);return}
+    appendLogText(event.data);
+  };
+  ws.onerror=()=>{try{ws.close()}catch(e){}};
+  ws.onclose=()=>{
+    if(logSocket===ws)logSocket=null;
+    const delay=logReconnectDelayMs;logReconnectDelayMs=Math.min(logReconnectDelayMs*2,10000);
+    clientReconnects++;
+    $('logStream').textContent=`stream disconnected; reconnecting in ${Math.round(delay/1000)}s`;
+    applyStale();
+    logReconnectTimer=setTimeout(()=>connectLogStream(false),delay);
+  };
+}
+window.addEventListener('pagehide',closeLogStream);
+async function refreshRaw(){
+  if(!rawPath||rawBusy)return;rawBusy=true;
+  try{$('raw').textContent=JSON.stringify(await getJson(rawPath,2),null,2)}
+  catch(e){$('raw').textContent='refresh failed: '+e.message}
+  finally{rawBusy=false}
 }
 async function loadRaw(path){rawPath=path;await refreshRaw()}
-	setInterval(()=>{if(logSocket&&logSocket.readyState===WebSocket.CONNECTING)return;if(Date.now()-lastHealthStreamMs>2000)requestRefresh()},1000);
-	setInterval(()=>{if(!logSocket||logSocket.readyState!==WebSocket.OPEN)requestRefresh()},5000);
+// drawer state persistence (outside the test-critical counters/stats path)
+try{if(localStorage.getItem('hcp2drawer')==='1')$('drawer').open=true;
+  $('drawer').addEventListener('toggle',()=>{try{localStorage.setItem('hcp2drawer',$('drawer').open?'1':'0')}catch(e){}});}catch(e){}
+// gentle fallbacks (unchanged cadence): /health only when stream stale, /stats only when a Raw path is selected
+setInterval(()=>{if(logSocket&&logSocket.readyState===WebSocket.CONNECTING)return;if(Date.now()-lastHealthStreamMs>STALE_MS)requestRefresh();applyStale()},1000);
+setInterval(()=>{if(!logSocket||logSocket.readyState!==WebSocket.OPEN)requestRefresh()},5000);
 setInterval(()=>{refreshRaw().catch(()=>{})},3000);
-	async function init(){
-	  connectLogStream();
-	  setTimeout(()=>{if((!logSocket||logSocket.readyState!==WebSocket.CONNECTING)&&Date.now()-lastHealthStreamMs>2000)requestRefresh()},2500);
-	}
+async function init(){
+  connectLogStream();
+  setTimeout(()=>{if((!logSocket||logSocket.readyState!==WebSocket.CONNECTING)&&Date.now()-lastHealthStreamMs>STALE_MS)requestRefresh()},2500);
+}
 init();
 </script>
 </body>

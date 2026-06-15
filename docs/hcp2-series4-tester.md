@@ -84,19 +84,78 @@ transitions, important LP trace breadcrumbs (boot, command, health, error), and
 full protocol frames when the HP fallback responder is active.
 
 Open `http://supramatic-4-tester.local/` in a browser for the interactive
-debug page. It shows continuity health, core counters, RAM-log controls, a live
-WebSocket stream, and raw JSON views without writing anything to flash. The
-WebSocket pushes typed JSON messages in real time:
-`{"type":"health","health":...}` for live health/counters and
-`{"type":"log","text":"..."}` for new NDJSON log records.
+debug page. It is organised for a two-second health read:
+
+- A **sticky status header** with the continuity verdict and eight always-visible
+  vital chips: WebSocket link, bus online, LP heartbeat (the dot pulses on each
+  beat), last poll age, missed/consecutive misses, poll rate, response-delay
+  jitter p95, and uptime. When the live feed goes quiet for more than two seconds
+  the header turns **stale** (desaturated, dashed border); when the stream is
+  down it shows **link down**. These states are display-only and never open a
+  second socket.
+- A **Door** card (position bar with target tick, light/obstruction badges, and
+  a best-effort last-command/ack line), a **Bus timing** card, and a **Counters**
+  card bound to the live health checks.
+- A **Live packet log** with a toolbar: display-only **Pause/Resume** (capture
+  keeps running on the device), **Table view** toggle, filters (errors only,
+  direction, frame type, record type, free text), **Copy raw**, **Copy decoded**,
+  **Clear view** (local only), and `Download JSON`.
+- A collapsible **Diagnostics & device controls** drawer with link diagnostics,
+  LP/HP counters, device log storage, full stats, the device protocol-log
+  controls (`Start capture` / `Stop capture` / `Clear device buffer` /
+  `Refresh from device` / `Device NDJSON` / `Device Raw`), and raw JSON views.
+
+The page is WebSocket-primary and adds no extra device load: it reads everything
+from the pushed `{"type":"health","health":...}` frames (~every 500 ms) and
+`{"type":"log","text":"..."}` log frames (~every 250 ms), and only falls back to
+a gentle `/health` poll when the stream is stale. `/stats` is only fetched while
+a Raw JSON view is open.
+
 Opening the page does not automatically download the full device ring buffer;
 the live view starts from the current stream position. The page keeps its own
 bounded browser-side cache of the live stream. The `Download JSON` button
-exports that frontend cache as a structured JSON file with receive timestamps,
-raw lines, and parsed log objects. To keep browser RAM bounded, the cache keeps
-only the newest 30 minutes and at most 100 MiB. `Refresh Log`, `Device NDJSON`,
-and `Device Raw` still download the ESP's current RAM ring buffer directly when
-you request them.
+exports that frontend cache as a structured JSON file (`hcp2-debug-log-cache-v1`)
+with receive timestamps, raw lines, and parsed log objects (on mobile it offers
+the share sheet, falling back to a download). To keep browser RAM bounded, the
+export cache keeps only the newest 30 minutes and at most 100 MiB, and the
+on-screen log renders at most the newest 5000 lines while preserving scroll
+position when you scroll up. `Refresh from device`, `Device NDJSON`, and
+`Device Raw` still download the ESP's current RAM ring buffer directly.
+
+### Derived metrics (client-side, no extra device load)
+
+The bus-timing card and the missed/jitter/poll-rate chips are computed in the
+browser from the streamed packet records, so they require the device protocol
+log to be capturing (chips show `— (log off)` until you press `Start capture`):
+
+- **Response-delay jitter** is `(TX start − matching status-poll RX) − 4200 µs`,
+  i.e. the deviation from the configured `HCP2_DEFAULT_RESPONSE_DELAY_US`. It is
+  *not* on-wire latency, and the firmware-reported on-wire TX duration
+  (`max_response_tx_us`) and `max_response_schedule_to_tx_start_us` are shown
+  separately as authoritative maxima.
+- **Poll rate** is derived from the `status_poll` cadence over a 10 s wall-clock
+  window.
+- **Max consecutive misses** is best-effort (a status poll with no matching reply
+  before the next poll); it resets on a stream gap or LP↔HP source switch. The
+  firmware `missed_polls`/`max_consecutive_missed_polls` counters are
+  authoritative.
+
+### Local testing without hardware
+
+`tools/hcp2_debug_mock_server.py` serves the exact embedded page (sliced from the
+firmware source) plus synthetic JSON/WebSocket traffic that mirrors the device
+contract, so the UI can be exercised without flashing an ESP:
+
+```bash
+uv run python tools/hcp2_debug_mock_server.py --port 8080 --scenario nominal
+# scenarios: nominal, missed_polls, bad_crc, collisions, tx_abort, stale,
+#            disconnect, hp_fallback, soak
+```
+
+`tests/hcp2/test_debug_mock_server.py` runs the HTML-extraction, JSON-route, and
+WebSocket-contract checks headlessly in CI, and runs the full Playwright browser
+E2E (`tools/hcp2_debug_browser_e2e.py`) against the mock when Playwright is
+available.
 
 Raw endpoints:
 
