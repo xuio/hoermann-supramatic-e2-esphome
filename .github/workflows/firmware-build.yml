@@ -122,6 +122,7 @@ jobs:
 
           artifact="hcp2-supramatic-4-tester"
           artifact_dir="firmware-artifacts/${artifact}"
+          short_sha="$(printf '%s' "$GITHUB_SHA" | cut -c1-12)"
           test -d "$artifact_dir"
 
           for file in firmware.factory.bin firmware.ota.bin manifest.txt; do
@@ -129,20 +130,65 @@ jobs:
             cp "$artifact_dir/$file" "release-assets/${artifact}-${file}"
           done
 
+          python3 - <<PY
+          import json
+          import os
+          from pathlib import Path
+
+          artifact = "${artifact}"
+          base_url = f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/releases/download/firmware-latest"
+          manifest = {
+              "name": "Garage Door HCP2 Tester",
+              "version": "${short_sha}",
+              "new_install_prompt_erase": True,
+              "builds": [
+                  {
+                      "chipFamily": "ESP32-C6",
+                      "improv": True,
+                      "parts": [
+                          {
+                              "path": f"{base_url}/{artifact}-firmware.factory.bin",
+                              "offset": 0,
+                          }
+                      ],
+                  }
+              ],
+          }
+          Path(f"release-assets/{artifact}-web-flasher-manifest.json").write_text(
+              json.dumps(manifest, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+          bundle_dir="$(mktemp -d)"
+          cp "release-assets/${artifact}-firmware.factory.bin" "$bundle_dir/"
+          cp "release-assets/${artifact}-firmware.ota.bin" "$bundle_dir/"
+          cp "release-assets/${artifact}-manifest.txt" "$bundle_dir/"
+          cp "release-assets/${artifact}-web-flasher-manifest.json" "$bundle_dir/"
+          (
+            cd "$bundle_dir"
+            sha256sum * > SHA256SUMS
+            zip -qr "${GITHUB_WORKSPACE}/release-assets/${artifact}-${short_sha}.zip" .
+          )
+          rm -rf "$bundle_dir"
+
           (
             cd release-assets
             sha256sum * > SHA256SUMS
           )
 
-          cat > release-notes.md <<'EOF'
-          Latest successful firmware build from `main`.
+          cat > release-notes.md <<EOF
+          Latest successful firmware build from \`main\` (\`${short_sha}\`).
 
           Public direct downloads for the HCP2 Series 4 tester:
 
-          - Factory image: `hcp2-supramatic-4-tester-firmware.factory.bin`
-          - OTA image: `hcp2-supramatic-4-tester-firmware.ota.bin`
-          - Build manifest: `hcp2-supramatic-4-tester-manifest.txt`
-          - Checksums: `SHA256SUMS`
+          - Easy flash image: \`hcp2-supramatic-4-tester-firmware.factory.bin\`
+            (merged ESP32-C6 image, flash at offset \`0x0\`)
+          - ESP Web Tools manifest: \`hcp2-supramatic-4-tester-web-flasher-manifest.json\`
+          - OTA image: \`hcp2-supramatic-4-tester-firmware.ota.bin\`
+          - Build manifest: \`hcp2-supramatic-4-tester-manifest.txt\`
+          - Commit bundle: \`${artifact}-${short_sha}.zip\`
+          - Checksums: \`SHA256SUMS\`
 
           This public tester image does not bake in a shared ESPHome API encryption
           key. ESPHome starts in its first-adoption mode and stores a per-device

@@ -53,9 +53,15 @@ successful `main` build publishes the public HCP2 tester image at
 The public release intentionally contains only the files a tester normally needs:
 
 - `hcp2-supramatic-4-tester-firmware.factory.bin`
+- `hcp2-supramatic-4-tester-web-flasher-manifest.json`
 - `hcp2-supramatic-4-tester-firmware.ota.bin`
 - `hcp2-supramatic-4-tester-manifest.txt`
+- `hcp2-supramatic-4-tester-<commit>.zip`
 - `SHA256SUMS`
+
+The factory image is the easy flash image: a merged ESP32-C6 binary for offset
+`0x0`. The zip bundle repeats the same HCP2 tester files and has the short commit
+hash at the end of its filename.
 
 The public tester image does not include a shared ESPHome API key. ESPHome starts
 in first-adoption mode and stores a per-device encryption key in flash when

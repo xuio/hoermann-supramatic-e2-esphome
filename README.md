@@ -118,14 +118,17 @@ GitHub Actions also builds firmware artifacts automatically on push, pull reques
 manual dispatch. The newest successful `main` build is published as a public GitHub
 Release at
 [releases/latest](https://github.com/xuio/hoermann-supramatic-e2-esphome/releases/latest).
-It contains only the public HCP2 Series 4 tester factory/OTA images and checksums.
-The public tester image does not bake in a shared ESPHome API key: ESPHome starts
-in first-adoption mode and stores a per-device encryption key in flash when
-adopted. OTA has no password in the public image, so after adoption a real
-deployment should OTA a local/private image with OTA auth if desired. The HCP2
-tester image supports ESPHome Improv over USB serial and a fallback setup portal,
-so Wi-Fi credentials can be provisioned after flashing a prebuilt image. The HCP2
-debug UI only opens after station Wi-Fi is connected.
+It contains only the public HCP2 Series 4 tester factory/OTA images, an ESP Web
+Tools manifest, one commit-suffixed zip bundle, and checksums. Use
+`hcp2-supramatic-4-tester-firmware.factory.bin` as the easy flash image; it is a
+merged ESP32-C6 image for offset `0x0`. The public tester image does not bake in a
+shared ESPHome API key: ESPHome starts in first-adoption mode and stores a
+per-device encryption key in flash when adopted. OTA has no password in the
+public image, so after adoption a real deployment should OTA a local/private
+image with OTA auth if desired. The HCP2 tester image supports ESPHome Improv
+over USB serial and a fallback setup portal, so Wi-Fi credentials can be
+provisioned after flashing a prebuilt image. The HCP2 debug UI only opens after
+station Wi-Fi is connected.
 
 Validate and compile:
 
