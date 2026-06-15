@@ -27,8 +27,11 @@ Use this before making the repository public or publishing a tagged release.
 - [ ] `uv run esphome config configs/supramatic-e2-minimal.yaml`
 - [ ] `uv run esphome config configs/supramatic-e2-monitor.yaml`
 - [ ] `uv run esphome config configs/supramatic-e2-proxy.yaml`
+- [ ] `uv run esphome config configs/supramatic-4-tester.yaml`
 - [ ] `uv run esphome compile configs/supramatic-e2.yaml`
+- [ ] `uv run esphome compile configs/supramatic-4-tester.yaml`
 - [ ] `uv run garage-decode-phone-sync-video --self-test`
+- [ ] GitHub Actions `Firmware Builds` workflow produced `hcp1-supramatic-e2` and `hcp2-supramatic-4-tester` artifacts.
 
 ## GitHub
 

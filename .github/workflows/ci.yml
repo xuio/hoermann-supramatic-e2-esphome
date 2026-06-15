@@ -46,6 +46,7 @@ jobs:
           uv run esphome config configs/supramatic-e2-monitor-idle-tx.yaml
           uv run esphome config configs/supramatic-e2-proxy.yaml
           uv run esphome config configs/supramatic-4-dev.yaml
+          uv run esphome config configs/supramatic-4-tester.yaml
           uv run esphome config configs/supramatic-4-wokwi.yaml
 
       - name: Compile main firmware

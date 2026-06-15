@@ -33,6 +33,13 @@ After the first flash, use OTA:
 uv run esphome upload configs/supramatic-4-tester.yaml --device supramatic-4-tester.local
 ```
 
+The tester image also enables ESPHome Improv over USB serial and a fallback setup
+portal. That means a prebuilt image can be flashed first and then provisioned
+with the tester's Wi-Fi credentials, without editing or rebuilding the YAML. The
+HCP2 debug UI intentionally owns port `80`, but it only starts after the device
+has joined station Wi-Fi; while the setup portal is active, the debug UI is
+closed.
+
 The tester config exposes the normal Home Assistant garage-door cover and light,
 plus explicit command buttons for `open`, `close`, `stop`, `half`, `vent`, and
 `light`.

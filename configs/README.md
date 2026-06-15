@@ -38,4 +38,15 @@ Use `supramatic-4-tester.yaml` for an external SupraMatic Series 4 tester. It
 expects HCP2 LP-UART on GPIO4/GPIO5 and RS-485 DE `/RE` on GPIO0/GPIO1. Once the
 transceiver is connected to the motor bus, update by ESPHome OTA only; do not
 USB-serial flash while attached. Field-test steps and support-bundle collection
-are in [docs/hcp2-series4-tester.md](../docs/hcp2-series4-tester.md).
+are in [docs/hcp2-series4-tester.md](../docs/hcp2-series4-tester.md). The tester
+image enables Improv over USB serial and a fallback setup portal for first Wi-Fi
+provisioning from a prebuilt firmware artifact. The HCP2 debug UI only starts
+after station Wi-Fi is connected.
+
+## Automated Artifacts
+
+GitHub Actions builds downloadable firmware artifacts for the main HCP1 image and
+the HCP2 Series 4 tester image in `.github/workflows/firmware-build.yml`:
+
+- `hcp1-supramatic-e2`: `configs/supramatic-e2.yaml`
+- `hcp2-supramatic-4-tester`: `configs/supramatic-4-tester.yaml`

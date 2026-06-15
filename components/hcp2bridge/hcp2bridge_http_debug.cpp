@@ -12,6 +12,10 @@
 #include "mbedtls/sha1.h"
 #endif
 
+#ifdef USE_NETWORK
+#include "esphome/components/network/util.h"
+#endif
+
 #if __has_include("esphome/core/version.h")
 #include "esphome/core/version.h"
 #endif
@@ -1042,17 +1046,48 @@ void HCP2Bridge::http_debug_task_trampoline_(void *arg) {
 void HCP2Bridge::http_debug_task_loop_() {
   for (;;) {
     if (this->http_debug_enabled_()) {
-      this->maybe_setup_http_debug_server_();
-      this->http_debug_accept_client_();
-      this->http_debug_service_pending_client_();
-      this->http_debug_service_log_ws_();
+      if (!this->http_debug_network_ready_()) {
+        this->http_debug_shutdown_server_("network not connected");
+      } else {
+        this->maybe_setup_http_debug_server_();
+        this->http_debug_accept_client_();
+        this->http_debug_service_pending_client_();
+        this->http_debug_service_log_ws_();
+      }
     }
     vTaskDelay(pdMS_TO_TICKS(HCP2BRIDGE_HTTP_TASK_IDLE_MS));
   }
 }
 
+bool HCP2Bridge::http_debug_network_ready_() const {
+#ifdef USE_NETWORK
+  return network::is_connected();
+#else
+  return true;
+#endif
+}
+
+void HCP2Bridge::http_debug_shutdown_server_(const char *reason) {
+  const bool had_resources = this->http_debug_server_ != nullptr || this->http_debug_pending_client_ != nullptr ||
+                             this->http_debug_log_ws_client_ != nullptr;
+  if (this->http_debug_log_ws_client_ != nullptr) {
+    this->http_debug_close_log_ws_(reason);
+  }
+  this->http_debug_pending_client_.reset();
+  this->http_debug_request_buffer_len_ = 0;
+  this->http_debug_server_.reset();
+  this->http_debug_next_setup_ms_ = millis() + HCP2BRIDGE_HTTP_SETUP_RETRY_MS;
+  if (had_resources) {
+    ESP_LOGI(TAG, "HCP2 HTTP debug stopped: %s", reason != nullptr ? reason : "unknown");
+  }
+}
+
 void HCP2Bridge::maybe_setup_http_debug_server_() {
   if (this->http_debug_server_ != nullptr) {
+    return;
+  }
+  if (!this->http_debug_network_ready_()) {
+    this->http_debug_next_setup_ms_ = millis() + HCP2BRIDGE_HTTP_SETUP_RETRY_MS;
     return;
   }
   const uint32_t now_ms = millis();

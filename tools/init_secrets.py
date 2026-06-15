@@ -20,6 +20,10 @@ SECRET_KEYS = (
     "ota_password_supramatic_4_dev",
     "wifi_ssid_supramatic_4_dev",
     "wifi_password_supramatic_4_dev",
+    "api_key_supramatic_4_tester",
+    "ota_password_supramatic_4_tester",
+    "wifi_ssid_supramatic_4_tester",
+    "wifi_password_supramatic_4_tester",
     "proxy_auth_token",
 )
 
@@ -45,6 +49,10 @@ def generate_values() -> dict[str, str]:
         "ota_password_supramatic_4_dev": secrets.token_urlsafe(32),
         "wifi_ssid_supramatic_4_dev": "Wokwi-GUEST",
         "wifi_password_supramatic_4_dev": "",
+        "api_key_supramatic_4_tester": base64.b64encode(secrets.token_bytes(32)).decode("ascii"),
+        "ota_password_supramatic_4_tester": secrets.token_urlsafe(32),
+        "wifi_ssid_supramatic_4_tester": "Wokwi-GUEST",
+        "wifi_password_supramatic_4_tester": "",
         "proxy_auth_token": secrets.token_urlsafe(32),
     }
 

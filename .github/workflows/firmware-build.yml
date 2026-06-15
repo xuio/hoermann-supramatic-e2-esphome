@@ -1,0 +1,94 @@
+name: Firmware Builds
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: firmware-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  esphome:
+    name: Build ${{ matrix.family }} firmware
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - family: HCP1
+            config: configs/supramatic-e2.yaml
+            env_name: supramatic-e2
+            artifact: hcp1-supramatic-e2
+          - family: HCP2
+            config: configs/supramatic-4-tester.yaml
+            env_name: supramatic-4-tester
+            artifact: hcp2-supramatic-4-tester
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        run: python -m pip install uv
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Generate build secrets
+        run: uv run garage-init-secrets
+
+      - name: Validate ESPHome config
+        run: uv run esphome config "${{ matrix.config }}"
+
+      - name: Compile ESPHome firmware
+        run: uv run esphome compile "${{ matrix.config }}"
+
+      - name: Collect firmware artifacts
+        run: |
+          set -eu
+
+          build_dir="configs/.esphome/build/${{ matrix.env_name }}/.pioenvs/${{ matrix.env_name }}"
+          artifact_dir="firmware-artifacts/${{ matrix.artifact }}"
+
+          test -f "$build_dir/firmware.bin"
+          mkdir -p "$artifact_dir"
+
+          for file in firmware.bin firmware.ota.bin firmware.factory.bin firmware.elf bootloader.bin partitions.bin ota_data_initial.bin; do
+            if [ -f "$build_dir/$file" ]; then
+              cp "$build_dir/$file" "$artifact_dir/$file"
+            fi
+          done
+          cp "${{ matrix.config }}" "$artifact_dir/config.yaml"
+
+          {
+            echo "family=${{ matrix.family }}"
+            echo "name=${{ matrix.env_name }}"
+            echo "config=${{ matrix.config }}"
+            echo "commit=${GITHUB_SHA}"
+            echo "ref=${GITHUB_REF}"
+            echo "event=${GITHUB_EVENT_NAME}"
+          } > "$artifact_dir/manifest.txt"
+
+          (
+            cd "$artifact_dir"
+            find . -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+              | sort -z \
+              | xargs -0 sha256sum > SHA256SUMS
+          )
+
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: firmware-artifacts/${{ matrix.artifact }}
+          retention-days: 30

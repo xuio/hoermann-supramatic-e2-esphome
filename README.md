@@ -1,6 +1,7 @@
 # Hörmann SupraMatic E2 ESPHome Garage Door Controller
 
 [![CI](https://github.com/xuio/hoermann-supramatic-e2-esphome/actions/workflows/ci.yml/badge.svg)](https://github.com/xuio/hoermann-supramatic-e2-esphome/actions/workflows/ci.yml)
+[![Firmware Builds](https://github.com/xuio/hoermann-supramatic-e2-esphome/actions/workflows/firmware-build.yml/badge.svg)](https://github.com/xuio/hoermann-supramatic-e2-esphome/actions/workflows/firmware-build.yml)
 [![License: Unlicense](https://img.shields.io/badge/license-Unlicense-blue.svg)](LICENSE)
 
 This project turns one **Waveshare ESP32-S3-ETH board with PoE** and one **isolated RS-485 adapter** into a wired Home Assistant controller for a **Hörmann SupraMatic E2** garage-door opener.
@@ -113,6 +114,13 @@ uv run garage-init-secrets
 
 This creates `configs/secrets.yaml` with a valid ESPHome API encryption key, OTA password, and proxy token. The file is private and intentionally ignored by git. To intentionally regenerate existing secrets, run `uv run garage-init-secrets --force`.
 
+GitHub Actions also builds firmware artifacts automatically on push, pull request, and
+manual dispatch. The `Firmware Builds` workflow produces the HCP1 production image
+(`hcp1-supramatic-e2`) and the HCP2 Series 4 tester image
+(`hcp2-supramatic-4-tester`). The HCP2 tester image supports ESPHome Improv over
+USB serial and a fallback setup portal, so Wi-Fi credentials can be provisioned after
+flashing a prebuilt image. The HCP2 debug UI only opens after station Wi-Fi is connected.
+
 Validate and compile:
 
 ```bash
@@ -173,7 +181,7 @@ docs/                   User, protocol, debugging, and safety documentation
 docs/markers/           Printable ArUco marker PDFs for calibration
 docs/research/analysis/ Calibration and reverse-engineering artifacts
 tools/                  Python helper tools for captures and calibration
-.github/workflows/      CI validation
+.github/workflows/      CI validation and firmware artifact builds
 ```
 
 Primary files:

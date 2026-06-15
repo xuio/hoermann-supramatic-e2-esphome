@@ -136,6 +136,8 @@ class HCP2Bridge : public Component {
   void start_http_debug_task_();
   static void http_debug_task_trampoline_(void *arg);
   void http_debug_task_loop_();
+  bool http_debug_network_ready_() const;
+  void http_debug_shutdown_server_(const char *reason);
   void maybe_setup_http_debug_server_();
   void http_debug_accept_client_();
   void http_debug_service_pending_client_();

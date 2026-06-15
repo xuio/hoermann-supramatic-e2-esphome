@@ -37,6 +37,13 @@ wifi:
   ssid: !secret wifi_ssid_supramatic_4_tester
   password: !secret wifi_password_supramatic_4_tester
   reboot_timeout: 0s
+  ap:
+    ssid: "${friendly_name} Setup"
+    ap_timeout: 30s
+
+improv_serial:
+
+captive_portal:
 
 api:
   reboot_timeout: 0s
