@@ -10,6 +10,16 @@ Local build:
 env -u IDF_PYTHON_ENV_PATH bash -c 'source /Users/moritz/.platformio/packages/framework-espidf/export.sh && idf.py -C firmware/hcp2-lp build'
 ```
 
+After changing LP sources, refresh the checked-in ESPHome blob with:
+
+```sh
+uv run garage-update-hcp2-lp-blob
+```
+
+CI runs `uv run garage-update-hcp2-lp-blob --check` after the LP build, so a
+stale embedded blob fails before the ESPHome image can drift from the tested LP
+artifact.
+
 Important limits:
 
 - GPIO4 is LP-UART RX and GPIO5 is LP-UART TX.

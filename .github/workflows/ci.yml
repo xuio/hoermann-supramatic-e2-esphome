@@ -102,6 +102,9 @@ jobs:
           target: esp32c6
           path: firmware/hcp2-lp
 
+      - name: Check embedded HCP2 LP blob
+        run: uv run garage-update-hcp2-lp-blob --check
+
       - name: Run RVC smoke test
         run: uv run garage-hcp2-lp-emu --rvc-smoke
 
