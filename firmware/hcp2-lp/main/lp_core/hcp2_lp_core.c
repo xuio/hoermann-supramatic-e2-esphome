@@ -5,6 +5,7 @@
 #include "hal/uart_types.h"
 #include "hcp2_engine.h"
 #include "hcp2_mailbox.h"
+#include "hcp2_responder_runtime.h"
 #include "riscv/csr.h"
 #include "sdkconfig.h"
 #include "soc/lp_uart_reg.h"
@@ -34,15 +35,11 @@
 #define HCP2_LP_WDT_RESET_LENGTH_800_NS 5u
 
 static hcp2_engine_t engine;
-static uint32_t active_epoch;
-static uint32_t last_command_sequence;
-static uint32_t last_protocol_sequence;
+static hcp2_responder_runtime_t runtime;
 static uint8_t last_rx_gpio_level = 0xFFu;
 static uint32_t tx_abort_count;
 static uint32_t collision_count;
 static uint32_t max_de_hold_us;
-static uint32_t last_status_poll_count;
-static uint32_t last_status_poll_us;
 static uint32_t rx_error_count;
 static uint8_t de_enabled;
 static uint32_t de_asserted_us;
@@ -76,16 +73,7 @@ static volatile hcp2_lp_mailbox_t *mailbox_(void) {
 }
 
 static void trace_(uint16_t event, uint16_t value) {
-  volatile hcp2_lp_mailbox_t *mailbox = mailbox_();
-  const uint32_t index = mailbox->trace_head % HCP2_LP_TRACE_CAPACITY;
-
-  mailbox->trace[index].at_us = port_now_us_(NULL);
-  mailbox->trace[index].event = event;
-  mailbox->trace[index].value = value;
-  mailbox->trace_head++;
-  if ((mailbox->trace_head - mailbox->trace_tail) > HCP2_LP_TRACE_CAPACITY) {
-    mailbox->trace_tail = mailbox->trace_head - HCP2_LP_TRACE_CAPACITY;
-  }
+  hcp2_responder_runtime_trace(&runtime, event, value, port_now_us_(NULL));
 }
 
 static uint64_t cycle_count_(void) {
@@ -290,11 +278,7 @@ static void port_de_set_(void *user, uint8_t enabled) {
 }
 
 static void publish_protocol_event_(void) {
-  hcp2_protocol_event_t event;
-
-  if (hcp2_engine_read_protocol_event(&engine, &last_protocol_sequence, &event)) {
-    hcp2_lp_mailbox_publish_protocol_event(mailbox_(), &event);
-  }
+  (void) hcp2_responder_runtime_publish_protocol_event(&runtime);
 }
 
 static void port_tx_(void *user, const uint8_t *data, uint8_t len) {
@@ -344,50 +328,8 @@ static void port_tx_(void *user, const uint8_t *data, uint8_t len) {
   trace_(HCP2_LP_TRACE_TX, len);
 }
 
-static hcp2_button_t button_for_command_(uint8_t command_id) {
-  switch (command_id) {
-    case HCP2_LP_COMMAND_OPEN:
-      return HCP2_BUTTON_OPEN;
-    case HCP2_LP_COMMAND_CLOSE:
-      return HCP2_BUTTON_CLOSE;
-    case HCP2_LP_COMMAND_STOP:
-      return HCP2_BUTTON_STOP;
-    case HCP2_LP_COMMAND_VENT:
-      return HCP2_BUTTON_VENT;
-    case HCP2_LP_COMMAND_HALF:
-      return HCP2_BUTTON_HALF;
-    case HCP2_LP_COMMAND_LIGHT:
-      return HCP2_BUTTON_LIGHT;
-    default:
-      return HCP2_BUTTON_NONE;
-  }
-}
-
 static void handle_mailbox_command_(void) {
-  hcp2_lp_command_t command;
-  hcp2_button_t button;
-  volatile hcp2_lp_mailbox_t *mailbox = mailbox_();
-
-  if (mailbox->command_sequence == 0u) {
-    active_epoch = mailbox->command_epoch;
-    last_command_sequence = 0u;
-    return;
-  }
-  if (!hcp2_lp_mailbox_take_command(mailbox, active_epoch, &last_command_sequence, port_now_us_(NULL), &command)) {
-    return;
-  }
-
-  button = button_for_command_(command.command_id);
-  if (button != HCP2_BUTTON_NONE) {
-    if (hcp2_engine_press_button(&engine, button)) {
-      hcp2_lp_mailbox_ack_command(mailbox, command.sequence, HCP2_LP_COMMAND_RESULT_EXECUTED);
-      trace_(HCP2_LP_TRACE_COMMAND, (uint16_t) command.command_id);
-    } else {
-      hcp2_lp_mailbox_ack_command(mailbox, command.sequence, HCP2_LP_COMMAND_RESULT_BUSY);
-    }
-  } else {
-    hcp2_lp_mailbox_ack_command(mailbox, command.sequence, HCP2_LP_COMMAND_RESULT_UNKNOWN);
-  }
+  (void) hcp2_responder_runtime_handle_mailbox_command(&runtime, port_now_us_(NULL));
 }
 
 static void trace_rx_gpio_(uint32_t now) {
@@ -451,54 +393,14 @@ static void drain_uart_(void) {
   sample_rx_fifo_health_();
 }
 
-static uint8_t stop_trigger_crossed_(const hcp2_drive_status_t *status, uint8_t target_position) {
-  if (status == NULL) {
-    return 0u;
-  }
-  switch ((hcp2_drive_state_code_t) status->state) {
-    case HCP2_DRIVE_OPENING:
-    case HCP2_DRIVE_HALF_OPENING:
-    case HCP2_DRIVE_VENT_MOVING:
-      return status->current_position >= target_position ? 1u : 0u;
-    case HCP2_DRIVE_CLOSING:
-      return status->current_position <= target_position ? 1u : 0u;
-    default:
-      return 0u;
-  }
-}
-
 static void handle_stop_trigger_(void) {
-  hcp2_lp_stop_trigger_t trigger;
-  volatile hcp2_lp_mailbox_t *mailbox = mailbox_();
-  const uint32_t now = port_now_us_(NULL);
-
-  if (!hcp2_lp_mailbox_read_stop_trigger(mailbox, &trigger)) {
-    return;
-  }
-  if (trigger.epoch != active_epoch) {
-    hcp2_lp_mailbox_disarm_stop_trigger(mailbox);
-    trace_(HCP2_LP_TRACE_STOP_TRIGGER, 0xE000u);
-    return;
-  }
-  if (trigger.deadline_us != 0u && time_reached_(now, trigger.deadline_us)) {
-    hcp2_lp_mailbox_disarm_stop_trigger(mailbox);
-    trace_(HCP2_LP_TRACE_STOP_TRIGGER, (uint16_t) (0xE100u | trigger.target_position));
-    return;
-  }
-  if (!stop_trigger_crossed_(hcp2_engine_drive_status(&engine), trigger.target_position)) {
-    return;
-  }
-  if (hcp2_engine_press_button(&engine, HCP2_BUTTON_STOP)) {
-    hcp2_lp_mailbox_mark_stop_trigger_fired(mailbox);
-    trace_(HCP2_LP_TRACE_STOP_TRIGGER, (uint16_t) (0x5000u | trigger.target_position));
-  }
+  (void) hcp2_responder_runtime_handle_stop_trigger(&runtime, port_now_us_(NULL));
 }
 
 static void init_(void) {
   hcp2_port_t port;
   hcp2_engine_config_t config;
   volatile hcp2_lp_mailbox_t *mailbox = mailbox_();
-  const uint32_t pending_sequence = mailbox->command_sequence;
 
   memset(&port, 0, sizeof(port));
   port.now_us = port_now_us_;
@@ -507,6 +409,7 @@ static void init_(void) {
 
   hcp2_engine_config_default(&config);
   hcp2_engine_init(&engine, &port, &config);
+  hcp2_responder_runtime_init(&runtime, &engine, mailbox);
   ulp_lp_core_gpio_init(HCP2_LP_DE_IO);
   ulp_lp_core_gpio_output_enable(HCP2_LP_DE_IO);
   ulp_lp_core_gpio_set_level(HCP2_LP_DE_IO, 0u);
@@ -514,12 +417,7 @@ static void init_(void) {
   ulp_lp_core_gpio_output_enable(HCP2_LP_RE_IO);
   ulp_lp_core_gpio_set_level(HCP2_LP_RE_IO, 0u);
   flush_stale_uart_rx_();
-  active_epoch = mailbox->command_epoch;
-  last_command_sequence = pending_sequence;
-  if (pending_sequence != 0u && mailbox->command_ack_sequence != pending_sequence) {
-    hcp2_lp_mailbox_ack_command(mailbox, pending_sequence, HCP2_LP_COMMAND_RESULT_EXPIRED);
-    trace_(HCP2_LP_TRACE_COMMAND, (uint16_t) (0xEE00u | (mailbox->command_id & 0xFFu)));
-  }
+  hcp2_responder_runtime_begin_from_mailbox(&runtime, port_now_us_(NULL));
   mailbox->lp_reset_count++;
   trace_(HCP2_LP_TRACE_BOOT, 1u);
 #if CONFIG_HCP2_BRINGUP_LP_WDT_ENABLE
@@ -537,10 +435,7 @@ int main(void) {
     repair_mailbox_header_if_needed_();
     trace_rx_gpio_(loop_start_us);
     drain_uart_();
-    if (engine.status_polls_received != last_status_poll_count) {
-      last_status_poll_count = engine.status_polls_received;
-      last_status_poll_us = port_now_us_(NULL);
-    }
+    hcp2_responder_runtime_note_status_poll(&runtime, port_now_us_(NULL));
 #if CONFIG_HCP2_BRINGUP_WOKWI_LP_TX_PROBE
     run_tx_probe_();
 #endif
@@ -548,7 +443,7 @@ int main(void) {
     handle_mailbox_command_();
     hcp2_engine_poll(&engine);
     publish_protocol_event_();
-    hcp2_lp_mailbox_publish_state(mailbox, hcp2_engine_drive_status(&engine), port_now_us_(NULL));
+    hcp2_responder_runtime_publish_state(&runtime, port_now_us_(NULL));
     check_de_deadman_(port_now_us_(NULL));
     const uint32_t loop_active_us = port_now_us_(NULL) - loop_start_us;
     if (loop_active_us > max_loop_us) {
@@ -559,16 +454,11 @@ int main(void) {
       health_flags = (uint16_t) (health_flags | HCP2_LP_HEALTH_FLAG_LOOP_OVERRUN);
       trace_(HCP2_LP_TRACE_HEALTH, (uint16_t) (0xC000u | (loop_active_us & 0x0FFFu)));
     }
-    const hcp2_lp_counters_t counters = {
-        .now_us = port_now_us_(NULL),
-        .polls_seen = engine.status_polls_received,
-        .polls_answered = engine.status_responses_sent,
+    const hcp2_responder_runtime_counters_t counters = {
         .tx_abort_count = tx_abort_count,
         .collision_count = collision_count,
         .max_de_hold_us = max_de_hold_us,
-        .last_poll_us = last_status_poll_us,
-        .crc_error_count = engine.crc_errors,
-        .rx_error_count = engine.rx_errors + rx_error_count,
+        .port_rx_error_count = rx_error_count,
         .max_loop_us = max_loop_us,
         .loop_overrun_count = loop_overrun_count,
         .rx_starvation_count = rx_starvation_count,
@@ -576,11 +466,8 @@ int main(void) {
         .mailbox_repair_count = mailbox_repair_count,
         .health_flags = health_flags,
         .max_rx_fifo_count = max_rx_fifo_count,
-        .max_poll_rx_to_schedule_us = engine.max_status_poll_rx_to_schedule_us,
-        .max_response_schedule_to_tx_start_us = engine.max_status_response_schedule_to_tx_start_us,
-        .max_response_tx_us = engine.max_status_response_tx_us,
     };
-    hcp2_lp_mailbox_publish_counters(mailbox, &counters);
+    hcp2_responder_runtime_publish_counters(&runtime, &counters, port_now_us_(NULL));
 #if CONFIG_HCP2_BRINGUP_LP_WDT_ENABLE
     lp_wdt_poll_();
 #endif

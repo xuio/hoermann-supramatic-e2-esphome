@@ -7,6 +7,7 @@
 #include "hcp2_engine.h"
 #include "hcp2_frame.h"
 #include "hcp2_mailbox.h"
+#include "hcp2_responder_runtime.h"
 
 #define ARRAY_LEN(x) (sizeof(x) / sizeof((x)[0]))
 
@@ -701,6 +702,196 @@ static void test_mailbox_stop_trigger(void) {
   assert(mailbox.stop_trigger_armed == 0u);
 }
 
+static void test_responder_runtime_trace_wrap(void) {
+  hcp2_lp_mailbox_t mailbox;
+  hcp2_engine_t engine;
+  hcp2_responder_runtime_t runtime;
+
+  hcp2_lp_mailbox_init(&mailbox);
+  hcp2_engine_init(&engine, NULL, NULL);
+  hcp2_responder_runtime_init(&runtime, &engine, &mailbox);
+
+  for (uint32_t i = 0u; i < HCP2_LP_TRACE_CAPACITY + 3u; i++) {
+    hcp2_responder_runtime_trace(&runtime, HCP2_LP_TRACE_COMMAND, (uint16_t) i, 1000u + i);
+  }
+
+  assert(mailbox.trace_head == HCP2_LP_TRACE_CAPACITY + 3u);
+  assert(mailbox.trace_tail == 3u);
+  assert(mailbox.trace[3u % HCP2_LP_TRACE_CAPACITY].at_us == 1003u);
+  assert(mailbox.trace[3u % HCP2_LP_TRACE_CAPACITY].event == HCP2_LP_TRACE_COMMAND);
+  assert(mailbox.trace[3u % HCP2_LP_TRACE_CAPACITY].value == 3u);
+}
+
+static void test_responder_runtime_expires_pending_command_on_begin(void) {
+  hcp2_lp_mailbox_t mailbox;
+  hcp2_engine_t engine;
+  hcp2_responder_runtime_t runtime;
+
+  hcp2_lp_mailbox_init(&mailbox);
+  hcp2_engine_init(&engine, NULL, NULL);
+  hcp2_lp_mailbox_send_command(&mailbox, 0x1234u, 9u, HCP2_LP_COMMAND_OPEN, 0u, 1000u);
+  hcp2_responder_runtime_init(&runtime, &engine, &mailbox);
+  hcp2_responder_runtime_begin_from_mailbox(&runtime, 77u);
+
+  assert(mailbox.command_ack_sequence == 9u);
+  assert(mailbox.command_ack_result == HCP2_LP_COMMAND_RESULT_EXPIRED);
+  assert(runtime.active_epoch == 0x1234u);
+  assert(runtime.last_command_sequence == 9u);
+  assert(mailbox.trace_head == 1u);
+  assert(mailbox.trace[0].event == HCP2_LP_TRACE_COMMAND);
+  assert(mailbox.trace[0].value == (uint16_t) (0xEE00u | HCP2_LP_COMMAND_OPEN));
+}
+
+static void test_responder_runtime_command_lifecycle(void) {
+  hcp2_lp_mailbox_t mailbox;
+  hcp2_engine_t engine;
+  hcp2_responder_runtime_t runtime;
+
+  hcp2_lp_mailbox_init(&mailbox);
+  hcp2_engine_init(&engine, NULL, NULL);
+  hcp2_responder_runtime_init(&runtime, &engine, &mailbox);
+
+  mailbox.command_epoch = 0x2222u;
+  hcp2_responder_runtime_handle_mailbox_command(&runtime, 0u);
+  assert(runtime.active_epoch == 0x2222u);
+
+  hcp2_lp_mailbox_send_command(&mailbox, 0x1111u, 1u, HCP2_LP_COMMAND_OPEN, 0u, 1000u);
+  assert(hcp2_responder_runtime_handle_mailbox_command(&runtime, 10u) == HCP2_LP_COMMAND_RESULT_NONE);
+  assert(mailbox.command_ack_sequence == 0u);
+
+  hcp2_lp_mailbox_send_command(&mailbox, 0x2222u, 2u, HCP2_LP_COMMAND_OPEN, 0u, 1000u);
+  assert(hcp2_responder_runtime_handle_mailbox_command(&runtime, 10u) == HCP2_LP_COMMAND_RESULT_EXECUTED);
+  assert(mailbox.command_ack_sequence == 2u);
+  assert(mailbox.command_ack_result == HCP2_LP_COMMAND_RESULT_EXECUTED);
+  assert(engine.active_button == HCP2_BUTTON_OPEN);
+
+  hcp2_lp_mailbox_send_command(&mailbox, 0x2222u, 3u, HCP2_LP_COMMAND_CLOSE, 0u, 1000u);
+  assert(hcp2_responder_runtime_handle_mailbox_command(&runtime, 10u) == HCP2_LP_COMMAND_RESULT_BUSY);
+  assert(mailbox.command_ack_sequence == 3u);
+  assert(mailbox.command_ack_result == HCP2_LP_COMMAND_RESULT_BUSY);
+
+  engine.active_button = HCP2_BUTTON_NONE;
+  hcp2_lp_mailbox_send_command(&mailbox, 0x2222u, 4u, HCP2_LP_COMMAND_LIGHT, 1u, 20u);
+  assert(hcp2_responder_runtime_handle_mailbox_command(&runtime, 21u) == HCP2_LP_COMMAND_RESULT_NONE);
+  assert(mailbox.command_ack_sequence == 4u);
+  assert(mailbox.command_ack_result == HCP2_LP_COMMAND_RESULT_EXPIRED);
+}
+
+static void test_responder_runtime_stop_trigger(void) {
+  test_port_t test_port;
+  hcp2_port_t port;
+  hcp2_engine_config_t config;
+  hcp2_lp_mailbox_t mailbox;
+  hcp2_engine_t engine;
+  hcp2_responder_runtime_t runtime;
+  uint8_t frame[HCP2_MAX_FRAME_LEN];
+  uint8_t len;
+
+  memset(&test_port, 0, sizeof(test_port));
+  port = make_port(&test_port);
+  hcp2_engine_config_default(&config);
+  config.response_delay_us = 0u;
+  hcp2_lp_mailbox_init(&mailbox);
+  hcp2_engine_init(&engine, &port, &config);
+  hcp2_responder_runtime_init(&runtime, &engine, &mailbox);
+
+  mailbox.command_epoch = 0x3333u;
+  hcp2_responder_runtime_handle_mailbox_command(&runtime, 0u);
+
+  hcp2_lp_mailbox_arm_stop_trigger(&mailbox, 0x9999u, 100u, 1000u);
+  assert(!hcp2_responder_runtime_handle_stop_trigger(&runtime, 10u));
+  assert(mailbox.stop_trigger_armed == 0u);
+  assert(mailbox.trace[0].event == HCP2_LP_TRACE_STOP_TRIGGER);
+  assert(mailbox.trace[0].value == 0xE000u);
+
+  hcp2_lp_mailbox_arm_stop_trigger(&mailbox, 0x3333u, 100u, 50u);
+  assert(!hcp2_responder_runtime_handle_stop_trigger(&runtime, 50u));
+  assert(mailbox.stop_trigger_armed == 0u);
+
+  hcp2_lp_mailbox_arm_stop_trigger(&mailbox, 0x3333u, 100u, 1000u);
+  len = build_broadcast_status(200u, 104u, HCP2_DRIVE_OPENING, 0x60u, 0u, frame);
+  feed_bytes(&engine, frame, len);
+  assert(hcp2_responder_runtime_handle_stop_trigger(&runtime, 100u));
+  assert(mailbox.stop_trigger_armed == 0u);
+  assert(mailbox.stop_trigger_fire_count == 1u);
+  assert(engine.active_button == HCP2_BUTTON_STOP);
+
+  len = build_status_poll(0x33u, frame);
+  feed_bytes(&engine, frame, len);
+  hcp2_engine_poll(&engine);
+  assert(test_port.tx_count == 1u);
+  assert(test_port.tx[0][7] == 0x02u);
+  assert(test_port.tx[0][8] == 0x40u);
+}
+
+static void test_responder_runtime_protocol_and_counter_publication(void) {
+  test_port_t test_port;
+  hcp2_port_t port;
+  hcp2_engine_config_t config;
+  hcp2_lp_mailbox_t mailbox;
+  hcp2_engine_t engine;
+  hcp2_responder_runtime_t runtime;
+  hcp2_lp_protocol_event_t event;
+  hcp2_responder_runtime_counters_t counters;
+  uint32_t last_sequence = 0u;
+  uint8_t poll[HCP2_MAX_FRAME_LEN];
+  uint8_t poll_len;
+
+  memset(&test_port, 0, sizeof(test_port));
+  port = make_port(&test_port);
+  hcp2_engine_config_default(&config);
+  config.response_delay_us = 0u;
+  hcp2_lp_mailbox_init(&mailbox);
+  hcp2_engine_init(&engine, &port, &config);
+  hcp2_responder_runtime_init(&runtime, &engine, &mailbox);
+
+  test_port.now_us = 123u;
+  poll_len = build_status_poll(0x44u, poll);
+  feed_bytes(&engine, poll, poll_len);
+  assert(hcp2_responder_runtime_publish_protocol_event(&runtime));
+  assert(hcp2_lp_mailbox_read_protocol_event(&mailbox, &last_sequence, &event));
+  assert(event.event_type == HCP2_PROTOCOL_EVENT_RX);
+  assert(event.frame_type == HCP2_FRAME_STATUS_POLL);
+  assert(event.len == poll_len);
+
+  hcp2_responder_runtime_note_status_poll(&runtime, 456u);
+  hcp2_engine_poll(&engine);
+  assert(hcp2_responder_runtime_publish_protocol_event(&runtime));
+  assert(hcp2_lp_mailbox_read_protocol_event(&mailbox, &last_sequence, &event));
+  assert(event.event_type == HCP2_PROTOCOL_EVENT_TX);
+  assert(event.len == HCP2_STATUS_RESPONSE_LEN);
+
+  memset(&counters, 0, sizeof(counters));
+  counters.tx_abort_count = 1u;
+  counters.collision_count = 2u;
+  counters.max_de_hold_us = 3u;
+  counters.port_rx_error_count = 4u;
+  counters.max_loop_us = 5u;
+  counters.loop_overrun_count = 6u;
+  counters.rx_starvation_count = 7u;
+  counters.stuck_de_count = 8u;
+  counters.mailbox_repair_count = 9u;
+  counters.health_flags = HCP2_LP_HEALTH_FLAG_RX_STARVATION;
+  counters.max_rx_fifo_count = 10u;
+  hcp2_responder_runtime_publish_counters(&runtime, &counters, 789u);
+
+  assert(mailbox.lp_time_us == 789u);
+  assert(mailbox.polls_seen == 1u);
+  assert(mailbox.polls_answered == 1u);
+  assert(mailbox.last_poll_us == 456u);
+  assert(mailbox.tx_abort_count == 1u);
+  assert(mailbox.collision_count == 2u);
+  assert(mailbox.max_de_hold_us == 3u);
+  assert(mailbox.rx_error_count == 4u);
+  assert(mailbox.max_loop_us == 5u);
+  assert(mailbox.loop_overrun_count == 6u);
+  assert(mailbox.rx_starvation_count == 7u);
+  assert(mailbox.stuck_de_count == 8u);
+  assert(mailbox.mailbox_repair_count == 9u);
+  assert(mailbox.health_flags == HCP2_LP_HEALTH_FLAG_RX_STARVATION);
+  assert(mailbox.max_rx_fifo_count == 10u);
+}
+
 int main(void) {
   test_vector_crc_file();
   test_crc_known_frame();
@@ -720,6 +911,11 @@ int main(void) {
   test_mailbox_protocol_event();
   test_mailbox_command_epoch_and_ack();
   test_mailbox_stop_trigger();
+  test_responder_runtime_trace_wrap();
+  test_responder_runtime_expires_pending_command_on_begin();
+  test_responder_runtime_command_lifecycle();
+  test_responder_runtime_stop_trigger();
+  test_responder_runtime_protocol_and_counter_publication();
   puts("hcp2 core tests ok");
   return 0;
 }
