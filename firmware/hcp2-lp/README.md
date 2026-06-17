@@ -7,8 +7,12 @@ and exposes only the fixed mailbox ABI at `0x50002400` to the HP side.
 Local build:
 
 ```sh
-env -u IDF_PYTHON_ENV_PATH bash -c 'source /Users/moritz/.platformio/packages/framework-espidf/export.sh && idf.py -C firmware/hcp2-lp build'
+env -u IDF_PYTHON_ENV_PATH bash -c 'source /Users/moritz/esp/esp-idf/export.sh && idf.py -C firmware/hcp2-lp build'
 ```
+
+Use ESP-IDF `release/v5.5`, matching CI. The generated LP bytes are toolchain-
+sensitive, so do not refresh the checked-in blob from a different ESP-IDF
+distribution.
 
 After changing LP sources, refresh the checked-in ESPHome blob with:
 
