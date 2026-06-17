@@ -9,6 +9,8 @@
 #include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
 
+#include "hcp2_backend.h"
+
 extern "C" {
 #include "hcp2_engine.h"
 #include "hcp2_supervisor.h"
@@ -44,7 +46,13 @@ class HCP2Bridge : public Component {
   void set_signature_byte(uint8_t index, uint8_t value);
   void set_response_delay_us(uint32_t value) { this->config_.response_delay_us = value; }
   void set_button_press_us(uint32_t value) { this->config_.button_press_us = value; }
-  void set_hp_fallback(bool value) { this->hp_fallback_ = value; }
+  void set_backend_kind(HCP2BackendKind kind) {
+    this->backend_kind_ = kind;
+    this->hp_fallback_ = kind == HCP2BackendKind::HP_FALLBACK;
+  }
+  void set_hp_fallback(bool value) {
+    this->set_backend_kind(value ? HCP2BackendKind::HP_FALLBACK : HCP2BackendKind::ESP32C6_LP);
+  }
   void set_lp_uart_clock_source_default(bool value) { this->lp_uart_clock_source_default_ = value; }
   void set_http_debug_port(uint16_t port) { this->http_debug_port_ = port; }
   void set_protocol_log_enabled(bool enabled) { this->protocol_log_enabled_ = enabled; }
@@ -193,6 +201,11 @@ class HCP2Bridge : public Component {
   void drain_lp_protocol_event_();
   void drain_lp_trace_();
   void drain_hp_protocol_event_();
+  bool backend_uses_mailbox_() const { return hcp2_backend_uses_mailbox(this->backend_kind_); }
+  bool backend_survives_hp_restart_() const { return hcp2_backend_survives_hp_restart(this->backend_kind_); }
+  bool backend_supports_stop_trigger_() const { return hcp2_backend_supports_stop_trigger(this->backend_kind_); }
+  bool backend_is_hp_fallback_() const { return this->backend_kind_ == HCP2BackendKind::HP_FALLBACK; }
+  bool mailbox_backend_ready_() const { return this->backend_uses_mailbox_() && this->backend_ready_; }
   std::string hex_encode_(const uint8_t *data, size_t len) const;
   TickType_t pending_tx_wait_ticks_() const;
   void set_de_(bool enabled);
@@ -221,6 +234,7 @@ class HCP2Bridge : public Component {
   InternalGPIOPin *de_pin_{nullptr};
   InternalGPIOPin *re_pin_{nullptr};
   hcp2_engine_config_t config_{};
+  HCP2BackendKind backend_kind_{HCP2BackendKind::ESP32C6_LP};
   bool hp_fallback_{false};
   bool lp_uart_clock_source_default_{false};
   uint8_t uart_num_config_{1};
@@ -300,7 +314,7 @@ class HCP2Bridge : public Component {
   hcp2_hp_supervisor_t lp_supervisor_{};
   bool uart_ready_{false};
   bool bus_task_started_{false};
-  bool lp_ready_{false};
+  bool backend_ready_{false};
   uint32_t lp_last_health_log_ms_{0};
   static constexpr size_t PROTOCOL_LOG_CAPACITY = 49152;
   bool protocol_log_ready_{false};

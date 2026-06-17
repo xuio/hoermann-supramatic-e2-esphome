@@ -231,7 +231,7 @@ init/repair helper that hardcodes `HCP2_LP_FIRMWARE_VERSION`.
 Add a small backend layer under `components/hcp2bridge/`:
 
 - `hcp2_backend.h`
-- `hcp2_backend_lp.cpp`
+- `hcp2bridge_backend_lp.cpp`
 - `hcp2_backend_esp32_realtime.cpp`
 
 The backend interface must stay outside the hot ISR path. A simple C++ interface or
@@ -650,11 +650,11 @@ append-only ABI fields only after a shared UI or C6-compatible need is proven.
 
 1. Add mailbox aliases and responder-backend terminology.
 2. Add backend enum, capabilities, and backend-specific health actions.
-3. Split C6 LP setup/start/skip/reload into `hcp2_backend_lp.cpp`.
+3. Split C6 LP setup/start/skip/reload into `hcp2bridge_backend_lp.cpp`.
    After this phase, a classic ESP32 `esp32_realtime` compile must not include or
    reference `hcp2_lp_blob.h`, `ulp_lp_core.h`, `lp_core_uart.h`,
    `HCP2_LP_MAILBOX_ADDR`, or any `ulp_lp_core_*` symbol from common translation
-   units. These belong only to `hcp2_backend_lp.cpp`.
+   units. These belong only to `hcp2bridge_backend_lp.cpp`.
 4. Split mailbox read/state/protocol/trace drain from LP reload policy.
 5. Add shared `hcp2_responder_runtime.{c,h}` for command lifecycle, stop-trigger,
    protocol-event publishing, trace publishing, and common counters.

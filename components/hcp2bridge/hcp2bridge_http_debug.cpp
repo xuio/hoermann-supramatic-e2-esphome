@@ -95,7 +95,7 @@ std::string HCP2Bridge::http_debug_hp_json_() {
 }
 
 std::string HCP2Bridge::http_debug_health_json_() {
-  const bool lp_mode = !this->hp_fallback_;
+  const bool lp_mode = this->backend_uses_mailbox_();
   const uint32_t polls_seen = this->get_lp_poll_count();
   const uint32_t polls_answered = this->get_lp_response_count();
   const uint32_t missed_polls = this->get_lp_missed_poll_count();
@@ -146,8 +146,10 @@ std::string HCP2Bridge::http_debug_health_json_() {
     }
   };
 
-  if (!lp_mode) {
+  if (this->backend_is_hp_fallback_()) {
     add_reason("hp_fallback_enabled");
+  } else if (!lp_mode) {
+    add_reason("backend_no_mailbox");
   }
   if (!lp_seen) {
     add_reason("lp_not_seen");
@@ -188,7 +190,7 @@ std::string HCP2Bridge::http_debug_health_json_() {
   reasons += "]";
   warnings += "]";
 
-  const bool safe_for_ota_restart = continuity_healthy;
+  const bool safe_for_ota_restart = this->is_safe_for_ota_restart();
   std::string json = "{\"verdict\":\"";
   json += safe_for_ota_restart ? "ok" : "fail";
   json += "\",\"safe_for_ota_restart\":";
@@ -251,7 +253,7 @@ std::string HCP2Bridge::http_debug_health_json_() {
 
 std::string HCP2Bridge::http_debug_stats_json_() {
   std::string json = "{\"protocol\":\"hcp2\",\"mode\":\"";
-  json += this->hp_fallback_ ? "hp_fallback" : "lp";
+  json += hcp2_backend_name(this->backend_kind_);
   json += "\",\"uptime_ms\":";
   json += std::to_string(millis());
   json += ",\"bus_online\":";

@@ -1,7 +1,6 @@
 #include "hcp2bridge.h"
 #include "hcp2bridge_internal.h"
 #include "hcp2_entity_mapping.h"
-#include "hcp2_lp_blob.h"
 
 #include <algorithm>
 #include <cctype>
@@ -18,14 +17,9 @@ extern "C" {
 }
 
 #ifdef USE_ESP32
-#include "driver/gpio.h"
-#include "driver/rtc_io.h"
-#include "esp_random.h"
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "hal/uart_types.h"
-#include "lp_core_uart.h"
-#include "ulp_lp_core.h"
 #endif
 
 namespace esphome {
@@ -51,23 +45,34 @@ void HCP2Bridge::setup() {
   }
   this->record_hp_reset_reason_();
   this->protocol_log_append_control_("boot");
-  if (!this->hp_fallback_) {
-    if (!this->setup_lp_core_()) {
+
+  switch (this->backend_kind_) {
+    case HCP2BackendKind::ESP32C6_LP:
+      if (!this->setup_lp_core_()) {
+        this->mark_failed();
+        return;
+      }
+      this->start_lp_supervisor_task_();
+      this->start_http_debug_task_();
+      return;
+
+    case HCP2BackendKind::HP_FALLBACK:
+      ESP_LOGW(TAG, "HP fallback responder is enabled for bring-up/emulation only");
+      if (!this->setup_uart_()) {
+        this->mark_failed();
+        return;
+      }
+      this->start_hp_fallback_task_();
+      this->start_http_debug_task_();
+      return;
+
+    case HCP2BackendKind::ESP32_REALTIME:
+      ESP_LOGE(TAG, "ESP32 realtime backend is planned but not implemented");
+      this->protocol_log_append_control_("backend_not_implemented");
       this->mark_failed();
       return;
-    }
-    this->start_lp_supervisor_task_();
-    this->start_http_debug_task_();
-    return;
   }
 
-  ESP_LOGW(TAG, "HP fallback responder is enabled for bring-up/emulation only");
-  if (!this->setup_uart_()) {
-    this->mark_failed();
-    return;
-  }
-  this->start_hp_fallback_task_();
-  this->start_http_debug_task_();
 #else
   ESP_LOGE(TAG, "hcp2bridge requires ESP32/ESP-IDF");
   this->mark_failed();
@@ -108,6 +113,7 @@ void HCP2Bridge::dump_config() {
   ESP_LOGCONFIG(TAG, "  Slave ID: %u", (unsigned int) this->config_.slave_id);
   ESP_LOGCONFIG(TAG, "  Response Delay: %uus", (unsigned int) this->config_.response_delay_us);
   ESP_LOGCONFIG(TAG, "  Button Press Duration: %uus", (unsigned int) this->config_.button_press_us);
+  ESP_LOGCONFIG(TAG, "  Backend: %s", hcp2_backend_name(this->backend_kind_));
   ESP_LOGCONFIG(TAG, "  HP Fallback: %s", this->hp_fallback_ ? "enabled" : "disabled");
   ESP_LOGCONFIG(TAG, "  HTTP Debug Port: %u", (unsigned int) this->http_debug_port_);
   ESP_LOGCONFIG(TAG, "  Protocol Log: %s", this->protocol_log_enabled_ ? "enabled" : "disabled");
@@ -154,7 +160,13 @@ bool HCP2Bridge::is_continuity_healthy() const {
   return value;
 }
 
-bool HCP2Bridge::is_safe_for_ota_restart() const { return this->is_continuity_healthy(); }
+bool HCP2Bridge::is_safe_for_ota_restart() const {
+#ifdef USE_ESP32
+  return this->backend_survives_hp_restart_() && this->is_continuity_healthy();
+#else
+  return false;
+#endif
+}
 
 bool HCP2Bridge::has_continuity_diagnostic_warning() const {
 #ifdef USE_ESP32
@@ -516,10 +528,13 @@ bool HCP2Bridge::lp_trace_should_log_(const hcp2_lp_trace_entry_t &entry) {
 
 bool HCP2Bridge::arm_stop_trigger(float target_position, uint32_t ttl_ms) {
 #ifdef USE_ESP32
-  if (this->hp_fallback_) {
+  if (!this->backend_supports_stop_trigger_()) {
+    return false;
+  }
+  if (this->backend_is_hp_fallback_()) {
     return true;
   }
-  if (!this->lp_ready_) {
+  if (!this->mailbox_backend_ready_()) {
     return false;
   }
   float clamped = target_position;
@@ -538,7 +553,7 @@ bool HCP2Bridge::arm_stop_trigger(float target_position, uint32_t ttl_ms) {
 
 void HCP2Bridge::disarm_stop_trigger() {
 #ifdef USE_ESP32
-  if (!this->hp_fallback_ && this->lp_ready_) {
+  if (this->mailbox_backend_ready_()) {
     hcp2_hp_supervisor_disarm_stop_trigger(&this->lp_supervisor_);
   }
 #endif
@@ -550,10 +565,10 @@ bool HCP2Bridge::queue_button_(hcp2_button_t button) {
   }
 
 #ifdef USE_ESP32
-  if (!this->hp_fallback_) {
-    if (!this->lp_ready_) {
-      ESP_LOGW(TAG, "Cannot queue command before LP supervisor is ready");
-      this->protocol_log_append_command_("queue", button, false, "lp_not_ready");
+  if (this->backend_uses_mailbox_()) {
+    if (!this->mailbox_backend_ready_()) {
+      ESP_LOGW(TAG, "Cannot queue command before mailbox backend is ready");
+      this->protocol_log_append_command_("queue", button, false, "mailbox_not_ready");
       return false;
     }
     const hcp2_lp_command_id_t command = lp_command_for_button_(button);
@@ -570,8 +585,14 @@ bool HCP2Bridge::queue_button_(hcp2_button_t button) {
     this->command_sequence_++;
     this->command_callback_pending_ = true;
     portEXIT_CRITICAL(&this->state_mux_);
-    this->protocol_log_append_command_("queue", button, true, "lp_mailbox");
+    this->protocol_log_append_command_("queue", button, true, "mailbox");
     return true;
+  }
+
+  if (!this->backend_is_hp_fallback_()) {
+    ESP_LOGW(TAG, "Cannot queue command for unsupported HCP2 backend");
+    this->protocol_log_append_command_("queue", button, false, "backend_unsupported");
+    return false;
   }
 
   if (this->command_queue_ == nullptr || this->bus_task_handle_ == nullptr) {
@@ -1131,156 +1152,6 @@ bool HCP2Bridge::setup_uart_() {
   return true;
 }
 
-uint32_t HCP2Bridge::fresh_epoch_() const {
-  uint32_t epoch = esp_random();
-  if (epoch == 0u) {
-    epoch = (uint32_t) esp_timer_get_time() ^ 0xC6000001u;
-  }
-  return epoch;
-}
-
-bool HCP2Bridge::setup_lp_core_() {
-  if (this->rx_pin_ == nullptr || this->tx_pin_ == nullptr || this->de_pin_ == nullptr) {
-    ESP_LOGE(TAG, "rx_pin, tx_pin, and de_pin are required");
-    return false;
-  }
-  if (this->re_pin_ == nullptr) {
-    ESP_LOGE(TAG, "re_pin is required for LP RS-485 mode");
-    return false;
-  }
-  if (this->rx_pin_->get_pin() != 4 || this->tx_pin_->get_pin() != 5) {
-    ESP_LOGE(TAG, "ESP32-C6 LP-UART requires rx_pin GPIO4 and tx_pin GPIO5");
-    return false;
-  }
-  if (this->de_pin_->get_pin() != 0 || this->re_pin_->get_pin() != 1) {
-    ESP_LOGE(TAG, "HCP2 LP firmware requires de_pin GPIO0 and re_pin GPIO1");
-    return false;
-  }
-
-  hcp2_hp_supervisor_init(&this->lp_supervisor_, (volatile hcp2_lp_mailbox_t *) HCP2_LP_MAILBOX_ADDR,
-                          HCP2_LP_FIRMWARE_VERSION);
-  const esp_err_t err = this->start_or_skip_lp_();
-  if (err != ESP_OK) {
-    ESP_LOGE(TAG, "LP-core setup failed: %s", esp_err_to_name(err));
-    return false;
-  }
-  this->lp_ready_ = true;
-  ESP_LOGI(TAG, "Started HCP2 LP supervisor mailbox=0x%08x", (unsigned) HCP2_LP_MAILBOX_ADDR);
-  return true;
-}
-
-esp_err_t HCP2Bridge::init_lp_bus_io_() {
-  const gpio_num_t rx_gpio = static_cast<gpio_num_t>(this->rx_pin_->get_pin());
-  const gpio_num_t tx_gpio = static_cast<gpio_num_t>(this->tx_pin_->get_pin());
-  const gpio_num_t de_gpio = static_cast<gpio_num_t>(this->de_pin_->get_pin());
-  const gpio_num_t re_gpio = static_cast<gpio_num_t>(this->re_pin_->get_pin());
-  lp_core_uart_cfg_t uart_cfg{};
-
-  uart_cfg.uart_proto_cfg.baud_rate = HCP2BRIDGE_BAUD_RATE;
-  uart_cfg.uart_proto_cfg.data_bits = UART_DATA_8_BITS;
-  uart_cfg.uart_proto_cfg.parity = UART_PARITY_EVEN;
-  uart_cfg.uart_proto_cfg.stop_bits = UART_STOP_BITS_1;
-  uart_cfg.uart_proto_cfg.flow_ctrl = UART_HW_FLOWCTRL_DISABLE;
-  uart_cfg.uart_proto_cfg.rx_flow_ctrl_thresh = 0;
-  uart_cfg.uart_pin_cfg.tx_io_num = tx_gpio;
-  uart_cfg.uart_pin_cfg.rx_io_num = rx_gpio;
-  uart_cfg.uart_pin_cfg.rts_io_num = GPIO_NUM_NC;
-  uart_cfg.uart_pin_cfg.cts_io_num = GPIO_NUM_NC;
-  uart_cfg.lp_uart_source_clk =
-      this->lp_uart_clock_source_default_ ? LP_UART_SCLK_DEFAULT : LP_UART_SCLK_XTAL_D2;
-
-  esp_err_t err = rtc_gpio_init(de_gpio);
-  if (err != ESP_OK) return err;
-  err = rtc_gpio_set_direction(de_gpio, RTC_GPIO_MODE_OUTPUT_ONLY);
-  if (err != ESP_OK) return err;
-  err = rtc_gpio_set_level(de_gpio, 0);
-  if (err != ESP_OK) return err;
-  err = rtc_gpio_pulldown_en(de_gpio);
-  if (err != ESP_OK) return err;
-
-  err = rtc_gpio_init(re_gpio);
-  if (err != ESP_OK) return err;
-  err = rtc_gpio_set_direction(re_gpio, RTC_GPIO_MODE_OUTPUT_ONLY);
-  if (err != ESP_OK) return err;
-  err = rtc_gpio_set_level(re_gpio, 0);
-  if (err != ESP_OK) return err;
-  err = rtc_gpio_pulldown_en(re_gpio);
-  if (err != ESP_OK) return err;
-
-  err = gpio_set_pull_mode(tx_gpio, GPIO_PULLUP_ONLY);
-  if (err != ESP_OK) return err;
-  return lp_core_uart_init(&uart_cfg);
-}
-
-hcp2_lp_reload_decision_t HCP2Bridge::probe_lp_health_(hcp2_lp_health_sample_t *before,
-                                                       hcp2_lp_health_sample_t *after) {
-  hcp2_lp_health_sample_t before_local;
-  hcp2_lp_health_sample_t after_local;
-
-  hcp2_hp_supervisor_sample_health(&this->lp_supervisor_, &before_local);
-  vTaskDelay(pdMS_TO_TICKS(HCP2BRIDGE_LP_HEARTBEAT_PROBE_MS));
-  hcp2_hp_supervisor_sample_health(&this->lp_supervisor_, &after_local);
-  if (before != nullptr) {
-    *before = before_local;
-  }
-  if (after != nullptr) {
-    *after = after_local;
-  }
-  return hcp2_hp_supervisor_reload_decision(&this->lp_supervisor_, &before_local, &after_local);
-}
-
-bool HCP2Bridge::healthy_lp_running_(hcp2_lp_health_sample_t *before, hcp2_lp_health_sample_t *after) {
-  return this->probe_lp_health_(before, after) == HCP2_LP_RELOAD_SKIP;
-}
-
-esp_err_t HCP2Bridge::load_and_start_lp_() {
-  volatile hcp2_lp_mailbox_t *mailbox = (volatile hcp2_lp_mailbox_t *) HCP2_LP_MAILBOX_ADDR;
-  ulp_lp_core_cfg_t cfg = {
-      .wakeup_source = ULP_LP_CORE_WAKEUP_SOURCE_HP_CPU,
-  };
-
-  ulp_lp_core_stop();
-  esp_err_t err = this->init_lp_bus_io_();
-  if (err != ESP_OK) return err;
-  err = ulp_lp_core_load_binary((const uint8_t *) hcp2_lp_blob_data, (size_t) hcp2_lp_blob_data_len);
-  if (err != ESP_OK) return err;
-  hcp2_lp_mailbox_init(mailbox);
-  hcp2_hp_supervisor_begin_session(&this->lp_supervisor_, this->fresh_epoch_());
-  err = ulp_lp_core_run(&cfg);
-  if (err != ESP_OK) return err;
-  ESP_LOGI(TAG, "HCP2_LP_LOAD_RELOAD bytes=%u epoch=%" PRIu32, (unsigned) hcp2_lp_blob_data_len,
-           this->lp_supervisor_.epoch);
-  return ESP_OK;
-}
-
-esp_err_t HCP2Bridge::start_or_skip_lp_() {
-  hcp2_lp_health_sample_t before;
-  hcp2_lp_health_sample_t after;
-  const hcp2_lp_reload_decision_t decision = this->probe_lp_health_(&before, &after);
-  if (decision == HCP2_LP_RELOAD_SKIP) {
-    hcp2_hp_supervisor_begin_session(&this->lp_supervisor_, this->fresh_epoch_());
-    ESP_LOGI(TAG,
-             "HCP2_LP_SKIP_RELOAD heartbeat_before=%" PRIu32 " heartbeat_after=%" PRIu32
-             " polls_seen=%" PRIu32 " polls_answered=%" PRIu32 " epoch=%" PRIu32,
-             before.heartbeat, after.heartbeat, after.polls_seen, after.polls_answered,
-             this->lp_supervisor_.epoch);
-    return ESP_OK;
-  }
-  if (decision == HCP2_LP_RELOAD_DEFER) {
-    hcp2_hp_supervisor_begin_session(&this->lp_supervisor_, this->fresh_epoch_());
-    ESP_LOGW(TAG,
-             "HCP2_LP_RELOAD_DEFER heartbeat_before=%" PRIu32 " heartbeat_after=%" PRIu32
-             " state=0x%02" PRIx8 " command=%" PRIu32 "/%" PRIu32 " epoch=%" PRIu32,
-             before.heartbeat, after.heartbeat, after.drive_state, after.command_ack_sequence,
-             after.command_sequence, this->lp_supervisor_.epoch);
-    return ESP_OK;
-  }
-
-  ESP_LOGI(TAG, "HCP2_LP_RELOAD_REQUIRED heartbeat_before=%" PRIu32 " heartbeat_after=%" PRIu32,
-           before.heartbeat, after.heartbeat);
-  return this->load_and_start_lp_();
-}
-
 void HCP2Bridge::start_lp_supervisor_task_() {
   if (this->lp_supervisor_task_handle_ != nullptr) {
     return;
@@ -1564,8 +1435,8 @@ void HCP2Bridge::update_state_from_mailbox_() {
     changed = true;
   }
   const bool base_continuity_ok =
-      !this->hp_fallback_ && polls_seen > 0u && heartbeat > 0u && this->bus_online_ && this->valid_broadcast_ &&
-      missed_polls == 0u && (polls_answered >= polls_seen || pending_response);
+      this->backend_uses_mailbox_() && polls_seen > 0u && heartbeat > 0u && this->bus_online_ &&
+      this->valid_broadcast_ && missed_polls == 0u && (polls_answered >= polls_seen || pending_response);
   const bool sticky_diagnostics_present =
       health_flags != 0u || tx_abort != 0u || collision != 0u || loop_overruns != 0u || rx_starvations != 0u ||
       stuck_de != 0u || mailbox_repairs != 0u || (max_de_hold > 0u && max_de_hold > HCP2BRIDGE_MAX_DE_HIGH_US);
