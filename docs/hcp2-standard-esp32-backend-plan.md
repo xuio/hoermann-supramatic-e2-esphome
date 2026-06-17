@@ -26,16 +26,25 @@ Closed implementation decisions:
   `auto_direction` is supported in config from the start, but approved for
   real-motor use only after that exact board/transceiver passes HIL.
 - UART RTS RS-485 mode is out of scope for now.
-- `esp32_realtime` OTA policy is configurable through `allow_unsafe_ota`, default
-  `false`; component/config validation should block OTA when unsafe OTA is not
-  allowed.
+- `esp32_realtime` board validation uses a chip-named profile key:
+  `esp32_realtime_board_profile: esp32_wroom_no_psram`. Known allowlisted
+  classic ESP32 no-PSRAM boards may infer this profile; generic board IDs must
+  set it explicitly. Future support can add profiles such as
+  `esp32_s3_wroom_no_psram` without changing the option shape.
+- `esp32_realtime` OTA policy is configurable only through deliberately ugly
+  bench/test wording: `bench_allow_unsafe_ota`, default `false`;
+  component/config validation should block OTA when the bench override is not
+  enabled.
 - `esp32_realtime` restart policy is configurable as `restart_policy:
   no_auto_restart` by default, with `restart_policy: auto_restart` as a bench/HIL
   option.
 - Motor-facing `esp32_realtime` setups must also reject configured whole-device
   auto-reboot paths, not only backend self-restart. Treat `esp32_realtime` as
   motor-facing by default; bench/HIL relaxations require explicit bench-only
-  overrides.
+  overrides: `bench_allow_unsafe_ota`, `bench_allow_auto_restart`,
+  `bench_allow_reboot_sources`, `bench_allow_uart0`, and
+  `bench_allow_pin_conflicts`. HP-destructive debug UI actions require a separate
+  `bench_allow_destructive_debug_actions` override.
 - The classic ESP32 backend remains experimental only for now and is not a public
   release image target.
 - Do not add new mailbox ABI fields for ESP32 realtime diagnostics in the initial
@@ -46,13 +55,21 @@ Closed implementation decisions:
 - Debug UI and protocol logging should use the same schema/format as the C6 version,
   with memory budget gates rather than different defaults. Destructive HP actions
   such as restart, CPU reset, and panic are capability-gated for `esp32_realtime`.
+- Backend-neutral UI labels should say "Responder", not "LP". Existing C6 tester
+  entity/object names may remain stable for compatibility.
+- ESP32 realtime uses a separate responder version constant, for example
+  `HCP2_ESP32_REALTIME_RESPONDER_VERSION`; it must not reuse the LP blob version.
+- Phase E timing internals stay replaceable and HIL-driven: start with GPTimer
+  behind an abstraction, then decide direct ISR parsing vs. ISR ring/task and
+  GPTimer vs. direct timer-group registers from bench evidence.
 
 Phase A/B/C deliverable boundary: these phases do not implement an active ESP32
 realtime responder. Phase C may add a compile-only inert `esp32_realtime` backend
 stub so ESPHome config/codegen/build validation can run, but that stub must not
 install UART, timer, or ISR handlers, must not touch RS-485 pins, must not transmit,
-and must report the backend as unavailable until Phase D/E. No non-ISR responding
-task is part of Phase C.
+must not allocate a mailbox or start a supervisor session, and must report the
+backend as unavailable until Phase D/E. No non-ISR responding task is part of
+Phase C. Static DRAM mailbox storage belongs in Phase D, not Phase C.
 
 ## Target Outcome
 
@@ -107,6 +124,12 @@ into:
 2. C6-only LP start/skip/reload policy;
 3. backend-specific health and restart policy.
 
+Important setup seam: Phase C needs a real third setup path. Do not map
+`backend: esp32_realtime` to the existing HP fallback. Setup must distinguish:
+`esp32c6_lp`, `hp_fallback`, and `esp32_realtime` inert/unavailable. The inert
+ESP32 path must not install UART, touch pins, create responder tasks, allocate a
+mailbox, start a supervisor session, or transmit.
+
 Important missing shared seam: command consumption, command acking, stop-trigger
 evaluation, mailbox counter publishing, protocol-event mailbox publication, and
 trace publication currently live in the LP firmware file. Before implementing the
@@ -115,10 +138,16 @@ ESP32 realtime backend, move those semantics into a shared C module, for example
 ports for time, TX scheduling, DE control, RX input, diagnostics, and backend
 health hooks.
 
+Keep that shared runtime extraction narrow. Do not move LP UART FIFO handling, DE
+timing, LP GPIO, LP WDT probes, LP-specific reload/defer health quirks, or
+transceiver timing policy into generic code. Those remain backend-specific.
+
 The current HP fallback is useful for bring-up, but it is not the final standard
 ESP32 design. It uses the IDF UART driver event queue, FreeRTOS task timing,
 `uart_write_bytes()`, and `uart_wait_tx_done()`. It may only be used to prove
-entity/mailbox compatibility, never as the production realtime backend.
+entity/mailbox compatibility, never as the production realtime backend. Keep HP
+fallback behavior unchanged except for explicit `backend: hp_fallback`
+selection/deprecation compatibility.
 
 ## Mailbox Compatibility Strategy
 
@@ -162,11 +191,15 @@ typedef hcp2_lp_command_id_t hcp2_responder_command_id_t;
 typedef hcp2_lp_command_result_t hcp2_responder_command_result_t;
 ```
 
+These aliases are source-level terminology only. They must not change struct layout,
+field names, fixed offsets, or `HCP2_LP_MAILBOX_ABI_VERSION`. Only actual mailbox
+layout changes may bump the ABI.
+
 Field semantics:
 
 - `firmware_version`: responder-runtime version. The C6 LP backend sets it to the
   LP blob version. The ESP32 realtime backend sets it to the realtime responder
-  runtime version.
+  runtime version, e.g. `HCP2_ESP32_REALTIME_RESPONDER_VERSION`.
 - `lp_reset_count`: responder backend start/reinit count for `esp32_realtime`.
   Expose it to new UI/configs as "Responder resets" later, but keep the raw field
   for ABI compatibility.
@@ -174,6 +207,12 @@ Field semantics:
   ESP32 it is `esp_timer_get_time()` or a hardware timer count.
 - `reload_decision`: C6 LP-only policy. For `esp32_realtime`, heartbeat and ABI
   checks are diagnostics/health inputs only. They must not call LP reload functions.
+
+Backend-neutral labels do not imply schema churn. Do not rename existing mailbox
+fields such as `lp_reset_count` or `lp_time_us` in the ABI, and do not rename the
+existing C6 protocol-log record types or JSON sources such as `lp_trace` /
+`"source": "lp"` during Phase A/B/C. Relabel only the UI/new diagnostics where
+compatibility is not affected.
 
 Add backend-neutral mailbox initialization helpers:
 
@@ -257,11 +296,14 @@ time field.
   not be named or interpreted as OTA/restart safe.
 - `hp_fallback`: false/unsupported.
 
+Do not implement this as a generic `is_continuity_healthy()` alias. "Healthy while
+running" and "safe through OTA/restart" are separate capabilities.
+
 `restart_policy` controls HCP2 backend self-restart after backend health failure.
 For `esp32_realtime`, motor-facing configs must also pass a separate
 whole-device no-auto-reboot validation profile. That profile rejects configured OTA
 completion, restart buttons, API/Wi-Fi reboot timeouts, safe mode, and similar
-automatic reboot sources unless an explicit bench/HIL override is set.
+automatic reboot sources unless `bench_allow_reboot_sources: true` is set.
 Unavoidable crash/WDT/power loss/manual reset/serial flashing cases remain accepted
 missed-poll gaps, not continuity-safe behavior.
 
@@ -281,11 +323,17 @@ Planned ESP32 realtime options:
 ```yaml
 hcp2bridge:
   backend: esp32_realtime
+  esp32_realtime_board_profile: esp32_wroom_no_psram
   rs485_mode: de_re             # default; explicit DE + /RE
   # rs485_mode: auto_direction  # HIL-gated for motor use
-  allow_unsafe_ota: false       # default
+  bench_allow_unsafe_ota: false # default; enables OTA only for bench/HIL
   restart_policy: no_auto_restart
-  # restart_policy: auto_restart
+  # restart_policy: auto_restart     # requires bench_allow_auto_restart
+  bench_allow_auto_restart: false
+  bench_allow_reboot_sources: false
+  bench_allow_uart0: false
+  bench_allow_pin_conflicts: false
+  bench_allow_destructive_debug_actions: false
 ```
 
 Defaulting:
@@ -306,11 +354,14 @@ Validation rules:
   - only backend allowed to enable ULP/LP-core sdkconfig options.
 - `esp32_realtime`:
   - ESP-IDF only;
-  - allow ESP32-WROOM without PSRAM only for the first implementation. ESPHome
-    validation cannot prove the physical module package for every generic board
-    ID, so Phase C should allowlist known no-PSRAM classic ESP32 boards or require
-    an explicit WROOM/no-PSRAM board profile acknowledgement; reject `psram:`;
-    consider WROVER/PSRAM, ESP32-S3, or other variants later only after tests;
+  - allow ESP32-WROOM without PSRAM only for the first implementation. Use
+    `esp32_realtime_board_profile: esp32_wroom_no_psram` as the concrete profile
+    name. ESPHome validation cannot prove the physical module package for every
+    generic board ID, so Phase C should infer this profile only for known
+    allowlisted no-PSRAM classic ESP32 board IDs; every generic or ambiguous board
+    ID must set the profile explicitly; reject `psram:`; consider WROVER/PSRAM,
+    ESP32-S3, or other variants later only after tests and new chip-named profile
+    values;
   - reject unicore builds;
   - default to UART2, RX GPIO16, TX GPIO17, DE GPIO18, and /RE GPIO19;
   - support `rs485_mode: de_re` with explicit `de_pin` and `re_pin`;
@@ -319,20 +370,22 @@ Validation rules:
   - do not enable ULP sdkconfig options;
   - reject UART0 motor TX unless explicitly `bench_allow_uart0: true`;
   - reject pin conflicts with logger/flashing/strapping-sensitive pins unless
-    explicitly overridden for bench-only use;
+    explicitly overridden with `bench_allow_pin_conflicts: true`;
   - do not add UART ISR/GPTimer/cache-safety sdkconfig until Phase E, when a
     compiled hot path exists to audit;
-  - default `allow_unsafe_ota` to false. Use ESPHome final validation, not OTA
-    runtime listeners, to fail if any `ota:` platform is configured while unsafe
-    OTA is disabled. This must include native ESPHome OTA, web-server OTA,
-    HTTP-request OTA, and future OTA platforms that appear in the final config;
+  - default `bench_allow_unsafe_ota` to false. Use ESPHome final validation, not
+    OTA runtime listeners, to fail if any `ota:` platform is configured while the
+    bench override is disabled. This must include native ESPHome OTA,
+    web-server OTA, HTTP-request OTA, and future OTA platforms that appear in the
+    final config;
   - default `restart_policy` to `no_auto_restart`; `auto_restart` is bench/HIL only
-    and controls backend self-restart;
+    and controls backend self-restart; reject `restart_policy: auto_restart`
+    unless `bench_allow_auto_restart: true`;
   - treat configs as motor-facing by default and use final validation to reject
     configured whole-device auto-reboot sources: restart buttons/switches, API
     reboot timeouts, Wi-Fi reboot timeouts, safe-mode reboot behavior, OTA reboot
     paths, and similar configured reboot triggers. Allow relaxations only through
-    explicit bench/HIL overrides;
+    `bench_allow_reboot_sources: true`;
   - reject `rs485_mode: rts` / UART RTS RS-485 mode. Only `de_re` and
     `auto_direction` are in scope for now.
 - `lp_uart_clock_source`:
@@ -364,8 +417,8 @@ Use a dedicated low-level IDF implementation, not the current UART event queue.
 - First target is ESP32-WROOM without PSRAM.
 - Default pins are UART2 RX GPIO16, TX GPIO17, DE GPIO18, and /RE GPIO19.
 - Initial motor-facing backend must use UART1 or UART2, not UART0. UART0 is reserved
-  for boot/flashing/logging unless a bench-only override is enabled and an LA reset
-  matrix proves no unsafe TX/DE behavior.
+  for boot/flashing/logging unless `bench_allow_uart0: true` is enabled and an LA
+  reset matrix proves no unsafe TX/DE behavior.
 - `rs485_mode: de_re` uses explicit DE and /RE and is the hardened default.
 - `rs485_mode: auto_direction` uses RX/TX only. It is supported for HIL from the
   start, but real-motor use is allowed only after the exact board/transceiver
@@ -577,8 +630,8 @@ should continue to read from normal ESPHome context only.
 Debug UI actions must be backend-capability aware. Protocol-log format, health JSON,
 and non-destructive diagnostics should match C6, but restart, CPU-reset, panic, and
 similar HP-destructive actions must be hidden, disabled, or interlocked for
-`esp32_realtime` unless an explicit bench/HIL policy enables them. On standard ESP32
-those actions intentionally create missed-poll gaps.
+`esp32_realtime` unless `bench_allow_destructive_debug_actions: true` enables them
+for bench/HIL. On standard ESP32 those actions intentionally create missed-poll gaps.
 
 Before adding ESP32 realtime-specific diagnostics, create a mapping table for each
 desired counter (`timer_lateness`, `slot_drops`, `tx_underrun`, `isr_max_time`, and
@@ -613,6 +666,9 @@ append-only ABI fields only after a shared UI or C6-compatible need is proven.
 10. Enforce the closed single-instance policy for all HCP2 responder backends.
 11. Keep HP fallback unchanged until the C6 LP backend still passes tests after the
     refactor.
+
+Phase A is not complete until a classic ESP32 compile/config test proves LP-only
+headers and symbols are physically unreachable from non-C6 backend builds.
 
 ## Engine Changes Required For The ISR Backend
 
@@ -691,25 +747,34 @@ diagnostic/version changes.
 - Existing C6 tester config compiles unchanged.
 - New ESP32 realtime config compiles through the Phase C inert backend stub without
   ULP sdkconfig options, without UART ISR/GPTimer/cache-safety sdkconfig, and
-  without touching RS-485 pins.
+  without touching RS-485 pins, allocating a mailbox, starting a supervisor
+  session, or installing HP fallback UART/task behavior.
+- Classic ESP32 compile output must not reference `hcp2_lp_blob`,
+  `HCP2_LP_MAILBOX_ADDR`, `ulp_lp_core_*`, `ulp_lp_core.h`, `lp_core_uart.h`, or
+  other LP-only headers/symbols outside the C6 backend translation unit.
 - Unsupported combinations fail validation:
   - `esp32c6_lp` on classic ESP32;
   - `esp32_realtime` on Arduino framework;
   - `esp32_realtime` on non-classic ESP32 variants;
+  - `esp32_realtime` on a generic/ambiguous classic ESP32 board without
+    `esp32_realtime_board_profile: esp32_wroom_no_psram`;
+  - `esp32_realtime` with an unsupported board profile value;
   - `esp32_realtime` on unicore build;
   - `esp32_realtime` with `psram:`;
   - multiple `hcp2bridge` instances;
   - conflicting `backend:` and `hp_fallback:`;
   - `rs485_mode: de_re` with missing DE or /RE pin;
   - `rs485_mode: auto_direction` treated as bench/HIL-gated, not motor-approved;
-  - `esp32_realtime` with any `ota:` platform while `allow_unsafe_ota: false`;
+  - `esp32_realtime` with any `ota:` platform while
+    `bench_allow_unsafe_ota: false`;
   - motor-facing `esp32_realtime` with configured restart buttons/switches,
     nonzero API/Wi-Fi reboot timeouts, safe-mode reboot behavior, or other
-    configured whole-device auto-reboot sources unless an explicit bench/HIL
-    override is set;
+    configured whole-device auto-reboot sources unless
+    `bench_allow_reboot_sources: true`;
+  - `restart_policy: auto_restart` unless `bench_allow_auto_restart: true`;
   - `rs485_mode: rts` or other UART RTS RS-485 mode;
-  - UART0 motor TX without bench override;
-  - known pin conflicts without bench override.
+  - UART0 motor TX unless `bench_allow_uart0: true`;
+  - known pin conflicts unless `bench_allow_pin_conflicts: true`.
 - Linker-map audit passes for realtime hot-path IRAM/DRAM placement once Phase E
   adds a compiled hot path. Phase C must not claim this gate.
 - Size-budget gates record and threshold `.iram0.text`, `.dram0.data`,
@@ -785,15 +850,23 @@ not architecture intent, proves it.
   pins, must not transmit, and must report unavailable until the active backend
   phases land.
 - Add `rs485_mode: de_re | auto_direction`, default `de_re`.
-- Add `allow_unsafe_ota`, default `false`.
+- Add `esp32_realtime_board_profile`, with initial value
+  `esp32_wroom_no_psram`.
+- Add `bench_allow_unsafe_ota`, default `false`.
 - Add `restart_policy: no_auto_restart | auto_restart`, default `no_auto_restart`.
+- Add `bench_allow_auto_restart`, `bench_allow_reboot_sources`,
+  `bench_allow_uart0`, `bench_allow_pin_conflicts`, and
+  `bench_allow_destructive_debug_actions`, all default `false`.
 - Add ESP32-WROOM/no-PSRAM config and validation with UART2/GPIO16/17/18/19
   defaults, rejecting `psram:` and unsupported ESP32-family variants.
 - Use ESPHome final validation for cross-component checks: reject all OTA platforms
-  when `allow_unsafe_ota: false`, reject multiple `hcp2bridge` instances, and reject
-  conflicting `backend:`/`hp_fallback:` combinations.
+  when `bench_allow_unsafe_ota: false`, reject multiple `hcp2bridge` instances,
+  and reject conflicting `backend:`/`hp_fallback:` combinations.
 - Add the motor-facing whole-device no-auto-reboot validation profile for
-  `esp32_realtime`, with only explicit bench/HIL overrides allowed.
+  `esp32_realtime`, with only the explicit `bench_allow_*` overrides allowed.
+  Fail closed for the current ESPHome final-config keys the repo can test. Do not
+  build a speculative detector for every possible future reboot source; add a new
+  validation test when a new ESPHome reboot/OTA path is explicitly supported.
 - Reject UART RTS RS-485 mode; only `de_re` and `auto_direction` are valid.
 - Keep current configs behavior-identical.
 - Add validation tests.
