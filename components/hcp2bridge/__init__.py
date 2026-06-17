@@ -123,10 +123,6 @@ def _apply_backend_defaults(config):
     backend = _raw_backend(config)
     config.setdefault(CONF_BACKEND, backend)
     config.setdefault(CONF_RS485_MODE, RS485_MODE_DE_RE)
-    config.setdefault(
-        CONF_ESP32_REALTIME_BOARD_PROFILE,
-        ESP32_REALTIME_BOARD_PROFILE_WROOM_NO_PSRAM,
-    )
     config.setdefault(CONF_RESTART_POLICY, RESTART_POLICY_NO_AUTO_RESTART)
     if backend == BACKEND_ESP32_REALTIME:
         config.setdefault(CONF_RX_PIN, "GPIO16")
@@ -227,6 +223,12 @@ def _validate_esp32_realtime_final(config, full_config, esp32_config):
     framework = esp32_config.get(CONF_FRAMEWORK, {})
     if framework.get(CONF_TYPE) != "esp-idf":
         raise cv.Invalid("backend: esp32_realtime requires the ESP-IDF framework")
+    sdkconfig_options = framework.get("sdkconfig_options", {})
+    if str(sdkconfig_options.get("CONFIG_FREERTOS_UNICORE", "")).lower() in ("1", "true", "yes", "y"):
+        raise cv.Invalid("backend: esp32_realtime requires dual-core FreeRTOS; CONFIG_FREERTOS_UNICORE is unsupported")
+
+    if CONF_ESP32_REALTIME_BOARD_PROFILE not in config:
+        raise cv.Invalid("backend: esp32_realtime requires esp32_realtime_board_profile")
 
     if "psram" in full_config:
         raise cv.Invalid("backend: esp32_realtime supports ESP32-WROOM/no-PSRAM boards only")
@@ -313,7 +315,6 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_RS485_MODE, default=RS485_MODE_DE_RE): cv.enum(RS485_MODES, lower=True),
             cv.Optional(
                 CONF_ESP32_REALTIME_BOARD_PROFILE,
-                default=ESP32_REALTIME_BOARD_PROFILE_WROOM_NO_PSRAM,
             ): cv.enum(ESP32_REALTIME_BOARD_PROFILES, lower=True),
             cv.Optional(CONF_RESTART_POLICY, default=RESTART_POLICY_NO_AUTO_RESTART): cv.enum(RESTART_POLICIES, lower=True),
             cv.Optional(CONF_BENCH_ALLOW_UNSAFE_OTA, default=False): cv.boolean,
@@ -373,14 +374,15 @@ async def to_code(config):
             _enum_expression("HCP2RS485Mode", RS485_MODE_ENUMS[config[CONF_RS485_MODE]])
         )
     )
-    cg.add(
-        var.set_esp32_realtime_board_profile(
-            _enum_expression(
-                "HCP2RealtimeBoardProfile",
-                ESP32_REALTIME_BOARD_PROFILE_ENUMS[config[CONF_ESP32_REALTIME_BOARD_PROFILE]],
+    if CONF_ESP32_REALTIME_BOARD_PROFILE in config:
+        cg.add(
+            var.set_esp32_realtime_board_profile(
+                _enum_expression(
+                    "HCP2RealtimeBoardProfile",
+                    ESP32_REALTIME_BOARD_PROFILE_ENUMS[config[CONF_ESP32_REALTIME_BOARD_PROFILE]],
+                )
             )
         )
-    )
     cg.add(
         var.set_restart_policy(
             _enum_expression(

@@ -1,0 +1,1 @@
+core/hcp2_responder_runtime.c

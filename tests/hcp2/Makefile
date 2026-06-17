@@ -4,7 +4,7 @@ CXX ?= c++
 CORE_DIR := ../../components/hcp2bridge/core
 HCP2BRIDGE_DIR := ../../components/hcp2bridge
 BUILD_DIR := build
-CORE_SRCS := $(CORE_DIR)/hcp2_crc.c $(CORE_DIR)/hcp2_frame.c $(CORE_DIR)/hcp2_engine.c $(CORE_DIR)/hcp2_mailbox.c $(CORE_DIR)/hcp2_supervisor.c $(CORE_DIR)/hcp2_responder_runtime.c
+CORE_SRCS := $(CORE_DIR)/hcp2_crc.c $(CORE_DIR)/hcp2_frame.c $(CORE_DIR)/hcp2_engine.c $(CORE_DIR)/hcp2_mailbox.c $(CORE_DIR)/hcp2_supervisor.c $(CORE_DIR)/hcp2_responder_runtime.c $(CORE_DIR)/hcp2_realtime_port.c
 TEST_SRCS := test_hcp2_core.c $(CORE_SRCS)
 FUZZ_SRCS := fuzz_hcp2_parser.c $(CORE_SRCS)
 HOST_SRCS := host_responder.c $(CORE_SRCS)
@@ -59,6 +59,7 @@ cxx: | $(BUILD_DIR)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -x c++ -c $(CORE_DIR)/hcp2_mailbox.c -o $(BUILD_DIR)/hcp2_mailbox.cxx.o
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -x c++ -c $(CORE_DIR)/hcp2_supervisor.c -o $(BUILD_DIR)/hcp2_supervisor.cxx.o
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -x c++ -c $(CORE_DIR)/hcp2_responder_runtime.c -o $(BUILD_DIR)/hcp2_responder_runtime.cxx.o
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -x c++ -c $(CORE_DIR)/hcp2_realtime_port.c -o $(BUILD_DIR)/hcp2_realtime_port.cxx.o
 
 asan: CFLAGS += -fsanitize=address,undefined -fno-omit-frame-pointer -O1
 asan: CXXFLAGS += -fsanitize=address,undefined -fno-omit-frame-pointer -O1

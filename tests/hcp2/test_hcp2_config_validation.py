@@ -85,6 +85,7 @@ def test_esp32_realtime_minimal_config_defaults_pins(tmp_path: Path) -> None:
             """
             id: hcp2_test
             backend: esp32_realtime
+            esp32_realtime_board_profile: esp32_wroom_no_psram
             """
         ),
     )
@@ -97,6 +98,20 @@ def test_esp32_realtime_minimal_config_defaults_pins(tmp_path: Path) -> None:
     assert "number: 17" in output
     assert "number: 18" in output
     assert "number: 19" in output
+
+
+def test_esp32_realtime_requires_explicit_board_profile(tmp_path: Path) -> None:
+    result = run_esphome_config(
+        tmp_path,
+        esp32_realtime_base(
+            """
+            id: hcp2_test
+            backend: esp32_realtime
+            """
+        ),
+    )
+
+    assert_config_invalid(result, "requires esp32_realtime_board_profile")
 
 
 def test_classic_esp32_requires_realtime_backend(tmp_path: Path) -> None:
@@ -123,6 +138,7 @@ def test_esp32_realtime_rejects_ota_by_default(tmp_path: Path) -> None:
             """
             id: hcp2_test
             backend: esp32_realtime
+            esp32_realtime_board_profile: esp32_wroom_no_psram
             """
         )
         + """
@@ -146,6 +162,7 @@ def test_esp32_realtime_rejects_reboot_sources_by_default(tmp_path: Path) -> Non
             """
             id: hcp2_test
             backend: esp32_realtime
+            esp32_realtime_board_profile: esp32_wroom_no_psram
             """
         )
         + """
@@ -166,12 +183,45 @@ def test_esp32_realtime_rejects_uart0_by_default(tmp_path: Path) -> None:
             """
             id: hcp2_test
             backend: esp32_realtime
+            esp32_realtime_board_profile: esp32_wroom_no_psram
             uart_num: 0
             """
         ),
     )
 
     assert_config_invalid(result, "must not use UART0")
+
+
+def test_esp32_realtime_rejects_unicore_build(tmp_path: Path) -> None:
+    result = run_esphome_config(
+        tmp_path,
+        """
+        esphome:
+          name: hcp2-esp32-unicore-test
+
+        esp32:
+          board: esp32dev
+          framework:
+            type: esp-idf
+            sdkconfig_options:
+              CONFIG_FREERTOS_UNICORE: y
+
+        external_components:
+          - source:
+              type: local
+              path: {components}
+
+        logger:
+          level: INFO
+
+        hcp2bridge:
+          id: hcp2_test
+          backend: esp32_realtime
+          esp32_realtime_board_profile: esp32_wroom_no_psram
+        """,
+    )
+
+    assert_config_invalid(result, "CONFIG_FREERTOS_UNICORE is unsupported")
 
 
 def test_esp32_realtime_allows_auto_direction_without_de_re_pins(tmp_path: Path) -> None:
@@ -181,6 +231,7 @@ def test_esp32_realtime_allows_auto_direction_without_de_re_pins(tmp_path: Path)
             """
             id: hcp2_test
             backend: esp32_realtime
+            esp32_realtime_board_profile: esp32_wroom_no_psram
             rs485_mode: auto_direction
             """
         ),
@@ -234,8 +285,10 @@ def test_rejects_multiple_hcp2bridge_instances(tmp_path: Path) -> None:
         hcp2bridge:
           - id: hcp2_a
             backend: esp32_realtime
+            esp32_realtime_board_profile: esp32_wroom_no_psram
           - id: hcp2_b
             backend: esp32_realtime
+            esp32_realtime_board_profile: esp32_wroom_no_psram
         """,
     )
 

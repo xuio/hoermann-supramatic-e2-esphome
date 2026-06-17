@@ -13,6 +13,7 @@
 
 extern "C" {
 #include "hcp2_engine.h"
+#include "hcp2_responder_runtime.h"
 #include "hcp2_supervisor.h"
 }
 
@@ -142,6 +143,9 @@ class HCP2Bridge : public Component {
   void start_lp_supervisor_task_();
   bool setup_uart_();
   bool setup_esp32_realtime_();
+  void start_esp32_realtime_task_();
+  static void esp32_realtime_task_trampoline_(void *arg);
+  void esp32_realtime_task_loop_();
   bool setup_lp_core_();
   esp_err_t init_lp_bus_io_();
   esp_err_t load_and_start_lp_();
@@ -319,10 +323,18 @@ class HCP2Bridge : public Component {
   QueueHandle_t command_queue_{nullptr};
   TaskHandle_t bus_task_handle_{nullptr};
   TaskHandle_t lp_supervisor_task_handle_{nullptr};
+#ifdef USE_ESP32_VARIANT_ESP32
+  TaskHandle_t esp32_realtime_task_handle_{nullptr};
+#endif
   TaskHandle_t http_debug_task_handle_{nullptr};
   mutable portMUX_TYPE state_mux_ = portMUX_INITIALIZER_UNLOCKED;
   hcp2_engine_t engine_{};
   hcp2_hp_supervisor_t lp_supervisor_{};
+#ifdef USE_ESP32_VARIANT_ESP32
+  alignas(16) hcp2_lp_mailbox_t esp32_realtime_mailbox_{};
+  hcp2_responder_runtime_t esp32_realtime_runtime_{};
+  hcp2_responder_runtime_counters_t esp32_realtime_counters_{};
+#endif
   bool uart_ready_{false};
   bool bus_task_started_{false};
   bool backend_ready_{false};

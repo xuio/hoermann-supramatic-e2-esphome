@@ -71,7 +71,8 @@ void HCP2Bridge::setup() {
         this->mark_failed();
         return;
       }
-      this->mark_failed();
+      this->start_esp32_realtime_task_();
+      this->start_http_debug_task_();
       return;
   }
 

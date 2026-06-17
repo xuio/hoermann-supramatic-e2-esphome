@@ -45,16 +45,19 @@ def test_common_component_routes_through_backend_capabilities() -> None:
     assert "this->backend_uses_mailbox_()" in common
 
 
-def test_esp32_realtime_backend_is_inert_stub() -> None:
+def test_esp32_realtime_backend_is_mailbox_prototype_only() -> None:
     backend = ESP32_REALTIME_BACKEND_SOURCE.read_text()
 
-    assert "esp32_realtime_unavailable" in backend
-    assert "backend_ready_ = false" in backend
+    assert "esp32_realtime_phase_d_ready" in backend
+    assert "esp32_realtime_mailbox_" in backend
+    assert "esp32_realtime_task_loop_" in backend
+    assert "backend_ready_ = true" in backend
 
     forbidden = (
         "uart_driver_install",
         "uart_param_config",
         "uart_set_pin",
+        "uart_isr",
         "timer_isr",
         "gptimer",
         "gpio_set_level",

@@ -7,6 +7,7 @@
 #include "hcp2_engine.h"
 #include "hcp2_frame.h"
 #include "hcp2_mailbox.h"
+#include "hcp2_realtime_port.h"
 #include "hcp2_responder_runtime.h"
 
 #define ARRAY_LEN(x) (sizeof(x) / sizeof((x)[0]))
@@ -892,6 +893,130 @@ static void test_responder_runtime_protocol_and_counter_publication(void) {
   assert(mailbox.max_rx_fifo_count == 10u);
 }
 
+static void test_responder_runtime_differential_lp_and_realtime_model(void) {
+  test_port_t lp_port;
+  test_port_t realtime_port;
+  hcp2_port_t lp_hcp_port;
+  hcp2_port_t realtime_hcp_port;
+  hcp2_engine_config_t config;
+  hcp2_lp_mailbox_t lp_mailbox;
+  hcp2_lp_mailbox_t realtime_mailbox;
+  hcp2_engine_t lp_engine;
+  hcp2_engine_t realtime_engine;
+  hcp2_responder_runtime_t lp_runtime;
+  hcp2_responder_runtime_t realtime_runtime;
+  hcp2_responder_runtime_counters_t counters;
+  uint8_t poll[HCP2_MAX_FRAME_LEN];
+  uint8_t poll_len;
+
+  memset(&lp_port, 0, sizeof(lp_port));
+  memset(&realtime_port, 0, sizeof(realtime_port));
+  memset(&counters, 0, sizeof(counters));
+  lp_hcp_port = make_port(&lp_port);
+  realtime_hcp_port = make_port(&realtime_port);
+  hcp2_engine_config_default(&config);
+  config.response_delay_us = 0u;
+  hcp2_lp_mailbox_init(&lp_mailbox);
+  hcp2_lp_mailbox_init(&realtime_mailbox);
+  hcp2_engine_init(&lp_engine, &lp_hcp_port, &config);
+  hcp2_engine_init(&realtime_engine, &realtime_hcp_port, &config);
+  hcp2_responder_runtime_init(&lp_runtime, &lp_engine, &lp_mailbox);
+  hcp2_responder_runtime_init(&realtime_runtime, &realtime_engine, &realtime_mailbox);
+
+  lp_mailbox.command_epoch = 0x4242u;
+  realtime_mailbox.command_epoch = 0x4242u;
+  hcp2_responder_runtime_handle_mailbox_command(&lp_runtime, 0u);
+  hcp2_responder_runtime_handle_mailbox_command(&realtime_runtime, 0u);
+  hcp2_lp_mailbox_send_command(&lp_mailbox, 0x4242u, 1u, HCP2_LP_COMMAND_OPEN, 0u, 1000u);
+  hcp2_lp_mailbox_send_command(&realtime_mailbox, 0x4242u, 1u, HCP2_LP_COMMAND_OPEN, 0u, 1000u);
+  assert(hcp2_responder_runtime_handle_mailbox_command(&lp_runtime, 10u) == HCP2_LP_COMMAND_RESULT_EXECUTED);
+  assert(hcp2_responder_runtime_handle_mailbox_command(&realtime_runtime, 10u) == HCP2_LP_COMMAND_RESULT_EXECUTED);
+
+  poll_len = build_status_poll(0x70u, poll);
+  feed_bytes(&lp_engine, poll, poll_len);
+  feed_bytes(&realtime_engine, poll, poll_len);
+  hcp2_engine_poll(&lp_engine);
+  hcp2_engine_poll(&realtime_engine);
+  assert(lp_port.tx_count == 1u);
+  assert(realtime_port.tx_count == 1u);
+  assert(lp_port.tx_len[0] == realtime_port.tx_len[0]);
+  assert(memcmp(lp_port.tx[0], realtime_port.tx[0], lp_port.tx_len[0]) == 0);
+
+  hcp2_responder_runtime_note_status_poll(&lp_runtime, 1234u);
+  hcp2_responder_runtime_note_status_poll(&realtime_runtime, 1234u);
+  hcp2_responder_runtime_publish_counters(&lp_runtime, &counters, 2000u);
+  hcp2_responder_runtime_publish_counters(&realtime_runtime, &counters, 2000u);
+  assert(lp_mailbox.polls_seen == realtime_mailbox.polls_seen);
+  assert(lp_mailbox.polls_answered == realtime_mailbox.polls_answered);
+  assert(lp_mailbox.command_ack_sequence == realtime_mailbox.command_ack_sequence);
+  assert(lp_mailbox.command_ack_result == realtime_mailbox.command_ack_result);
+}
+
+static void test_realtime_port_tx_slot_is_immutable(void) {
+  hcp2_realtime_port_model_t model;
+  hcp2_realtime_tx_slot_t slot;
+  uint8_t frame[3] = {0x02u, 0x17u, 0x10u};
+
+  hcp2_realtime_port_model_init(&model, 9000u);
+  assert(hcp2_realtime_tx_slot_init(&slot, frame, sizeof(frame), HCP2_FRAME_STATUS_POLL, 1000u, 200u));
+  assert(hcp2_realtime_port_submit_tx_slot(&model, &slot));
+  slot.data[0] = 0xFFu;
+  frame[1] = 0xFFu;
+
+  assert(!hcp2_realtime_port_service_timer(&model, 999u));
+  assert(hcp2_realtime_port_service_timer(&model, 1000u));
+  assert(model.tx_capture_len == 3u);
+  assert(model.tx_capture_frame_type == HCP2_FRAME_STATUS_POLL);
+  assert(model.tx_capture[0] == 0x02u);
+  assert(model.tx_capture[1] == 0x17u);
+  assert(model.tx_capture[2] == 0x10u);
+  assert(model.de_enabled == 0u);
+  assert(model.counters.timer_late_us == 0u);
+}
+
+static void test_realtime_port_slot_drop_and_late_underrun(void) {
+  hcp2_realtime_port_model_t model;
+  hcp2_realtime_tx_slot_t slot;
+  uint8_t frame[2] = {0x01u, 0x02u};
+
+  hcp2_realtime_port_model_init(&model, 9000u);
+  assert(hcp2_realtime_tx_slot_init(&slot, frame, sizeof(frame), HCP2_FRAME_STATUS_POLL, 1000u, 10u));
+  assert(hcp2_realtime_port_submit_tx_slot(&model, &slot));
+  assert(!hcp2_realtime_port_submit_tx_slot(&model, &slot));
+  assert(model.counters.slot_drop_count == 1u);
+
+  assert(!hcp2_realtime_port_service_timer(&model, 1011u));
+  assert(model.counters.tx_underrun_count == 1u);
+  assert(model.counters.timer_late_us == 11u);
+  assert(model.slot_valid == 0u);
+}
+
+static void test_realtime_port_rx_fifo_and_deadman(void) {
+  hcp2_realtime_port_model_t model;
+  uint8_t byte;
+  uint8_t flags;
+
+  hcp2_realtime_port_model_init(&model, 100u);
+  assert(hcp2_realtime_port_push_rx(&model, 0xA0u, HCP2_RX_OK));
+  assert(hcp2_realtime_port_push_rx(&model, 0xA1u, HCP2_RX_PARITY_ERROR));
+  assert(model.counters.rx_fifo_high_water == 2u);
+  assert(hcp2_realtime_port_pop_rx(&model, &byte, &flags));
+  assert(byte == 0xA0u);
+  assert(flags == HCP2_RX_OK);
+  assert(hcp2_realtime_port_pop_rx(&model, &byte, &flags));
+  assert(byte == 0xA1u);
+  assert(flags == HCP2_RX_PARITY_ERROR);
+  assert(!hcp2_realtime_port_pop_rx(&model, &byte, &flags));
+
+  model.de_enabled = 1u;
+  model.de_enabled_since_us = 1000u;
+  hcp2_realtime_port_check_de_deadman(&model, 1099u);
+  assert(model.de_enabled == 1u);
+  hcp2_realtime_port_check_de_deadman(&model, 1100u);
+  assert(model.de_enabled == 0u);
+  assert(model.counters.de_deadman_count == 1u);
+}
+
 int main(void) {
   test_vector_crc_file();
   test_crc_known_frame();
@@ -916,6 +1041,10 @@ int main(void) {
   test_responder_runtime_command_lifecycle();
   test_responder_runtime_stop_trigger();
   test_responder_runtime_protocol_and_counter_publication();
+  test_responder_runtime_differential_lp_and_realtime_model();
+  test_realtime_port_tx_slot_is_immutable();
+  test_realtime_port_slot_drop_and_late_underrun();
+  test_realtime_port_rx_fifo_and_deadman();
   puts("hcp2 core tests ok");
   return 0;
 }

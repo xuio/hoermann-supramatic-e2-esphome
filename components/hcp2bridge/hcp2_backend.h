@@ -70,7 +70,7 @@ inline const char *hcp2_restart_policy_name(HCP2RestartPolicy policy) {
 }
 
 inline bool hcp2_backend_uses_mailbox(HCP2BackendKind kind) {
-  return kind == HCP2BackendKind::ESP32C6_LP;
+  return kind == HCP2BackendKind::ESP32C6_LP || kind == HCP2BackendKind::ESP32_REALTIME;
 }
 
 inline bool hcp2_backend_survives_hp_restart(HCP2BackendKind kind) {
@@ -78,7 +78,8 @@ inline bool hcp2_backend_survives_hp_restart(HCP2BackendKind kind) {
 }
 
 inline bool hcp2_backend_supports_stop_trigger(HCP2BackendKind kind) {
-  return kind == HCP2BackendKind::ESP32C6_LP || kind == HCP2BackendKind::HP_FALLBACK;
+  return kind == HCP2BackendKind::ESP32C6_LP || kind == HCP2BackendKind::HP_FALLBACK ||
+         kind == HCP2BackendKind::ESP32_REALTIME;
 }
 
 }  // namespace hcp2bridge
