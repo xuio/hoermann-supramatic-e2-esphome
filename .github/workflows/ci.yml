@@ -55,6 +55,33 @@ jobs:
       - name: Compile HCP2 ESPHome dev firmware
         run: uv run esphome compile configs/supramatic-4-dev.yaml
 
+      - name: Compile HCP2 ESP32 realtime inert firmware
+        run: |
+          tmpdir="$(mktemp -d)"
+          cat > "$tmpdir/hcp2-esp32-realtime.yaml" <<YAML
+          esphome:
+            name: hcp2-esp32-rt
+            build_path: "$tmpdir/build"
+
+          esp32:
+            board: esp32dev
+            framework:
+              type: esp-idf
+
+          external_components:
+            - source:
+                type: local
+                path: "$GITHUB_WORKSPACE/components"
+
+          logger:
+            level: INFO
+
+          hcp2bridge:
+            id: hcp2_test
+            backend: esp32_realtime
+          YAML
+          uv run esphome compile "$tmpdir/hcp2-esp32-realtime.yaml"
+
       - name: Run Python tool self-test
         run: uv run garage-decode-phone-sync-video --self-test
 

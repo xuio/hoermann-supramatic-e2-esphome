@@ -1,10 +1,12 @@
 #include "hcp2bridge.h"
 #include "hcp2bridge_internal.h"
+
+#if defined(USE_ESP32) && defined(USE_ESP32_VARIANT_ESP32C6)
+
 #include "hcp2_lp_blob.h"
 
 #include <inttypes.h>
 
-#ifdef USE_ESP32
 #include "driver/gpio.h"
 #include "driver/rtc_io.h"
 #include "esp_random.h"
@@ -12,14 +14,12 @@
 #include "hal/uart_types.h"
 #include "lp_core_uart.h"
 #include "ulp_lp_core.h"
-#endif
 
 namespace esphome {
 namespace hcp2bridge {
 
 static const char *const TAG = "hcp2bridge";
 
-#ifdef USE_ESP32
 uint32_t HCP2Bridge::fresh_epoch_() const {
   uint32_t epoch = esp_random();
   if (epoch == 0u) {
@@ -169,7 +169,49 @@ esp_err_t HCP2Bridge::start_or_skip_lp_() {
            before.heartbeat, after.heartbeat);
   return this->load_and_start_lp_();
 }
-#endif
 
 }  // namespace hcp2bridge
 }  // namespace esphome
+
+#elif defined(USE_ESP32)
+
+namespace esphome {
+namespace hcp2bridge {
+
+static const char *const TAG = "hcp2bridge";
+
+uint32_t HCP2Bridge::fresh_epoch_() const { return 0u; }
+
+bool HCP2Bridge::setup_lp_core_() {
+  ESP_LOGE(TAG, "ESP32-C6 LP backend is not available on this ESP32 variant");
+  this->backend_ready_ = false;
+  return false;
+}
+
+esp_err_t HCP2Bridge::init_lp_bus_io_() { return ESP_FAIL; }
+
+esp_err_t HCP2Bridge::load_and_start_lp_() { return ESP_FAIL; }
+
+esp_err_t HCP2Bridge::start_or_skip_lp_() { return ESP_FAIL; }
+
+hcp2_lp_reload_decision_t HCP2Bridge::probe_lp_health_(hcp2_lp_health_sample_t *before,
+                                                       hcp2_lp_health_sample_t *after) {
+  if (before != nullptr) {
+    *before = {};
+  }
+  if (after != nullptr) {
+    *after = {};
+  }
+  return HCP2_LP_RELOAD_REQUIRED;
+}
+
+bool HCP2Bridge::healthy_lp_running_(hcp2_lp_health_sample_t *before, hcp2_lp_health_sample_t *after) {
+  (void) before;
+  (void) after;
+  return false;
+}
+
+}  // namespace hcp2bridge
+}  // namespace esphome
+
+#endif

@@ -4,6 +4,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 COMMON_SOURCE = ROOT / "components" / "hcp2bridge" / "hcp2bridge.cpp"
 C6_LP_BACKEND_SOURCE = ROOT / "components" / "hcp2bridge" / "hcp2bridge_backend_lp.cpp"
+ESP32_REALTIME_BACKEND_SOURCE = ROOT / "components" / "hcp2bridge" / "hcp2bridge_backend_esp32_realtime.cpp"
 
 
 def test_c6_lp_loader_dependencies_are_isolated() -> None:
@@ -42,3 +43,23 @@ def test_common_component_routes_through_backend_capabilities() -> None:
     assert "switch (this->backend_kind_)" in common
     assert "this->backend_survives_hp_restart_() && this->is_continuity_healthy()" in common
     assert "this->backend_uses_mailbox_()" in common
+
+
+def test_esp32_realtime_backend_is_inert_stub() -> None:
+    backend = ESP32_REALTIME_BACKEND_SOURCE.read_text()
+
+    assert "esp32_realtime_unavailable" in backend
+    assert "backend_ready_ = false" in backend
+
+    forbidden = (
+        "uart_driver_install",
+        "uart_param_config",
+        "uart_set_pin",
+        "timer_isr",
+        "gptimer",
+        "gpio_set_level",
+        "pin_mode",
+        "digital_write",
+    )
+    for token in forbidden:
+        assert token not in backend

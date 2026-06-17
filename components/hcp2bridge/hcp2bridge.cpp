@@ -67,8 +67,10 @@ void HCP2Bridge::setup() {
       return;
 
     case HCP2BackendKind::ESP32_REALTIME:
-      ESP_LOGE(TAG, "ESP32 realtime backend is planned but not implemented");
-      this->protocol_log_append_control_("backend_not_implemented");
+      if (!this->setup_esp32_realtime_()) {
+        this->mark_failed();
+        return;
+      }
       this->mark_failed();
       return;
   }
@@ -114,6 +116,10 @@ void HCP2Bridge::dump_config() {
   ESP_LOGCONFIG(TAG, "  Response Delay: %uus", (unsigned int) this->config_.response_delay_us);
   ESP_LOGCONFIG(TAG, "  Button Press Duration: %uus", (unsigned int) this->config_.button_press_us);
   ESP_LOGCONFIG(TAG, "  Backend: %s", hcp2_backend_name(this->backend_kind_));
+  ESP_LOGCONFIG(TAG, "  RS-485 Mode: %s", hcp2_rs485_mode_name(this->rs485_mode_));
+  ESP_LOGCONFIG(TAG, "  ESP32 Realtime Board Profile: %s",
+                hcp2_realtime_board_profile_name(this->esp32_realtime_board_profile_));
+  ESP_LOGCONFIG(TAG, "  Restart Policy: %s", hcp2_restart_policy_name(this->restart_policy_));
   ESP_LOGCONFIG(TAG, "  HP Fallback: %s", this->hp_fallback_ ? "enabled" : "disabled");
   ESP_LOGCONFIG(TAG, "  HTTP Debug Port: %u", (unsigned int) this->http_debug_port_);
   ESP_LOGCONFIG(TAG, "  Protocol Log: %s", this->protocol_log_enabled_ ? "enabled" : "disabled");

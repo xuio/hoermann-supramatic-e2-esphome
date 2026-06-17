@@ -54,6 +54,12 @@ class HCP2Bridge : public Component {
     this->set_backend_kind(value ? HCP2BackendKind::HP_FALLBACK : HCP2BackendKind::ESP32C6_LP);
   }
   void set_lp_uart_clock_source_default(bool value) { this->lp_uart_clock_source_default_ = value; }
+  void set_rs485_mode(HCP2RS485Mode mode) { this->rs485_mode_ = mode; }
+  void set_esp32_realtime_board_profile(HCP2RealtimeBoardProfile profile) {
+    this->esp32_realtime_board_profile_ = profile;
+  }
+  void set_restart_policy(HCP2RestartPolicy policy) { this->restart_policy_ = policy; }
+  void set_bench_allow_destructive_debug_actions(bool value) { this->bench_allow_destructive_debug_actions_ = value; }
   void set_http_debug_port(uint16_t port) { this->http_debug_port_ = port; }
   void set_protocol_log_enabled(bool enabled) { this->protocol_log_enabled_ = enabled; }
 
@@ -135,6 +141,7 @@ class HCP2Bridge : public Component {
   void start_hp_fallback_task_();
   void start_lp_supervisor_task_();
   bool setup_uart_();
+  bool setup_esp32_realtime_();
   bool setup_lp_core_();
   esp_err_t init_lp_bus_io_();
   esp_err_t load_and_start_lp_();
@@ -235,11 +242,15 @@ class HCP2Bridge : public Component {
   InternalGPIOPin *re_pin_{nullptr};
   hcp2_engine_config_t config_{};
   HCP2BackendKind backend_kind_{HCP2BackendKind::ESP32C6_LP};
+  HCP2RS485Mode rs485_mode_{HCP2RS485Mode::DE_RE};
+  HCP2RealtimeBoardProfile esp32_realtime_board_profile_{HCP2RealtimeBoardProfile::ESP32_WROOM_NO_PSRAM};
+  HCP2RestartPolicy restart_policy_{HCP2RestartPolicy::NO_AUTO_RESTART};
   bool hp_fallback_{false};
   bool lp_uart_clock_source_default_{false};
   uint8_t uart_num_config_{1};
   uint16_t http_debug_port_{0};
   bool protocol_log_enabled_{false};
+  bool bench_allow_destructive_debug_actions_{false};
 
   hcp2_drive_status_t drive_status_{};
   bool valid_broadcast_{false};
