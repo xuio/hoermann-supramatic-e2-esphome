@@ -20,6 +20,11 @@ After changing LP sources, refresh the checked-in ESPHome blob with:
 uv run garage-update-hcp2-lp-blob
 ```
 
+The refresh command validates `build/project_description.json` before touching
+the checked-in blob. It rejects known non-CI toolchains such as PlatformIO's
+ESP-IDF package because the LP binary bytes are toolchain-sensitive. Use
+`--skip-idf-origin-check` only for a local experiment that will not be committed.
+
 CI runs `uv run garage-update-hcp2-lp-blob --check` after the LP build, so a
 stale embedded blob fails before the ESPHome image can drift from the tested LP
 artifact.
