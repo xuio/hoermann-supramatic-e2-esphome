@@ -13,18 +13,30 @@
 
 extern "C" {
 #include "hcp2_engine.h"
+#include "hcp2_realtime_port.h"
 #include "hcp2_responder_runtime.h"
 #include "hcp2_supervisor.h"
 }
 
 #ifdef USE_ESP32
+#include "driver/gpio.h"
+#include "driver/gptimer.h"
 #include "esphome/components/socket/socket.h"
 #include "driver/uart.h"
 #include "esp_err.h"
+#include "esp_intr_alloc.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "freertos/portmacro.h"
+#if defined(USE_ESP32_VARIANT_ESP32) || defined(USE_ESP32_VARIANT_ESP32C6)
+#include "soc/uart_struct.h"
+#endif
+#if defined(USE_ESP32_VARIANT_ESP32C6)
+#include "hcp2_c6_asm_dma_probe.h"
+#include "driver/uhci.h"
+#endif
 #endif
 
 namespace esphome {
@@ -61,6 +73,8 @@ class HCP2Bridge : public Component {
   }
   void set_restart_policy(HCP2RestartPolicy policy) { this->restart_policy_ = policy; }
   void set_bench_allow_destructive_debug_actions(bool value) { this->bench_allow_destructive_debug_actions_ = value; }
+  void set_bench_enable_asm_dma_probe(bool value) { this->bench_enable_asm_dma_probe_ = value; }
+  void set_bench_enable_realtime_uart(bool value) { this->bench_enable_realtime_uart_ = value; }
   void set_http_debug_port(uint16_t port) { this->http_debug_port_ = port; }
   void set_protocol_log_enabled(bool enabled) { this->protocol_log_enabled_ = enabled; }
 
@@ -144,8 +158,45 @@ class HCP2Bridge : public Component {
   bool setup_uart_();
   bool setup_esp32_realtime_();
   void start_esp32_realtime_task_();
+  void start_esp32_realtime_maintenance_task_();
   static void esp32_realtime_task_trampoline_(void *arg);
+  static void esp32_realtime_maintenance_task_trampoline_(void *arg);
   void esp32_realtime_task_loop_();
+  void esp32_realtime_maintenance_task_loop_();
+  bool setup_esp32c6_asm_dma_probe_();
+  void start_esp32c6_asm_dma_probe_task_();
+  static void esp32c6_asm_dma_probe_task_trampoline_(void *arg);
+  void esp32c6_asm_dma_probe_task_loop_();
+  bool setup_esp32_realtime_uart_timer_();
+#if defined(USE_ESP32_VARIANT_ESP32C6)
+  struct Esp32RealtimeUhciRxEvent {
+    uint8_t len;
+    uint8_t flags;
+    uint8_t buffer_index;
+  };
+  bool setup_esp32c6_realtime_uhci_();
+  esp_err_t esp32c6_realtime_uhci_start_rx_(bool record_failure = true);
+  void esp32c6_realtime_uhci_task_loop_();
+  void esp32c6_realtime_uhci_wait_until_(uint32_t due_us);
+  void esp32c6_realtime_uhci_service_pending_tx_();
+  void esp32c6_realtime_uhci_send_response_(const uint8_t *data, uint8_t len,
+                                            const hcp2_pending_tx_meta_t &meta);
+  static bool IRAM_ATTR esp32c6_realtime_uhci_rx_cb_(uhci_controller_handle_t uhci,
+                                                     const uhci_rx_event_data_t *edata, void *user_ctx);
+  static bool IRAM_ATTR esp32c6_realtime_uhci_tx_cb_(uhci_controller_handle_t uhci,
+                                                     const uhci_tx_done_event_data_t *edata, void *user_ctx);
+  static bool IRAM_ATTR esp32c6_realtime_due_timer_alarm_(gptimer_handle_t timer,
+                                                          const gptimer_alarm_event_data_t *edata, void *user_ctx);
+#endif
+  static void IRAM_ATTR esp32_realtime_uart_isr_(void *arg);
+  static bool IRAM_ATTR esp32_realtime_timer_alarm_(gptimer_handle_t timer,
+                                                    const gptimer_alarm_event_data_t *edata, void *user_ctx);
+  static uint32_t IRAM_ATTR esp32_realtime_now_us_cb_(void *user);
+  static void IRAM_ATTR esp32_realtime_set_de_from_isr_(HCP2Bridge *self, bool enabled);
+  static bool IRAM_ATTR esp32_realtime_schedule_alarm_from_isr_(HCP2Bridge *self, uint32_t alarm_us);
+  static void IRAM_ATTR esp32_realtime_schedule_timer_from_isr_(HCP2Bridge *self);
+  static bool IRAM_ATTR esp32_realtime_send_due_tx_from_isr_(HCP2Bridge *self, uint32_t now_us);
+  static void IRAM_ATTR esp32_realtime_finish_tx_from_isr_(HCP2Bridge *self, uint32_t now_us, bool deadman);
   bool setup_lp_core_();
   esp_err_t init_lp_bus_io_();
   esp_err_t load_and_start_lp_();
@@ -255,6 +306,8 @@ class HCP2Bridge : public Component {
   uint16_t http_debug_port_{0};
   bool protocol_log_enabled_{false};
   bool bench_allow_destructive_debug_actions_{false};
+  bool bench_enable_asm_dma_probe_{false};
+  bool bench_enable_realtime_uart_{false};
 
   hcp2_drive_status_t drive_status_{};
   bool valid_broadcast_{false};
@@ -323,17 +376,48 @@ class HCP2Bridge : public Component {
   QueueHandle_t command_queue_{nullptr};
   TaskHandle_t bus_task_handle_{nullptr};
   TaskHandle_t lp_supervisor_task_handle_{nullptr};
-#ifdef USE_ESP32_VARIANT_ESP32
+#if defined(USE_ESP32_VARIANT_ESP32) || defined(USE_ESP32_VARIANT_ESP32C6)
   TaskHandle_t esp32_realtime_task_handle_{nullptr};
+  TaskHandle_t esp32_realtime_maintenance_task_handle_{nullptr};
+#endif
+#if defined(USE_ESP32_VARIANT_ESP32C6)
+  TaskHandle_t esp32c6_asm_dma_probe_task_handle_{nullptr};
+  intr_handle_t esp32c6_asm_dma_probe_intr_handle_{nullptr};
+  uart_dev_t *esp32c6_asm_dma_probe_uart_hw_{nullptr};
+  alignas(16) hcp2_c6_asm_dma_probe_state_t esp32c6_asm_dma_probe_state_{};
 #endif
   TaskHandle_t http_debug_task_handle_{nullptr};
   mutable portMUX_TYPE state_mux_ = portMUX_INITIALIZER_UNLOCKED;
   hcp2_engine_t engine_{};
   hcp2_hp_supervisor_t lp_supervisor_{};
-#ifdef USE_ESP32_VARIANT_ESP32
+#if defined(USE_ESP32_VARIANT_ESP32) || defined(USE_ESP32_VARIANT_ESP32C6)
   alignas(16) hcp2_lp_mailbox_t esp32_realtime_mailbox_{};
   hcp2_responder_runtime_t esp32_realtime_runtime_{};
   hcp2_responder_runtime_counters_t esp32_realtime_counters_{};
+  gptimer_handle_t esp32_realtime_timer_{nullptr};
+  intr_handle_t esp32_realtime_uart_intr_handle_{nullptr};
+  uart_dev_t *esp32_realtime_uart_hw_{nullptr};
+  gpio_num_t esp32_realtime_de_gpio_{GPIO_NUM_NC};
+  gpio_num_t esp32_realtime_re_gpio_{GPIO_NUM_NC};
+  hcp2_realtime_tx_slot_t esp32_realtime_tx_slot_{};
+  uint32_t esp32_realtime_de_enabled_since_us_{0};
+  uint32_t esp32_realtime_tx_tail_due_us_{0};
+  bool esp32_realtime_uart_active_{false};
+  bool esp32_realtime_de_enabled_{false};
+  bool esp32_realtime_tx_active_{false};
+#endif
+#if defined(USE_ESP32_VARIANT_ESP32C6)
+  uhci_controller_handle_t esp32c6_realtime_uhci_{nullptr};
+  QueueHandle_t esp32c6_realtime_uhci_rx_queue_{nullptr};
+  SemaphoreHandle_t esp32c6_realtime_due_sem_{nullptr};
+  alignas(64) uint8_t esp32c6_realtime_uhci_rx_bufs_[4][64]{};
+  alignas(64) uint8_t esp32c6_realtime_uhci_tx_buf_[64]{};
+  uint32_t esp32c6_realtime_uhci_rx_buf_index_{0};
+  volatile bool esp32c6_realtime_uhci_rx_buf_busy_[4]{};
+  volatile bool esp32c6_realtime_uhci_tx_done_pending_{false};
+  volatile bool esp32c6_realtime_uhci_tx_done_seen_{false};
+  volatile uint32_t esp32c6_realtime_uhci_tx_done_size_{0};
+  bool esp32c6_realtime_uhci_active_{false};
 #endif
   bool uart_ready_{false};
   bool bus_task_started_{false};

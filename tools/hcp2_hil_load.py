@@ -582,7 +582,12 @@ def classify_device_health(payload: dict[str, Any], *, fault_injection_expected:
 
     reasons = payload.get("reasons")
     firmware_reasons = [str(reason) for reason in reasons] if isinstance(reasons, list) else []
-    firmware_ok = payload.get("verdict") == "ok"
+    legacy_ota_only_fail = (
+        payload.get("verdict") == "fail"
+        and payload.get("safe_for_ota_restart") is False
+        and not firmware_reasons
+    )
+    firmware_ok = payload.get("verdict") == "ok" or legacy_ota_only_fail
     blocking: list[str] = []
     warnings: list[str] = []
 
@@ -629,7 +634,13 @@ def classify_device_health(payload: dict[str, Any], *, fault_injection_expected:
     for reason in firmware_reasons:
         if reason not in allowed_firmware_reasons and reason not in blocking:
             blocking.append(f"firmware:{reason}")
-    if payload.get("verdict") == "fail" and not firmware_reasons and not blocking and not warnings:
+    if (
+        payload.get("verdict") == "fail"
+        and not legacy_ota_only_fail
+        and not firmware_reasons
+        and not blocking
+        and not warnings
+    ):
         blocking.append("firmware:fail")
 
     verdict = "fail" if blocking else ("warn" if warnings else "ok")
@@ -774,7 +785,7 @@ def run_session(args: argparse.Namespace, *, run_index: int = 1, load_commands: 
         "native_api_commands": None,
         "emulated_esphome_commands": None,
         "device_health": None,
-        "latency_authority": "host_round_trip",
+        "latency_authority": "host_round_trip_until_logic_analyzer",
         "verdict": "not-run",
     }
     report["host_tuning"] = apply_host_tuning(args) if run_index == 1 else {"skipped": "already applied"}
@@ -889,16 +900,18 @@ def aggregate_reports(args: argparse.Namespace, runs: list[dict[str, Any]]) -> d
             verdict = str(run.get("verdict", "failed"))
             break
 
-    latency_max_values = [
+    host_rtt_max_values = [
         value
         for simulation in simulations
-        if (value := simulation.get("latency_max_ms")) is not None
+        if (value := simulation.get("host_rtt_max_ms", simulation.get("latency_max_ms"))) is not None
     ]
-    latency_p99_values = [
+    host_rtt_p99_values = [
         value
         for simulation in simulations
-        if (value := simulation.get("latency_p99_ms")) is not None
+        if (value := simulation.get("host_rtt_p99_ms", simulation.get("latency_p99_ms"))) is not None
     ]
+    worst_host_rtt_max_ms = max(host_rtt_max_values) if host_rtt_max_values else None
+    worst_host_rtt_p99_ms = max(host_rtt_p99_values) if host_rtt_p99_values else None
     return {
         "serial": args.serial,
         "preset": args.preset,
@@ -939,8 +952,10 @@ def aggregate_reports(args: argparse.Namespace, runs: list[dict[str, Any]]) -> d
         "max_consecutive_misses": max(
             [int(simulation.get("max_consecutive_misses", 0)) for simulation in simulations] or [0]
         ),
-        "worst_latency_max_ms": max(latency_max_values) if latency_max_values else None,
-        "worst_latency_p99_ms": max(latency_p99_values) if latency_p99_values else None,
+        "worst_host_rtt_max_ms": worst_host_rtt_max_ms,
+        "worst_host_rtt_p99_ms": worst_host_rtt_p99_ms,
+        "worst_latency_max_ms": worst_host_rtt_max_ms,
+        "worst_latency_p99_ms": worst_host_rtt_p99_ms,
         "runs": runs,
     }
 

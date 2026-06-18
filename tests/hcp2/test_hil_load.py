@@ -87,8 +87,8 @@ def test_hil_load_aggregate_report_summarizes_worst_case() -> None:
                     "replies": 10,
                     "misses": 0,
                     "max_consecutive_misses": 0,
-                    "latency_max_ms": 4.0,
-                    "latency_p99_ms": 3.9,
+                    "host_rtt_max_ms": 4.0,
+                    "host_rtt_p99_ms": 3.9,
                 },
             },
             {
@@ -98,8 +98,8 @@ def test_hil_load_aggregate_report_summarizes_worst_case() -> None:
                     "replies": 7,
                     "misses": 3,
                     "max_consecutive_misses": 3,
-                    "latency_max_ms": 8.5,
-                    "latency_p99_ms": 7.5,
+                    "host_rtt_max_ms": 8.5,
+                    "host_rtt_p99_ms": 7.5,
                 },
             },
         ],
@@ -116,6 +116,8 @@ def test_hil_load_aggregate_report_summarizes_worst_case() -> None:
     assert report["total_replies"] == 17
     assert report["total_misses"] == 3
     assert report["max_consecutive_misses"] == 3
+    assert report["worst_host_rtt_max_ms"] == 8.5
+    assert report["worst_host_rtt_p99_ms"] == 7.5
     assert report["worst_latency_max_ms"] == 8.5
 
 
@@ -309,6 +311,18 @@ def test_hil_load_accepts_firmware_cleared_sticky_diagnostics() -> None:
     assert report["continuity_verdict"] == "ok"
     assert "lp_health_flags_sticky:0x0004" in report["warnings"]
     assert "rx_starvations_sticky:3" in report["warnings"]
+
+
+def test_hil_load_accepts_legacy_unsafe_ota_verdict_when_continuity_is_clean() -> None:
+    payload = health_payload()
+    payload["verdict"] = "fail"
+    payload["safe_for_ota_restart"] = False
+    payload["reasons"] = []
+    report = classify_device_health(payload, fault_injection_expected=False)
+
+    assert report["verdict"] == "ok"
+    assert report["continuity_verdict"] == "ok"
+    assert report["blocking_reasons"] == []
 
 
 def test_hil_load_health_classifier_never_hides_real_continuity_failures() -> None:

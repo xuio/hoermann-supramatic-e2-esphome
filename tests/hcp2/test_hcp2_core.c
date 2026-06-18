@@ -384,6 +384,34 @@ static void test_bad_crc_no_response_and_recovery(void) {
   expect_hex(test_port.tx[0], test_port.tx_len[0], "0217103E000301000000000000000000000000741B");
 }
 
+static void test_truncated_frame_resyncs_to_next_valid_poll(void) {
+  test_port_t test_port;
+  hcp2_port_t port;
+  hcp2_engine_config_t config;
+  hcp2_engine_t engine;
+  uint8_t first_poll[HCP2_MAX_FRAME_LEN];
+  uint8_t second_poll[HCP2_MAX_FRAME_LEN];
+  uint8_t first_len;
+  uint8_t second_len;
+
+  memset(&test_port, 0, sizeof(test_port));
+  port = make_port(&test_port);
+  hcp2_engine_config_default(&config);
+  config.response_delay_us = 0;
+  hcp2_engine_init(&engine, &port, &config);
+
+  first_len = build_status_poll(0x10u, first_poll);
+  second_len = build_status_poll(0x11u, second_poll);
+  feed_bytes(&engine, first_poll, 8u);
+  feed_bytes(&engine, second_poll, second_len);
+  hcp2_engine_poll(&engine);
+
+  assert(first_len == 17u);
+  assert(test_port.tx_count == 1u);
+  assert(test_port.tx[0][3] == 0x11u);
+  assert(engine.status_polls_received == 1u);
+}
+
 static void test_rx_error_resets_partial_frame(void) {
   test_port_t test_port;
   hcp2_port_t port;
@@ -474,6 +502,75 @@ static void test_engine_protocol_events(void) {
   assert(hcp2_engine_read_protocol_event(&engine, &last_sequence, &event));
   assert(event.event_type == HCP2_PROTOCOL_EVENT_RX_ERROR);
   assert(event.len == 0u);
+}
+
+static void test_engine_two_phase_tx_claim_and_interleavings(void) {
+  test_port_t test_port;
+  hcp2_port_t port;
+  hcp2_engine_config_t config;
+  hcp2_engine_t engine;
+  hcp2_pending_tx_meta_t meta;
+  hcp2_protocol_event_t event;
+  uint8_t poll[HCP2_MAX_FRAME_LEN];
+  uint8_t duplicate_poll[HCP2_MAX_FRAME_LEN];
+  uint8_t bad_poll[HCP2_MAX_FRAME_LEN];
+  uint8_t tx[HCP2_MAX_FRAME_LEN];
+  uint8_t tx_len = 0u;
+  uint32_t last_sequence = 0u;
+  uint8_t poll_len;
+
+  memset(&test_port, 0, sizeof(test_port));
+  test_port.now_us = 1000u;
+  port = make_port(&test_port);
+  hcp2_engine_config_default(&config);
+  config.response_delay_us = 100u;
+  hcp2_engine_init(&engine, &port, &config);
+
+  poll_len = build_status_poll(0x42u, poll);
+  feed_bytes(&engine, poll, poll_len);
+  assert(hcp2_engine_pending_tx_ready(&engine));
+  assert(hcp2_engine_pending_tx_due_us(&engine) == 1100u);
+  assert(!hcp2_engine_claim_due_tx(&engine, 1099u, tx, &tx_len, &meta));
+
+  build_status_poll(0x43u, duplicate_poll);
+  feed_bytes(&engine, duplicate_poll, poll_len);
+  assert(engine.pending_tx_drop_count == 1u);
+
+  memcpy(bad_poll, duplicate_poll, poll_len);
+  bad_poll[poll_len - 1u] ^= 0x01u;
+  feed_bytes(&engine, bad_poll, poll_len);
+  assert(engine.crc_errors > 0u);
+  assert(engine.pending_tx_drop_count == 1u);
+
+  assert(hcp2_engine_claim_due_tx(&engine, 1100u, tx, &tx_len, &meta));
+  assert(!hcp2_engine_pending_tx_ready(&engine));
+  assert(tx_len == HCP2_STATUS_RESPONSE_LEN);
+  assert(tx[3] == 0x42u);
+  assert(meta.frame_type == HCP2_FRAME_STATUS_POLL);
+  assert(meta.is_status_response == 1u);
+  assert(meta.scheduled_us == 1000u);
+  assert(meta.due_us == 1100u);
+
+  tx[3] = 0xFFu;
+  hcp2_engine_mark_tx_started(&engine, 1110u);
+  assert(hcp2_engine_read_protocol_event(&engine, &last_sequence, &event));
+  assert(event.event_type == HCP2_PROTOCOL_EVENT_TX);
+  assert(event.data[3] == 0x42u);
+
+  feed_bytes(&engine, duplicate_poll, poll_len);
+  assert(engine.pending_tx_drop_count == 2u);
+
+  hcp2_engine_mark_tx_done(&engine, 1200u);
+  assert(engine.status_responses_sent == 1u);
+  assert(engine.responses_sent == 1u);
+  assert(engine.max_status_response_schedule_to_tx_start_us == 110u);
+  assert(engine.max_status_response_tx_us == 90u);
+  assert(!hcp2_engine_pending_tx_ready(&engine));
+
+  feed_bytes(&engine, duplicate_poll, poll_len);
+  assert(hcp2_engine_pending_tx_ready(&engine));
+  assert(hcp2_engine_claim_due_tx(&engine, 1100u, tx, &tx_len, &meta));
+  assert(tx[3] == 0x43u);
 }
 
 static void test_mailbox_layout_and_reload_decision(void) {
@@ -1028,9 +1125,11 @@ int main(void) {
   test_series4_partial_state_decode();
   test_button_press_release_sequence();
   test_bad_crc_no_response_and_recovery();
+  test_truncated_frame_resyncs_to_next_valid_poll();
   test_rx_error_resets_partial_frame();
   test_engine_latency_counters();
   test_engine_protocol_events();
+  test_engine_two_phase_tx_claim_and_interleavings();
   test_mailbox_layout_and_reload_decision();
   test_mailbox_state_seqlock();
   test_mailbox_protocol_event();

@@ -1,0 +1,48 @@
+substitutions:
+  name: "supramatic-4-esp32-realtime"
+  friendly_name: "Garage Door HCP2 ESP32 Realtime"
+  hcp2_rx_pin: GPIO16
+  hcp2_tx_pin: GPIO17
+  hcp2_de_pin: GPIO18
+  hcp2_re_pin: GPIO19
+
+esphome:
+  name: "${name}"
+  friendly_name: "${friendly_name}"
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+    version: 5.5.4
+    sdkconfig_options:
+      CONFIG_ESP_SYSTEM_PANIC_PRINT_REBOOT: "n"
+      CONFIG_ESP_SYSTEM_PANIC_PRINT_HALT: "y"
+      CONFIG_ESP_TASK_WDT_EN: "y"
+      CONFIG_ESP_TASK_WDT_INIT: "y"
+      CONFIG_ESP_TASK_WDT_PANIC: "n"
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+
+logger:
+  level: INFO
+
+hcp2bridge:
+  id: hcp2_realtime
+  backend: esp32_realtime
+  esp32_realtime_board_profile: esp32_wroom_no_psram
+  bench_enable_realtime_uart: true
+  rx_pin: ${hcp2_rx_pin}
+  tx_pin: ${hcp2_tx_pin}
+  de_pin: ${hcp2_de_pin}
+  re_pin: ${hcp2_re_pin}
+  uart_num: 2
+  slave_id: 2
+  device_signature: "00000205043010FFA855"
+  response_delay: 4200us
+  button_press_duration: 100ms
+  http_debug_port: 0
+  protocol_log: false

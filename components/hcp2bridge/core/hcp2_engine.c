@@ -2,18 +2,18 @@
 
 #include <string.h>
 
-static uint32_t now_us_(const hcp2_engine_t *engine) {
+static HCP2_HOT_TEXT uint32_t now_us_(const hcp2_engine_t *engine) {
   if (engine->port.now_us == 0) {
     return 0u;
   }
   return engine->port.now_us(engine->port.user);
 }
 
-static uint8_t time_reached_(uint32_t now, uint32_t due) {
+static HCP2_HOT_TEXT uint8_t time_reached_(uint32_t now, uint32_t due) {
   return ((int32_t) (now - due)) >= 0 ? 1u : 0u;
 }
 
-static void rx_drop_(hcp2_engine_t *engine, uint8_t count) {
+static HCP2_HOT_TEXT void rx_drop_(hcp2_engine_t *engine, uint8_t count) {
   if (count >= engine->rx_len) {
     engine->rx_len = 0u;
     return;
@@ -22,13 +22,28 @@ static void rx_drop_(hcp2_engine_t *engine, uint8_t count) {
   engine->rx_len = (uint8_t) (engine->rx_len - count);
 }
 
+static HCP2_HOT_TEXT uint8_t rx_resync_drop_count_(const hcp2_engine_t *engine) {
+  uint8_t offset;
+
+  if (engine == 0 || engine->rx_len <= 1u) {
+    return 1u;
+  }
+  for (offset = 1u; offset + 1u < engine->rx_len; offset++) {
+    uint8_t expected_len = 0u;
+    if (hcp2_frame_master_expected_len(engine->rx + offset, (uint8_t) (engine->rx_len - offset), &expected_len)) {
+      return offset;
+    }
+  }
+  return 1u;
+}
+
 enum {
   HCP2_PENDING_TX_OTHER = 0,
   HCP2_PENDING_TX_STATUS = 1,
 };
 
-static void record_protocol_event_(hcp2_engine_t *engine, uint8_t event_type, uint8_t frame_type,
-                                   const uint8_t *data, uint8_t len, uint32_t at_us) {
+static HCP2_HOT_TEXT void record_protocol_event_(hcp2_engine_t *engine, uint8_t event_type, uint8_t frame_type,
+                                                 const uint8_t *data, uint8_t len, uint32_t at_us) {
 #if HCP2_ENABLE_PROTOCOL_EVENTS
   hcp2_protocol_event_t *event;
 
@@ -63,17 +78,21 @@ static void record_protocol_event_(hcp2_engine_t *engine, uint8_t event_type, ui
 #endif
 }
 
-static void record_max_(uint32_t *dest, uint32_t value) {
+static HCP2_HOT_TEXT void record_max_(uint32_t *dest, uint32_t value) {
   if (dest != 0 && value > *dest) {
     *dest = value;
   }
 }
 
-static void schedule_tx_(hcp2_engine_t *engine, const uint8_t *data, uint8_t len, uint8_t kind,
-                         uint8_t frame_type, uint32_t rx_complete_us) {
+static HCP2_HOT_TEXT void schedule_tx_(hcp2_engine_t *engine, const uint8_t *data, uint8_t len, uint8_t kind,
+                                       uint8_t frame_type, uint32_t rx_complete_us) {
   const uint32_t scheduled_us = now_us_(engine);
 
   if (len == 0u || len > HCP2_MAX_FRAME_LEN) {
+    return;
+  }
+  if (engine->pending_tx_ready) {
+    engine->pending_tx_drop_count++;
     return;
   }
   memcpy(engine->pending_tx, data, len);
@@ -82,13 +101,16 @@ static void schedule_tx_(hcp2_engine_t *engine, const uint8_t *data, uint8_t len
   engine->pending_tx_frame_type = frame_type;
   engine->pending_tx_scheduled_us = scheduled_us;
   engine->pending_tx_due_us = scheduled_us + engine->config.response_delay_us;
+  engine->pending_tx_started_us = 0u;
   engine->pending_tx_ready = 1u;
+  engine->pending_tx_claimed = 0u;
+  engine->pending_tx_started = 0u;
   if (kind == HCP2_PENDING_TX_STATUS && rx_complete_us != 0u) {
     record_max_(&engine->max_status_poll_rx_to_schedule_us, scheduled_us - rx_complete_us);
   }
 }
 
-static hcp2_button_t current_button_phase_(hcp2_engine_t *engine, uint8_t *release_phase) {
+static HCP2_HOT_TEXT hcp2_button_t current_button_phase_(hcp2_engine_t *engine, uint8_t *release_phase) {
   const uint32_t now = now_us_(engine);
   hcp2_button_t button = engine->active_button;
 
@@ -109,7 +131,8 @@ static hcp2_button_t current_button_phase_(hcp2_engine_t *engine, uint8_t *relea
   return HCP2_BUTTON_NONE;
 }
 
-static void handle_decoded_(hcp2_engine_t *engine, const hcp2_decoded_frame_t *frame, uint32_t rx_complete_us) {
+static HCP2_HOT_TEXT void handle_decoded_(hcp2_engine_t *engine, const hcp2_decoded_frame_t *frame,
+                                          uint32_t rx_complete_us) {
   uint8_t tx[HCP2_MAX_FRAME_LEN];
   uint8_t tx_len = 0u;
   uint8_t release_phase = 0u;
@@ -142,7 +165,7 @@ static void handle_decoded_(hcp2_engine_t *engine, const hcp2_decoded_frame_t *f
   }
 }
 
-static void process_rx_(hcp2_engine_t *engine) {
+static HCP2_HOT_TEXT void process_rx_(hcp2_engine_t *engine) {
   while (engine->rx_len > 0u) {
     uint8_t expected_len = 0u;
     hcp2_decoded_frame_t frame;
@@ -171,10 +194,10 @@ static void process_rx_(hcp2_engine_t *engine) {
         engine->crc_errors++;
         record_protocol_event_(engine, (uint8_t) HCP2_PROTOCOL_EVENT_BAD_CRC, (uint8_t) HCP2_FRAME_NONE,
                                engine->rx, expected_len, now_us_(engine));
-        rx_drop_(engine, 1u);
+        rx_drop_(engine, rx_resync_drop_count_(engine));
         break;
       case HCP2_PARSE_INVALID:
-        rx_drop_(engine, 1u);
+        rx_drop_(engine, rx_resync_drop_count_(engine));
         break;
       case HCP2_PARSE_INCOMPLETE:
       default:
@@ -210,7 +233,7 @@ void hcp2_engine_init(hcp2_engine_t *engine, const hcp2_port_t *port, const hcp2
   }
 }
 
-void hcp2_engine_rx_byte(hcp2_engine_t *engine, uint8_t byte, uint8_t flags) {
+HCP2_HOT_TEXT void hcp2_engine_rx_byte(hcp2_engine_t *engine, uint8_t byte, uint8_t flags) {
   if (engine == 0) {
     return;
   }
@@ -230,46 +253,108 @@ void hcp2_engine_rx_byte(hcp2_engine_t *engine, uint8_t byte, uint8_t flags) {
 }
 
 void hcp2_engine_poll(hcp2_engine_t *engine) {
-  uint32_t tx_start_us;
-  uint32_t tx_done_us;
-  uint8_t pending_kind;
+  uint8_t tx[HCP2_MAX_FRAME_LEN];
+  uint8_t tx_len = 0u;
+  hcp2_pending_tx_meta_t meta;
 
-  if (engine == 0 || !engine->pending_tx_ready) {
+  if (engine == 0) {
     return;
   }
-  if (!time_reached_(now_us_(engine), engine->pending_tx_due_us)) {
+  if (!hcp2_engine_claim_due_tx(engine, now_us_(engine), tx, &tx_len, &meta)) {
     return;
   }
 
-  pending_kind = engine->pending_tx_kind;
-  tx_start_us = now_us_(engine);
-  record_protocol_event_(engine, (uint8_t) HCP2_PROTOCOL_EVENT_TX, engine->pending_tx_frame_type,
-                         engine->pending_tx, engine->pending_tx_len, tx_start_us);
-  if (pending_kind == HCP2_PENDING_TX_STATUS) {
-    record_max_(&engine->max_status_response_schedule_to_tx_start_us, tx_start_us - engine->pending_tx_scheduled_us);
-  }
   if (engine->port.de_set != 0) {
     engine->port.de_set(engine->port.user, 1u);
   }
+  hcp2_engine_mark_tx_started(engine, now_us_(engine));
   if (engine->port.tx != 0) {
-    engine->port.tx(engine->port.user, engine->pending_tx, engine->pending_tx_len);
+    engine->port.tx(engine->port.user, tx, tx_len);
   }
   if (engine->port.de_set != 0) {
     engine->port.de_set(engine->port.user, 0u);
   }
-  tx_done_us = now_us_(engine);
-  if (pending_kind == HCP2_PENDING_TX_STATUS) {
-    record_max_(&engine->max_status_response_tx_us, tx_done_us - tx_start_us);
-  }
+  hcp2_engine_mark_tx_done(engine, now_us_(engine));
+  (void) meta;
+}
 
+HCP2_HOT_TEXT uint8_t hcp2_engine_pending_tx_ready(const hcp2_engine_t *engine) {
+  if (engine == 0) {
+    return 0u;
+  }
+  return (engine->pending_tx_ready && !engine->pending_tx_claimed) ? 1u : 0u;
+}
+
+HCP2_HOT_TEXT uint32_t hcp2_engine_pending_tx_due_us(const hcp2_engine_t *engine) {
+  if (engine == 0 || !engine->pending_tx_ready) {
+    return 0u;
+  }
+  return engine->pending_tx_due_us;
+}
+
+HCP2_HOT_TEXT uint8_t hcp2_engine_claim_due_tx(hcp2_engine_t *engine, uint32_t now_us, uint8_t *out_buf,
+                                               uint8_t *out_len, hcp2_pending_tx_meta_t *out_meta) {
+  if (engine == 0 || out_buf == 0 || out_len == 0) {
+    return 0u;
+  }
+  if (!engine->pending_tx_ready || engine->pending_tx_claimed) {
+    return 0u;
+  }
+  if (!time_reached_(now_us, engine->pending_tx_due_us)) {
+    return 0u;
+  }
+  memcpy(out_buf, engine->pending_tx, engine->pending_tx_len);
+  *out_len = engine->pending_tx_len;
+  if (out_meta != 0) {
+    out_meta->scheduled_us = engine->pending_tx_scheduled_us;
+    out_meta->due_us = engine->pending_tx_due_us;
+    out_meta->frame_type = engine->pending_tx_frame_type;
+    out_meta->is_status_response = engine->pending_tx_kind == HCP2_PENDING_TX_STATUS ? 1u : 0u;
+    out_meta->reserved[0] = 0u;
+    out_meta->reserved[1] = 0u;
+  }
+  engine->pending_tx_claimed = 1u;
+  return 1u;
+}
+
+HCP2_HOT_TEXT void hcp2_engine_mark_tx_started(hcp2_engine_t *engine, uint32_t now_us) {
+  if (engine == 0 || !engine->pending_tx_ready || !engine->pending_tx_claimed || engine->pending_tx_started) {
+    return;
+  }
+  engine->pending_tx_started = 1u;
+  engine->pending_tx_started_us = now_us;
+  record_protocol_event_(engine, (uint8_t) HCP2_PROTOCOL_EVENT_TX, engine->pending_tx_frame_type,
+                         engine->pending_tx, engine->pending_tx_len, now_us);
+  if (engine->pending_tx_kind == HCP2_PENDING_TX_STATUS) {
+    record_max_(&engine->max_status_response_schedule_to_tx_start_us, now_us - engine->pending_tx_scheduled_us);
+  }
+}
+
+HCP2_HOT_TEXT void hcp2_engine_mark_tx_done(hcp2_engine_t *engine, uint32_t now_us) {
+  const uint8_t pending_kind = engine != 0 ? engine->pending_tx_kind : HCP2_PENDING_TX_OTHER;
+
+  if (engine == 0 || !engine->pending_tx_ready || !engine->pending_tx_claimed) {
+    return;
+  }
+  if (!engine->pending_tx_started) {
+    hcp2_engine_mark_tx_started(engine, now_us);
+  }
+  if (pending_kind == HCP2_PENDING_TX_STATUS) {
+    record_max_(&engine->max_status_response_tx_us, now_us - engine->pending_tx_started_us);
+  }
   engine->responses_sent++;
   if (pending_kind == HCP2_PENDING_TX_STATUS) {
     engine->status_responses_sent++;
   }
   engine->pending_tx_ready = 0u;
+  engine->pending_tx_claimed = 0u;
+  engine->pending_tx_started = 0u;
   engine->pending_tx_len = 0u;
   engine->pending_tx_kind = HCP2_PENDING_TX_OTHER;
   engine->pending_tx_frame_type = (uint8_t) HCP2_FRAME_NONE;
+  engine->pending_tx_scheduled_us = 0u;
+  engine->pending_tx_due_us = 0u;
+  engine->pending_tx_started_us = 0u;
 }
 
 uint8_t hcp2_engine_press_button(hcp2_engine_t *engine, hcp2_button_t button) {

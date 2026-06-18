@@ -24,6 +24,7 @@ DEFAULT_CHANNELS = {
     "rx": "D3",
 }
 DEFAULT_MAX_DE_HIGH_US = 9000.0
+DEFAULT_RE_SKEW_US = 2.0
 DEFAULT_HCP2_BAUD = 57600
 MIN_UART_SAMPLES_PER_BIT = 8.0
 
@@ -367,6 +368,12 @@ def high_sample_counts(samples: list[Sample], channel: str, allowed_windows: lis
         if index < 0 or sample.time_s > allowed_windows[index].end_s:
             outside_count += 1
     return high_count, outside_count
+
+
+def expand_windows(windows: list[Window], before_us: float, after_us: float) -> list[Window]:
+    before_s = max(before_us, 0.0) / 1_000_000.0
+    after_s = max(after_us, 0.0) / 1_000_000.0
+    return [Window(window.start_s - before_s, window.end_s + after_s) for window in windows]
 
 
 def crop_samples(samples: list[Sample], ignore_before_us: float) -> list[Sample]:
@@ -861,6 +868,7 @@ def analyze_samples(
     require_initial_tx_high: bool = True,
     require_re_low: bool = True,
     allow_re_high_during_de: bool = False,
+    re_skew_us: float = DEFAULT_RE_SKEW_US,
     require_tx_only_during_de: bool = True,
     require_tx_during_de: bool = True,
 ) -> dict[str, Any]:
@@ -908,7 +916,8 @@ def analyze_samples(
     re_high_samples = 0
     re_high_outside_de_samples = 0
     if require_re_low and any("re" in sample.values for sample in samples):
-        re_high_samples, re_high_outside_de_samples = high_sample_counts(samples, "re", de_windows)
+        re_allowed_windows = expand_windows(de_windows, re_skew_us, re_skew_us) if allow_re_high_during_de else de_windows
+        re_high_samples, re_high_outside_de_samples = high_sample_counts(samples, "re", re_allowed_windows)
         if allow_re_high_during_de and re_high_outside_de_samples:
             failures.append(f"/RE was high outside DE in {re_high_outside_de_samples} samples")
         elif not allow_re_high_during_de and re_high_samples:
@@ -938,6 +947,7 @@ def analyze_samples(
         "re_high_samples": re_high_samples,
         "re_high_outside_de_samples": re_high_outside_de_samples,
         "allow_re_high_during_de": allow_re_high_during_de,
+        "re_skew_us": re_skew_us if allow_re_high_during_de else 0.0,
         "windows": [
             {
                 "start_us": (window.start_s - samples[0].time_s) * 1_000_000.0,
@@ -960,6 +970,7 @@ def verify_samples(
     require_initial_tx_high: bool = True,
     require_re_low: bool = True,
     allow_re_high_during_de: bool = False,
+    re_skew_us: float = DEFAULT_RE_SKEW_US,
     require_tx_only_during_de: bool = True,
     require_tx_during_de: bool = True,
     signal: str = "tx",
@@ -978,6 +989,7 @@ def verify_samples(
         require_initial_tx_high=require_initial_tx_high,
         require_re_low=require_re_low,
         allow_re_high_during_de=allow_re_high_during_de,
+        re_skew_us=re_skew_us,
         require_tx_only_during_de=require_tx_only_during_de,
         require_tx_during_de=require_tx_during_de,
     )
@@ -1055,6 +1067,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
             require_initial_tx_high=not args.allow_initial_tx_low,
             require_re_low=not args.allow_re_high,
             allow_re_high_during_de=args.allow_re_high_during_de,
+            re_skew_us=args.re_skew_us,
             require_tx_only_during_de=not args.allow_tx_outside_de,
             require_tx_during_de=not args.allow_de_without_tx,
         )
@@ -1123,6 +1136,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
             require_initial_tx_high=not args.allow_initial_tx_low,
             require_re_low=not args.allow_re_high,
             allow_re_high_during_de=args.allow_re_high_during_de,
+            re_skew_us=args.re_skew_us,
             require_tx_only_during_de=not args.allow_tx_outside_de,
             require_tx_during_de=not args.allow_de_without_tx,
             signal=args.signal,
@@ -1220,6 +1234,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     analyze.add_argument("--allow-initial-tx-low", action="store_true")
     analyze.add_argument("--allow-re-high", action="store_true")
     analyze.add_argument("--allow-re-high-during-de", action="store_true")
+    analyze.add_argument("--re-skew-us", type=float, default=DEFAULT_RE_SKEW_US)
     analyze.add_argument("--allow-tx-outside-de", action="store_true")
     analyze.add_argument("--allow-de-without-tx", action="store_true")
     analyze.add_argument("--output", type=Path)
@@ -1256,6 +1271,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     verify.add_argument("--allow-initial-tx-low", action="store_true")
     verify.add_argument("--allow-re-high", action="store_true")
     verify.add_argument("--allow-re-high-during-de", action="store_true")
+    verify.add_argument("--re-skew-us", type=float, default=DEFAULT_RE_SKEW_US)
     verify.add_argument("--allow-tx-outside-de", action="store_true")
     verify.add_argument("--allow-de-without-tx", action="store_true")
     verify.add_argument("--baud", type=int, default=DEFAULT_HCP2_BAUD)

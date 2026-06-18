@@ -30,6 +30,8 @@ def render_blob(data: bytes, *, digest: str) -> str:
         " */",
         '#include "hcp2_lp_blob.h"',
         "",
+        "#if defined(HCP2_EMBED_LP_BLOB)",
+        "",
         "const unsigned char hcp2_lp_blob_data[] = {",
     ]
     for offset in range(0, len(data), BYTES_PER_LINE):
@@ -40,6 +42,8 @@ def render_blob(data: bytes, *, digest: str) -> str:
         [
             "};",
             f"const unsigned int hcp2_lp_blob_data_len = {len(data)};",
+            "",
+            "#endif",
             "",
         ]
     )

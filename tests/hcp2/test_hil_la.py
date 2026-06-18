@@ -212,6 +212,38 @@ def test_logic_analyzer_can_allow_re_high_only_during_de(tmp_path: Path) -> None
     assert outside_report["re_high_outside_de_samples"] == 1
 
 
+def test_logic_analyzer_allows_bounded_re_de_skew(tmp_path: Path) -> None:
+    capture = tmp_path / "re-skew.csv"
+    write_csv(
+        capture,
+        [
+            (0.000000, 0, 0, 1, 1),
+            (0.001000, 0, 1, 1, 1),
+            (0.001001, 1, 1, 1, 1),
+            (0.001100, 1, 1, 0, 1),
+            (0.001200, 1, 1, 1, 1),
+            (0.001500, 0, 1, 1, 1),
+            (0.001501, 0, 0, 1, 1),
+            (0.002000, 0, 0, 1, 1),
+        ],
+    )
+
+    samples = load_samples(capture, {"de": "de", "re": "re", "tx": "tx", "rx": "rx"})
+    strict_report = analyze_samples(
+        samples,
+        max_de_high_us=9000.0,
+        allow_re_high_during_de=True,
+        re_skew_us=0.0,
+    )
+    skew_report = analyze_samples(samples, max_de_high_us=9000.0, allow_re_high_during_de=True)
+
+    assert strict_report["verdict"] == "fail"
+    assert strict_report["re_high_outside_de_samples"] == 1
+    assert skew_report["verdict"] == "ok"
+    assert skew_report["re_skew_us"] == 2.0
+    assert skew_report["re_high_outside_de_samples"] == 0
+
+
 def test_logic_analyzer_report_rejects_tx_activity_while_de_low(tmp_path: Path) -> None:
     capture = tmp_path / "tx-low.csv"
     write_csv(

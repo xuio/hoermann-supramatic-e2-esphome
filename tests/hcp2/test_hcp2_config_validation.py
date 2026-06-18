@@ -244,6 +244,23 @@ def test_esp32_realtime_allows_auto_direction_without_de_re_pins(tmp_path: Path)
     assert "re_pin:" not in output
 
 
+def test_esp32_realtime_accepts_bench_uart_gate(tmp_path: Path) -> None:
+    result = run_esphome_config(
+        tmp_path,
+        esp32_realtime_base(
+            """
+            id: hcp2_test
+            backend: esp32_realtime
+            esp32_realtime_board_profile: esp32_wroom_no_psram
+            bench_enable_realtime_uart: true
+            """
+        ),
+    )
+
+    assert_config_valid(result)
+    assert "bench_enable_realtime_uart: true" in result.stdout + result.stderr
+
+
 def test_c6_lp_rejects_auto_direction(tmp_path: Path) -> None:
     result = run_esphome_config(
         tmp_path,
@@ -260,6 +277,191 @@ def test_c6_lp_rejects_auto_direction(tmp_path: Path) -> None:
     )
 
     assert_config_invalid(result, "esp32c6_lp requires rs485_mode: de_re")
+
+
+def test_c6_lp_rejects_bench_realtime_uart_gate(tmp_path: Path) -> None:
+    result = run_esphome_config(
+        tmp_path,
+        esp32c6_base(
+            """
+            id: hcp2_test
+            rx_pin: GPIO4
+            tx_pin: GPIO5
+            de_pin: GPIO0
+            re_pin: GPIO1
+            bench_enable_realtime_uart: true
+            """
+        ),
+    )
+
+    assert_config_invalid(result, "bench_enable_realtime_uart is only valid with realtime HCP2 backends")
+
+
+def test_c6_hp_realtime_defaults_to_lp_wiring(tmp_path: Path) -> None:
+    result = run_esphome_config(
+        tmp_path,
+        esp32c6_base(
+            """
+            id: hcp2_test
+            backend: esp32c6_hp_realtime
+            bench_enable_realtime_uart: true
+            """
+        ),
+    )
+
+    assert_config_valid(result)
+    output = result.stdout + result.stderr
+    assert "backend: esp32c6_hp_realtime" in output
+    assert "number: 4" in output
+    assert "number: 5" in output
+    assert "number: 0" in output
+    assert "number: 1" in output
+
+
+def test_c6_hp_realtime_requires_bench_uart_gate(tmp_path: Path) -> None:
+    result = run_esphome_config(
+        tmp_path,
+        esp32c6_base(
+            """
+            id: hcp2_test
+            backend: esp32c6_hp_realtime
+            """
+        ),
+    )
+
+    assert_config_invalid(result, "backend: esp32c6_hp_realtime requires bench_enable_realtime_uart: true")
+
+
+def test_c6_hp_realtime_rejects_lp_uart(tmp_path: Path) -> None:
+    result = run_esphome_config(
+        tmp_path,
+        esp32c6_base(
+            """
+            id: hcp2_test
+            backend: esp32c6_hp_realtime
+            bench_enable_realtime_uart: true
+            uart_num: 2
+            """
+        ),
+    )
+
+    assert_config_invalid(result, "UART2 is the 16-byte LP-UART")
+
+
+def test_c6_hp_realtime_rejects_ota_by_default(tmp_path: Path) -> None:
+    result = run_esphome_config(
+        tmp_path,
+        esp32c6_base(
+            """
+            id: hcp2_test
+            backend: esp32c6_hp_realtime
+            bench_enable_realtime_uart: true
+            """
+        )
+        + """
+wifi:
+  ssid: test-network
+  password: test-password
+  reboot_timeout: 0s
+
+ota:
+  - platform: esphome
+""",
+    )
+
+    assert_config_invalid(result, "backend: esp32c6_hp_realtime disables OTA by default")
+
+
+def test_c6_hp_asm_dma_probe_defaults_to_lp_wiring(tmp_path: Path) -> None:
+    result = run_esphome_config(
+        tmp_path,
+        esp32c6_base(
+            """
+            id: hcp2_test
+            backend: esp32c6_hp_asm_dma
+            bench_enable_asm_dma_probe: true
+            """
+        ),
+    )
+
+    assert_config_valid(result)
+    output = result.stdout + result.stderr
+    assert "backend: esp32c6_hp_asm_dma" in output
+    assert "bench_enable_asm_dma_probe: true" in output
+    assert "number: 4" in output
+    assert "number: 5" in output
+    assert "number: 0" in output
+    assert "number: 1" in output
+
+
+def test_c6_hp_asm_dma_probe_requires_gate(tmp_path: Path) -> None:
+    result = run_esphome_config(
+        tmp_path,
+        esp32c6_base(
+            """
+            id: hcp2_test
+            backend: esp32c6_hp_asm_dma
+            """
+        ),
+    )
+
+    assert_config_invalid(result, "backend: esp32c6_hp_asm_dma requires bench_enable_asm_dma_probe: true")
+
+
+def test_c6_hp_asm_dma_probe_rejects_realtime_uart_gate(tmp_path: Path) -> None:
+    result = run_esphome_config(
+        tmp_path,
+        esp32c6_base(
+            """
+            id: hcp2_test
+            backend: esp32c6_hp_asm_dma
+            bench_enable_asm_dma_probe: true
+            bench_enable_realtime_uart: true
+            """
+        ),
+    )
+
+    assert_config_invalid(result, "bench_enable_realtime_uart is only valid with realtime HCP2 backends")
+
+
+def test_c6_hp_asm_dma_probe_rejects_lp_uart(tmp_path: Path) -> None:
+    result = run_esphome_config(
+        tmp_path,
+        esp32c6_base(
+            """
+            id: hcp2_test
+            backend: esp32c6_hp_asm_dma
+            bench_enable_asm_dma_probe: true
+            uart_num: 2
+            """
+        ),
+    )
+
+    assert_config_invalid(result, "UART2 is the 16-byte LP-UART")
+
+
+def test_c6_hp_asm_dma_probe_rejects_ota_by_default(tmp_path: Path) -> None:
+    result = run_esphome_config(
+        tmp_path,
+        esp32c6_base(
+            """
+            id: hcp2_test
+            backend: esp32c6_hp_asm_dma
+            bench_enable_asm_dma_probe: true
+            """
+        )
+        + """
+wifi:
+  ssid: test-network
+  password: test-password
+  reboot_timeout: 0s
+
+ota:
+  - platform: esphome
+""",
+    )
+
+    assert_config_invalid(result, "backend: esp32c6_hp_asm_dma disables OTA by default")
 
 
 def test_rejects_multiple_hcp2bridge_instances(tmp_path: Path) -> None:

@@ -1,9 +1,7 @@
 #include "hcp2bridge.h"
 #include "hcp2bridge_internal.h"
 
-#if defined(USE_ESP32) && defined(USE_ESP32_VARIANT_ESP32C6)
-
-#include "hcp2_lp_blob.h"
+#if defined(USE_ESP32) && defined(USE_ESP32_VARIANT_ESP32C6) && defined(HCP2_EMBED_LP_BLOB)
 
 #include <inttypes.h>
 
@@ -14,6 +12,8 @@
 #include "hal/uart_types.h"
 #include "lp_core_uart.h"
 #include "ulp_lp_core.h"
+
+#include "hcp2_lp_blob.h"
 
 namespace esphome {
 namespace hcp2bridge {

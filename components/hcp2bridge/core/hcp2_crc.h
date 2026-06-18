@@ -2,6 +2,8 @@
 
 #include <stdint.h>
 
+#include "hcp2_hot.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif

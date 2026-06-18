@@ -2,6 +2,8 @@
 
 #include <stdint.h>
 
+#include "hcp2_hot.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -80,8 +82,7 @@ uint8_t hcp2_frame_master_expected_len(const uint8_t *data, uint8_t available, u
 hcp2_parse_result_t hcp2_frame_parse_master(const uint8_t *data, uint8_t len, uint8_t configured_slave_id,
                                             hcp2_decoded_frame_t *out);
 
-uint8_t hcp2_frame_build_scan_response(uint8_t slave_id, const uint8_t signature[HCP2_SIGNATURE_LEN],
-                                       uint8_t *out);
+uint8_t hcp2_frame_build_scan_response(uint8_t slave_id, const uint8_t signature[HCP2_SIGNATURE_LEN], uint8_t *out);
 uint8_t hcp2_frame_build_command_response(uint8_t slave_id, uint8_t counter, uint8_t command, uint8_t *out);
 uint8_t hcp2_frame_build_status_response(uint8_t slave_id, uint8_t counter, uint8_t command, hcp2_button_t button,
                                          uint8_t release_phase, uint8_t *out);

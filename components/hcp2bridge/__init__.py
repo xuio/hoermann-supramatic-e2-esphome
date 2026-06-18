@@ -27,6 +27,8 @@ MULTI_CONF = True
 CONF_BACKEND = "backend"
 CONF_BENCH_ALLOW_AUTO_RESTART = "bench_allow_auto_restart"
 CONF_BENCH_ALLOW_DESTRUCTIVE_DEBUG_ACTIONS = "bench_allow_destructive_debug_actions"
+CONF_BENCH_ENABLE_ASM_DMA_PROBE = "bench_enable_asm_dma_probe"
+CONF_BENCH_ENABLE_REALTIME_UART = "bench_enable_realtime_uart"
 CONF_BENCH_ALLOW_PIN_CONFLICTS = "bench_allow_pin_conflicts"
 CONF_BENCH_ALLOW_REBOOT_SOURCES = "bench_allow_reboot_sources"
 CONF_BENCH_ALLOW_UART0 = "bench_allow_uart0"
@@ -50,6 +52,8 @@ CONF_UART_NUM = "uart_num"
 BACKEND_ESP32C6_LP = "esp32c6_lp"
 BACKEND_HP_FALLBACK = "hp_fallback"
 BACKEND_ESP32_REALTIME = "esp32_realtime"
+BACKEND_ESP32C6_HP_REALTIME = "esp32c6_hp_realtime"
+BACKEND_ESP32C6_HP_ASM_DMA = "esp32c6_hp_asm_dma"
 
 RS485_MODE_DE_RE = "de_re"
 RS485_MODE_AUTO_DIRECTION = "auto_direction"
@@ -63,6 +67,8 @@ BACKENDS = {
     BACKEND_ESP32C6_LP: BACKEND_ESP32C6_LP,
     BACKEND_HP_FALLBACK: BACKEND_HP_FALLBACK,
     BACKEND_ESP32_REALTIME: BACKEND_ESP32_REALTIME,
+    BACKEND_ESP32C6_HP_REALTIME: BACKEND_ESP32C6_HP_REALTIME,
+    BACKEND_ESP32C6_HP_ASM_DMA: BACKEND_ESP32C6_HP_ASM_DMA,
 }
 
 RS485_MODES = {
@@ -83,6 +89,8 @@ BACKEND_ENUMS = {
     BACKEND_ESP32C6_LP: "ESP32C6_LP",
     BACKEND_HP_FALLBACK: "HP_FALLBACK",
     BACKEND_ESP32_REALTIME: "ESP32_REALTIME",
+    BACKEND_ESP32C6_HP_REALTIME: "ESP32C6_HP_REALTIME",
+    BACKEND_ESP32C6_HP_ASM_DMA: "ESP32C6_HP_ASM_DMA",
 }
 
 RS485_MODE_ENUMS = {
@@ -130,6 +138,12 @@ def _apply_backend_defaults(config):
         if config[CONF_RS485_MODE] == RS485_MODE_DE_RE:
             config.setdefault(CONF_DE_PIN, "GPIO18")
             config.setdefault(CONF_RE_PIN, "GPIO19")
+    if backend in (BACKEND_ESP32C6_HP_REALTIME, BACKEND_ESP32C6_HP_ASM_DMA):
+        config.setdefault(CONF_RX_PIN, "GPIO4")
+        config.setdefault(CONF_TX_PIN, "GPIO5")
+        if config[CONF_RS485_MODE] == RS485_MODE_DE_RE:
+            config.setdefault(CONF_DE_PIN, "GPIO0")
+            config.setdefault(CONF_RE_PIN, "GPIO1")
     return config
 
 
@@ -156,10 +170,20 @@ def validate_backend_config(config):
     backend = config[CONF_BACKEND]
     rs485_mode = config[CONF_RS485_MODE]
 
+    realtime_backends = (BACKEND_ESP32_REALTIME, BACKEND_ESP32C6_HP_REALTIME)
+    if backend not in realtime_backends and config.get(CONF_BENCH_ENABLE_REALTIME_UART, False):
+        raise cv.Invalid("bench_enable_realtime_uart is only valid with realtime HCP2 backends")
+    if backend == BACKEND_ESP32C6_HP_REALTIME and not config.get(CONF_BENCH_ENABLE_REALTIME_UART, False):
+        raise cv.Invalid("backend: esp32c6_hp_realtime requires bench_enable_realtime_uart: true")
+    if backend != BACKEND_ESP32C6_HP_ASM_DMA and config.get(CONF_BENCH_ENABLE_ASM_DMA_PROBE, False):
+        raise cv.Invalid("bench_enable_asm_dma_probe is only valid with backend: esp32c6_hp_asm_dma")
+    if backend == BACKEND_ESP32C6_HP_ASM_DMA and not config.get(CONF_BENCH_ENABLE_ASM_DMA_PROBE, False):
+        raise cv.Invalid("backend: esp32c6_hp_asm_dma requires bench_enable_asm_dma_probe: true")
+
     if backend in (BACKEND_ESP32C6_LP, BACKEND_HP_FALLBACK) and rs485_mode != RS485_MODE_DE_RE:
         raise cv.Invalid(f"{backend} requires rs485_mode: de_re")
 
-    if backend in (BACKEND_ESP32C6_LP, BACKEND_HP_FALLBACK):
+    if backend in (BACKEND_ESP32C6_LP, BACKEND_HP_FALLBACK, BACKEND_ESP32C6_HP_REALTIME, BACKEND_ESP32C6_HP_ASM_DMA):
         for key in (CONF_RX_PIN, CONF_TX_PIN, CONF_DE_PIN):
             if key not in config:
                 raise cv.Invalid(f"{key} is required for backend: {backend}")
@@ -271,6 +295,86 @@ def _validate_esp32_realtime_final(config, full_config, esp32_config):
                 )
 
 
+def _validate_esp32c6_hp_realtime_final(config, full_config, esp32_config):
+    if esp32_config.get(CONF_VARIANT) != esp32.VARIANT_ESP32C6:
+        raise cv.Invalid("backend: esp32c6_hp_realtime requires variant: ESP32C6")
+
+    framework = esp32_config.get(CONF_FRAMEWORK, {})
+    if framework.get(CONF_TYPE) != "esp-idf":
+        raise cv.Invalid("backend: esp32c6_hp_realtime requires the ESP-IDF framework")
+
+    if config[CONF_UART_NUM] >= 2:
+        raise cv.Invalid("backend: esp32c6_hp_realtime requires HP UART0 or UART1; UART2 is the 16-byte LP-UART")
+    if config[CONF_UART_NUM] == 0 and not config[CONF_BENCH_ALLOW_UART0]:
+        raise cv.Invalid("backend: esp32c6_hp_realtime must not use UART0 unless bench_allow_uart0 is true")
+
+    if (
+        config[CONF_RESTART_POLICY] == RESTART_POLICY_AUTO_RESTART
+        and not config[CONF_BENCH_ALLOW_AUTO_RESTART]
+    ):
+        raise cv.Invalid("restart_policy: auto_restart requires bench_allow_auto_restart: true")
+
+    if full_config.get(CONF_OTA) and not config[CONF_BENCH_ALLOW_UNSAFE_OTA]:
+        raise cv.Invalid(
+            "backend: esp32c6_hp_realtime disables OTA by default; set bench_allow_unsafe_ota for bench-only tests"
+        )
+
+    if not config[CONF_BENCH_ALLOW_REBOOT_SOURCES]:
+        for domain in (CONF_API, CONF_WIFI):
+            section = full_config.get(domain)
+            if isinstance(section, dict) and not _time_period_is_zero(section.get(CONF_REBOOT_TIMEOUT)):
+                raise cv.Invalid(f"backend: esp32c6_hp_realtime requires {domain}.reboot_timeout: 0s")
+
+        safe_mode = full_config.get(CONF_SAFE_MODE)
+        if isinstance(safe_mode, dict) and not safe_mode.get(CONF_DISABLED, False):
+            raise cv.Invalid("backend: esp32c6_hp_realtime requires safe_mode.disabled: true")
+
+    if not config[CONF_BENCH_ALLOW_DESTRUCTIVE_DEBUG_ACTIONS]:
+        for button in _full_config_list(full_config, "button"):
+            if isinstance(button, dict) and button.get(CONF_PLATFORM) == "restart":
+                raise cv.Invalid("backend: esp32c6_hp_realtime rejects restart buttons by default")
+
+
+def _validate_esp32c6_hp_asm_dma_final(config, full_config, esp32_config):
+    if esp32_config.get(CONF_VARIANT) != esp32.VARIANT_ESP32C6:
+        raise cv.Invalid("backend: esp32c6_hp_asm_dma requires variant: ESP32C6")
+
+    framework = esp32_config.get(CONF_FRAMEWORK, {})
+    if framework.get(CONF_TYPE) != "esp-idf":
+        raise cv.Invalid("backend: esp32c6_hp_asm_dma requires the ESP-IDF framework")
+
+    if config[CONF_UART_NUM] >= 2:
+        raise cv.Invalid("backend: esp32c6_hp_asm_dma requires HP UART0 or UART1; UART2 is the 16-byte LP-UART")
+    if config[CONF_UART_NUM] == 0 and not config[CONF_BENCH_ALLOW_UART0]:
+        raise cv.Invalid("backend: esp32c6_hp_asm_dma must not use UART0 unless bench_allow_uart0 is true")
+
+    if (
+        config[CONF_RESTART_POLICY] == RESTART_POLICY_AUTO_RESTART
+        and not config[CONF_BENCH_ALLOW_AUTO_RESTART]
+    ):
+        raise cv.Invalid("restart_policy: auto_restart requires bench_allow_auto_restart: true")
+
+    if full_config.get(CONF_OTA) and not config[CONF_BENCH_ALLOW_UNSAFE_OTA]:
+        raise cv.Invalid(
+            "backend: esp32c6_hp_asm_dma disables OTA by default; set bench_allow_unsafe_ota for bench-only tests"
+        )
+
+    if not config[CONF_BENCH_ALLOW_REBOOT_SOURCES]:
+        for domain in (CONF_API, CONF_WIFI):
+            section = full_config.get(domain)
+            if isinstance(section, dict) and not _time_period_is_zero(section.get(CONF_REBOOT_TIMEOUT)):
+                raise cv.Invalid(f"backend: esp32c6_hp_asm_dma requires {domain}.reboot_timeout: 0s")
+
+        safe_mode = full_config.get(CONF_SAFE_MODE)
+        if isinstance(safe_mode, dict) and not safe_mode.get(CONF_DISABLED, False):
+            raise cv.Invalid("backend: esp32c6_hp_asm_dma requires safe_mode.disabled: true")
+
+    if not config[CONF_BENCH_ALLOW_DESTRUCTIVE_DEBUG_ACTIONS]:
+        for button in _full_config_list(full_config, "button"):
+            if isinstance(button, dict) and button.get(CONF_PLATFORM) == "restart":
+                raise cv.Invalid("backend: esp32c6_hp_asm_dma rejects restart buttons by default")
+
+
 def final_validate_schema(config):
     full_config = fv.full_config.get()
     _validate_single_instance(full_config)
@@ -291,6 +395,14 @@ def final_validate_schema(config):
 
     if backend == BACKEND_ESP32_REALTIME:
         _validate_esp32_realtime_final(config, full_config, esp32_config)
+        return
+
+    if backend == BACKEND_ESP32C6_HP_REALTIME:
+        _validate_esp32c6_hp_realtime_final(config, full_config, esp32_config)
+        return
+
+    if backend == BACKEND_ESP32C6_HP_ASM_DMA:
+        _validate_esp32c6_hp_asm_dma_final(config, full_config, esp32_config)
         return
 
     raise cv.Invalid(f"unsupported hcp2bridge backend: {backend}")
@@ -323,6 +435,8 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_BENCH_ALLOW_UART0, default=False): cv.boolean,
             cv.Optional(CONF_BENCH_ALLOW_PIN_CONFLICTS, default=False): cv.boolean,
             cv.Optional(CONF_BENCH_ALLOW_DESTRUCTIVE_DEBUG_ACTIONS, default=False): cv.boolean,
+            cv.Optional(CONF_BENCH_ENABLE_ASM_DMA_PROBE, default=False): cv.boolean,
+            cv.Optional(CONF_BENCH_ENABLE_REALTIME_UART, default=False): cv.boolean,
             cv.Optional(CONF_LP_UART_CLOCK_SOURCE, default="xtal_d2"): cv.enum(
                 LP_UART_CLOCK_SOURCES, lower=True
             ),
@@ -344,11 +458,30 @@ FINAL_VALIDATE_SCHEMA = final_validate_schema
 async def to_code(config):
     esp32.include_builtin_idf_component("driver")
     if config[CONF_BACKEND] == BACKEND_ESP32C6_LP:
+        cg.add_build_flag("-DHCP2_EMBED_LP_BLOB=1")
         esp32.include_builtin_idf_component("ulp")
         esp32.add_idf_sdkconfig_option("CONFIG_ULP_COPROC_ENABLED", True)
         esp32.add_idf_sdkconfig_option("CONFIG_ULP_COPROC_TYPE_LP_CORE", True)
         esp32.add_idf_sdkconfig_option("CONFIG_ULP_COPROC_RESERVE_MEM", 16320)
         esp32.add_idf_sdkconfig_option("CONFIG_ULP_SHARED_MEM", "0x10")
+    if config[CONF_BACKEND] in (BACKEND_ESP32C6_HP_REALTIME, BACKEND_ESP32C6_HP_ASM_DMA):
+        esp32.include_builtin_idf_component("ulp")
+        esp32.add_idf_sdkconfig_option("CONFIG_ULP_COPROC_ENABLED", True)
+        esp32.add_idf_sdkconfig_option("CONFIG_ULP_COPROC_TYPE_LP_CORE", True)
+        esp32.add_idf_sdkconfig_option("CONFIG_ULP_COPROC_RESERVE_MEM", 16320)
+        esp32.add_idf_sdkconfig_option("CONFIG_ULP_SHARED_MEM", "0x10")
+    if config[CONF_BACKEND] in (BACKEND_ESP32_REALTIME, BACKEND_ESP32C6_HP_REALTIME) and config[CONF_BENCH_ENABLE_REALTIME_UART]:
+        cg.add_build_flag("-DHCP2_ESP32_REALTIME_HOT_PATH=1")
+        esp32.include_builtin_idf_component("esp_driver_gptimer")
+        esp32.add_idf_sdkconfig_option("CONFIG_UART_ISR_IN_IRAM", True)
+        esp32.add_idf_sdkconfig_option("CONFIG_GPTIMER_ISR_HANDLER_IN_IRAM", True)
+        esp32.add_idf_sdkconfig_option("CONFIG_GPTIMER_CTRL_FUNC_IN_IRAM", True)
+        esp32.add_idf_sdkconfig_option("CONFIG_GPTIMER_ISR_CACHE_SAFE", True)
+        esp32.add_idf_sdkconfig_option("CONFIG_GPIO_CTRL_FUNC_IN_IRAM", True)
+    if config[CONF_BACKEND] == BACKEND_ESP32C6_HP_ASM_DMA and config[CONF_BENCH_ENABLE_ASM_DMA_PROBE]:
+        cg.add_build_flag("-DHCP2_ESP32C6_ASM_DMA_EXPERIMENT=1")
+        esp32.add_idf_sdkconfig_option("CONFIG_UART_ISR_IN_IRAM", True)
+        esp32.add_idf_sdkconfig_option("CONFIG_GPIO_CTRL_FUNC_IN_IRAM", True)
 
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
@@ -392,6 +525,8 @@ async def to_code(config):
         )
     )
     cg.add(var.set_bench_allow_destructive_debug_actions(config[CONF_BENCH_ALLOW_DESTRUCTIVE_DEBUG_ACTIONS]))
+    cg.add(var.set_bench_enable_asm_dma_probe(config[CONF_BENCH_ENABLE_ASM_DMA_PROBE]))
+    cg.add(var.set_bench_enable_realtime_uart(config[CONF_BENCH_ENABLE_REALTIME_UART]))
     cg.add(var.set_uart_num(config[CONF_UART_NUM]))
     cg.add(var.set_slave_id(config[CONF_SLAVE_ID]))
     for index, byte in enumerate(config[CONF_DEVICE_SIGNATURE]):

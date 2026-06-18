@@ -32,7 +32,7 @@ def test_closeout_la_preset_contains_logic_analyzer_verdict_step(tmp_path: Path)
 
     assert [step["name"] for step in plan["steps"]] == ["la-runtime"]
     la = plan["steps"][0]["la"]
-    assert la["channels"] == "tx=D1,de=D3,re=D5,rx=D7"
+    assert la["channels"] == "rx=D0,tx=D2,re=D5,de=D7"
     assert la["allow_re_high_during_de"] is True
     assert la["min_status_frames"] > 0
     assert la["sigrok_cli"] == "sigrok-cli"

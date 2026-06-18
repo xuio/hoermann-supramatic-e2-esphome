@@ -69,11 +69,13 @@ def test_pty_functional_report(tmp_path: Path) -> None:
     assert result["polls_sent"] == 120
     assert result["replies"] == 120
     assert result["misses"] == 0
+    assert result["host_rtt_p99_ms"] is not None
     assert result["latency_p99_ms"] is not None
 
     report = json.loads(report_path.read_text())
     assert report["verdict"] == "ok"
     assert report["polls_sent"] == 120
+    assert report["host_rtt_max_ms"] == report["latency_max_ms"]
 
 
 def test_simulator_writes_per_poll_trace(tmp_path: Path) -> None:
@@ -85,6 +87,7 @@ def test_simulator_writes_per_poll_trace(tmp_path: Path) -> None:
     assert any(event["event"] == "bus_scan_tx" for event in events)
     assert [event["counter"] for event in events if event["event"] == "poll_tx"] == [0, 1, 2]
     assert [event["counter"] for event in events if event["event"] == "poll_rx"] == [0, 1, 2]
+    assert all("host_rtt_ms" in event for event in events if event["event"] == "poll_rx")
 
 
 def test_simulator_writes_low_volume_progress(tmp_path: Path) -> None:
@@ -97,6 +100,7 @@ def test_simulator_writes_low_volume_progress(tmp_path: Path) -> None:
     assert events[-1]["event"] == "final"
     assert events[-1]["polls_sent"] == 4
     assert events[-1]["misses"] == 0
+    assert events[-1]["host_rtt_samples"] == events[-1]["latency_samples"]
 
 
 class ScanThenSilentTransport:

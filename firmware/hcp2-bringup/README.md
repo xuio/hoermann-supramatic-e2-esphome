@@ -242,7 +242,7 @@ Modbus CRC and status-counter continuity with:
 ```sh
 uv run garage-hcp2-hil-la decode-uart \
   --input captures/hcp2/hil-reset.csv \
-  --channels tx=D1,de=D3,re=D5,rx=D7 \
+  --channels rx=D0,tx=D2,re=D5,de=D7 \
   --baud 57600 \
   --output captures/hcp2/hil-reset-uart.json
 ```
@@ -254,20 +254,21 @@ status counter:
 ```sh
 uv run garage-hcp2-hil-la verify \
   --input captures/hcp2/hil-reset.csv \
-  --channels tx=D1,de=D3,re=D5,rx=D7 \
+  --channels rx=D0,tx=D2,re=D5,de=D7 \
   --max-de-high-us 9000 \
   --allow-re-high-during-de \
-  --allow-tx-outside-de \
   --min-status-frames 100 \
   --output captures/hcp2/hil-reset-verdict.json
 ```
 
 The current connected LA wiring uses this mapping:
 
-- Saleae CH2 / sigrok D1: TX, ESP32-C6 GPIO5
-- Saleae CH4 / sigrok D3: DE, ESP32-C6 GPIO0
-- Saleae CH6 / sigrok D5: /RE, ESP32-C6 GPIO1
-- Saleae CH8 / sigrok D7: RX, ESP32-C6 GPIO4
+- sigrok D0: RX, ESP32-C6 GPIO4
+- sigrok D1: RS-485 bus leg A, manual inspection only
+- sigrok D2: TX, ESP32-C6 GPIO5
+- sigrok D3: RS-485 bus leg B, manual inspection only
+- sigrok D5: /RE, ESP32-C6 GPIO1
+- sigrok D7: DE, ESP32-C6 GPIO0
 
 ## Phase 1 HIL Results
 

@@ -87,6 +87,7 @@ class SimulationReport:
 
     def progress_dict(self) -> dict[str, object]:
         samples = len(self.latencies_ms)
+        mean_ms = (self.latency_sum_ms / samples) if samples else None
         return {
             "polls_sent": self.polls_sent,
             "replies": self.replies,
@@ -103,9 +104,13 @@ class SimulationReport:
             "button_phase_observations": self.button_phase_observations,
             "emulated_button_observations": self.emulated_button_observations,
             "emulated_button_phase_observations": self.emulated_button_phase_observations,
+            "host_rtt_samples": samples,
+            "host_rtt_min_ms": self.latency_min_seen_ms,
+            "host_rtt_mean_ms": mean_ms,
+            "host_rtt_max_ms": self.latency_max_seen_ms,
             "latency_samples": samples,
             "latency_min_ms": self.latency_min_seen_ms,
-            "latency_mean_ms": (self.latency_sum_ms / samples) if samples else None,
+            "latency_mean_ms": mean_ms,
             "latency_max_ms": self.latency_max_seen_ms,
             "elapsed_s": self.elapsed_s,
             "verdict": self.verdict,
@@ -114,6 +119,8 @@ class SimulationReport:
 
     def as_dict(self) -> dict[str, object]:
         latencies = sorted(self.latencies_ms)
+        mean_ms = (self.latency_sum_ms / len(latencies)) if latencies else None
+        p99_ms = percentile(latencies, 99) if latencies else None
         return {
             "polls_sent": self.polls_sent,
             "replies": self.replies,
@@ -130,9 +137,13 @@ class SimulationReport:
             "button_phase_observations": self.button_phase_observations,
             "emulated_button_observations": self.emulated_button_observations,
             "emulated_button_phase_observations": self.emulated_button_phase_observations,
+            "host_rtt_min_ms": self.latency_min_seen_ms,
+            "host_rtt_mean_ms": mean_ms,
+            "host_rtt_p99_ms": p99_ms,
+            "host_rtt_max_ms": self.latency_max_seen_ms,
             "latency_min_ms": self.latency_min_seen_ms,
-            "latency_mean_ms": (self.latency_sum_ms / len(latencies)) if latencies else None,
-            "latency_p99_ms": percentile(latencies, 99) if latencies else None,
+            "latency_mean_ms": mean_ms,
+            "latency_p99_ms": p99_ms,
             "latency_max_ms": self.latency_max_seen_ms,
             "elapsed_s": self.elapsed_s,
             "verdict": self.verdict,
@@ -486,7 +497,7 @@ class SupraMaticSimulator:
             self.report.scan_ok = True
             latency_ms = (time.monotonic() - start) * 1000.0
             self.report.record_latency(latency_ms)
-            self.trace("bus_scan_rx", response=frame.hex(), latency_ms=latency_ms)
+            self.trace("bus_scan_rx", response=frame.hex(), host_rtt_ms=latency_ms, latency_ms=latency_ms)
         else:
             self.report.notes.append(f"bus scan failed: {frame.hex() if frame else 'timeout'}")
             self.trace("bus_scan_miss", response=frame.hex() if frame else None)
@@ -610,6 +621,7 @@ class SupraMaticSimulator:
                 "poll_rx",
                 counter=counter,
                 response=response.hex(),
+                host_rtt_ms=latency_ms,
                 latency_ms=latency_ms,
                 poll_index=self.report.polls_sent,
                 button=button,

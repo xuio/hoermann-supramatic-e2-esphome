@@ -1,0 +1,65 @@
+substitutions:
+  name: "supramatic-4-c6-asm-dma-probe"
+  friendly_name: "Garage Door HCP2 C6 ASM DMA Probe"
+  hcp2_rx_pin: GPIO4
+  hcp2_tx_pin: GPIO5
+  hcp2_de_pin: GPIO0
+  hcp2_re_pin: GPIO1
+
+esphome:
+  name: "${name}"
+  friendly_name: "${friendly_name}"
+
+esp32:
+  board: esp32-c6-devkitc-1
+  variant: ESP32C6
+  framework:
+    type: esp-idf
+    version: 5.5.4
+    sdkconfig_options:
+      CONFIG_ESP_SYSTEM_PANIC_PRINT_REBOOT: "n"
+      CONFIG_ESP_SYSTEM_PANIC_PRINT_HALT: "y"
+      CONFIG_ESP_TASK_WDT_EN: "y"
+      CONFIG_ESP_TASK_WDT_INIT: "y"
+      CONFIG_ESP_TASK_WDT_PANIC: "n"
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+
+logger:
+  level: INFO
+  hardware_uart: USB_SERIAL_JTAG
+
+wifi:
+  ssid: !secret wifi_ssid_supramatic_4_tester
+  password: !secret wifi_password_supramatic_4_tester
+  reboot_timeout: 0s
+
+api:
+  reboot_timeout: 0s
+
+safe_mode:
+  disabled: true
+
+hcp2bridge:
+  id: hcp2_c6_asm_dma_probe
+  backend: esp32c6_hp_asm_dma
+  bench_enable_asm_dma_probe: true
+  rx_pin: ${hcp2_rx_pin}
+  tx_pin: ${hcp2_tx_pin}
+  de_pin: ${hcp2_de_pin}
+  re_pin: ${hcp2_re_pin}
+  uart_num: 1
+  http_debug_port: 80
+  protocol_log: false
+
+interval:
+  - interval: 10ms
+    then:
+      - lambda: |-
+          const uint32_t start = micros();
+          while ((uint32_t) (micros() - start) < 6000U) {
+            asm volatile("nop");
+          }

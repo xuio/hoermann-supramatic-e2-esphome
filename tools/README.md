@@ -45,7 +45,8 @@ uv run garage-hcp2-closeout --serial /dev/serial/by-id/usb-1a86_USB_Single_Seria
   --output-dir captures/hcp2/closeout/full --output captures/hcp2/closeout/full/report.json
 ```
 
-The `la` preset captures the current bench mapping (`TX=D1`, `DE=D3`, `/RE=D5`, `RX=D7`)
+The `la` preset captures the current bench mapping (`RX=D0`, `TX=D2`, `/RE=D5`, `DE=D7`;
+the RS-485 bus legs are also wired as `A=D1`, `B=D3` for manual inspection)
 and verifies DE hold time, TX gating, `/RE` gating, UART decode, and status-counter
 continuity. The `ota-restart` preset runs simulator traffic while an ESPHome OTA upload
 and native-API restart button press execute, then records both command tails and bus

@@ -90,6 +90,43 @@ std::string HCP2Bridge::http_debug_hp_json_() {
   json += std::to_string(this->get_hp_wdt_reset_count());
   json += ",\"brownout_resets\":";
   json += std::to_string(this->get_hp_brownout_reset_count());
+#ifdef USE_ESP32_VARIANT_ESP32C6
+  json += ",\"asm_dma_probe\":{\"enabled\":";
+  json += (this->backend_kind_ == HCP2BackendKind::ESP32C6_HP_ASM_DMA) ? "true" : "false";
+  json += ",\"magic\":";
+  json += std::to_string(this->esp32c6_asm_dma_probe_state_.magic);
+  json += ",\"version\":";
+  json += std::to_string(this->esp32c6_asm_dma_probe_state_.version);
+  json += ",\"irqs\":";
+  json += std::to_string(this->esp32c6_asm_dma_probe_state_.irq_count);
+  json += ",\"rx_irqs\":";
+  json += std::to_string(this->esp32c6_asm_dma_probe_state_.rx_irq_count);
+  json += ",\"other_irqs\":";
+  json += std::to_string(this->esp32c6_asm_dma_probe_state_.other_irq_count);
+  json += ",\"drained_bytes\":";
+  json += std::to_string(this->esp32c6_asm_dma_probe_state_.drained_bytes);
+  json += ",\"last_mcycle\":";
+  json += std::to_string(this->esp32c6_asm_dma_probe_state_.last_mcycle);
+  json += ",\"max_irq_gap_cycles\":";
+  json += std::to_string(this->esp32c6_asm_dma_probe_state_.max_irq_gap_cycles);
+  json += ",\"last_status\":";
+  json += std::to_string(this->esp32c6_asm_dma_probe_state_.last_status);
+  json += ",\"last_fifo\":";
+  json += std::to_string(this->esp32c6_asm_dma_probe_state_.last_fifo_count);
+  json += ",\"max_fifo\":";
+  json += std::to_string(this->esp32c6_asm_dma_probe_state_.max_fifo_count);
+  json += ",\"errors\":";
+  json += std::to_string(this->esp32c6_asm_dma_probe_state_.error_status_count);
+  json += ",\"zero_status\":";
+  json += std::to_string(this->esp32c6_asm_dma_probe_state_.zero_status_count);
+  json += ",\"uhci_base\":";
+  json += std::to_string(this->esp32c6_asm_dma_probe_state_.uhci_base_addr);
+  json += ",\"gdma_base\":";
+  json += std::to_string(this->esp32c6_asm_dma_probe_state_.gdma_base_addr);
+  json += "}";
+#else
+  json += ",\"asm_dma_probe\":{\"enabled\":false}";
+#endif
   json += "}";
   return json;
 }
@@ -190,9 +227,12 @@ std::string HCP2Bridge::http_debug_health_json_() {
   reasons += "]";
   warnings += "]";
 
+  const bool continuity_ok = first_reason;
   const bool safe_for_ota_restart = this->is_safe_for_ota_restart();
   std::string json = "{\"verdict\":\"";
-  json += safe_for_ota_restart ? "ok" : "fail";
+  json += continuity_ok ? "ok" : "fail";
+  json += "\",\"continuity_verdict\":\"";
+  json += continuity_ok ? "ok" : "fail";
   json += "\",\"safe_for_ota_restart\":";
   json += safe_for_ota_restart ? "true" : "false";
   json += ",\"reasons\":";

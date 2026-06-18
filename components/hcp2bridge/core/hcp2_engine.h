@@ -3,6 +3,7 @@
 #include <stdint.h>
 
 #include "hcp2_frame.h"
+#include "hcp2_hot.h"
 #include "hcp2_port.h"
 
 #ifdef __cplusplus
@@ -42,6 +43,14 @@ typedef struct {
 } hcp2_protocol_event_t;
 
 typedef struct {
+  uint32_t scheduled_us;
+  uint32_t due_us;
+  uint8_t frame_type;
+  uint8_t is_status_response;
+  uint8_t reserved[2];
+} hcp2_pending_tx_meta_t;
+
+typedef struct {
   hcp2_port_t port;
   hcp2_engine_config_t config;
   uint8_t rx[HCP2_MAX_FRAME_LEN];
@@ -52,7 +61,10 @@ typedef struct {
   uint8_t pending_tx_frame_type;
   uint32_t pending_tx_scheduled_us;
   uint32_t pending_tx_due_us;
+  uint32_t pending_tx_started_us;
   uint8_t pending_tx_ready;
+  uint8_t pending_tx_claimed;
+  uint8_t pending_tx_started;
   hcp2_button_t active_button;
   uint8_t release_pending;
   uint32_t press_until_us;
@@ -67,6 +79,7 @@ typedef struct {
   uint32_t max_status_poll_rx_to_schedule_us;
   uint32_t max_status_response_schedule_to_tx_start_us;
   uint32_t max_status_response_tx_us;
+  uint32_t pending_tx_drop_count;
 #if HCP2_ENABLE_PROTOCOL_EVENTS
   hcp2_protocol_event_t protocol_event;
 #endif
@@ -76,6 +89,12 @@ void hcp2_engine_config_default(hcp2_engine_config_t *config);
 void hcp2_engine_init(hcp2_engine_t *engine, const hcp2_port_t *port, const hcp2_engine_config_t *config);
 void hcp2_engine_rx_byte(hcp2_engine_t *engine, uint8_t byte, uint8_t flags);
 void hcp2_engine_poll(hcp2_engine_t *engine);
+uint8_t hcp2_engine_pending_tx_ready(const hcp2_engine_t *engine);
+uint32_t hcp2_engine_pending_tx_due_us(const hcp2_engine_t *engine);
+uint8_t hcp2_engine_claim_due_tx(hcp2_engine_t *engine, uint32_t now_us, uint8_t *out_buf, uint8_t *out_len,
+                                 hcp2_pending_tx_meta_t *out_meta);
+void hcp2_engine_mark_tx_started(hcp2_engine_t *engine, uint32_t now_us);
+void hcp2_engine_mark_tx_done(hcp2_engine_t *engine, uint32_t now_us);
 uint8_t hcp2_engine_press_button(hcp2_engine_t *engine, hcp2_button_t button);
 const hcp2_drive_status_t *hcp2_engine_drive_status(const hcp2_engine_t *engine);
 uint8_t hcp2_engine_read_protocol_event(const hcp2_engine_t *engine, uint32_t *last_sequence,

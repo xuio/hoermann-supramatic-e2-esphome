@@ -67,6 +67,7 @@ void HCP2Bridge::setup() {
       return;
 
     case HCP2BackendKind::ESP32_REALTIME:
+    case HCP2BackendKind::ESP32C6_HP_REALTIME:
       if (!this->setup_esp32_realtime_()) {
         this->mark_failed();
         return;
@@ -74,6 +75,21 @@ void HCP2Bridge::setup() {
       this->start_esp32_realtime_task_();
       this->start_http_debug_task_();
       return;
+
+    case HCP2BackendKind::ESP32C6_HP_ASM_DMA:
+#ifdef HCP2_ESP32C6_ASM_DMA_EXPERIMENT
+      if (!this->setup_esp32c6_asm_dma_probe_()) {
+        this->mark_failed();
+        return;
+      }
+      this->start_esp32c6_asm_dma_probe_task_();
+      this->start_http_debug_task_();
+      return;
+#else
+      ESP_LOGE(TAG, "ESP32-C6 HP asm/DMA backend was selected but the experiment build flag is missing");
+      this->mark_failed();
+      return;
+#endif
   }
 
 #else
@@ -124,6 +140,7 @@ void HCP2Bridge::dump_config() {
   ESP_LOGCONFIG(TAG, "  HP Fallback: %s", this->hp_fallback_ ? "enabled" : "disabled");
   ESP_LOGCONFIG(TAG, "  HTTP Debug Port: %u", (unsigned int) this->http_debug_port_);
   ESP_LOGCONFIG(TAG, "  Protocol Log: %s", this->protocol_log_enabled_ ? "enabled" : "disabled");
+  ESP_LOGCONFIG(TAG, "  ASM/DMA Probe: %s", this->bench_enable_asm_dma_probe_ ? "enabled" : "disabled");
 }
 
 void HCP2Bridge::set_signature_byte(uint8_t index, uint8_t value) {

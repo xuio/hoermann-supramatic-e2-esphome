@@ -4,12 +4,12 @@
 
 #include "hcp2_crc.h"
 
-static uint16_t read_be16_(const uint8_t *data) {
+static HCP2_HOT_TEXT uint16_t read_be16_(const uint8_t *data) {
   return (uint16_t) (((uint16_t) data[0] << 8) | data[1]);
 }
 
-static void button_encoding_(hcp2_button_t button, uint8_t release_phase, uint8_t *phase, uint8_t *mask_lo,
-                             uint8_t *mask_hi) {
+static HCP2_HOT_TEXT void button_encoding_(hcp2_button_t button, uint8_t release_phase, uint8_t *phase,
+                                           uint8_t *mask_lo, uint8_t *mask_hi) {
   *phase = 0u;
   *mask_lo = 0u;
   *mask_hi = 0u;
@@ -51,7 +51,8 @@ void hcp2_default_signature(uint8_t signature[HCP2_SIGNATURE_LEN]) {
   memcpy(signature, default_signature, HCP2_SIGNATURE_LEN);
 }
 
-uint8_t hcp2_frame_master_expected_len(const uint8_t *data, uint8_t available, uint8_t *expected_len) {
+HCP2_HOT_TEXT uint8_t hcp2_frame_master_expected_len(const uint8_t *data, uint8_t available,
+                                                     uint8_t *expected_len) {
   uint8_t byte_count;
 
   if (data == 0 || expected_len == 0) {
@@ -90,8 +91,9 @@ uint8_t hcp2_frame_master_expected_len(const uint8_t *data, uint8_t available, u
   }
 }
 
-hcp2_parse_result_t hcp2_frame_parse_master(const uint8_t *data, uint8_t len, uint8_t configured_slave_id,
-                                            hcp2_decoded_frame_t *out) {
+HCP2_HOT_TEXT hcp2_parse_result_t hcp2_frame_parse_master(const uint8_t *data, uint8_t len,
+                                                          uint8_t configured_slave_id,
+                                                          hcp2_decoded_frame_t *out) {
   uint8_t expected_len = 0u;
   const uint8_t expected_ok = hcp2_frame_master_expected_len(data, len, &expected_len);
   uint16_t read_addr;
@@ -169,8 +171,8 @@ hcp2_parse_result_t hcp2_frame_parse_master(const uint8_t *data, uint8_t len, ui
   return HCP2_PARSE_OK;
 }
 
-uint8_t hcp2_frame_build_scan_response(uint8_t slave_id, const uint8_t signature[HCP2_SIGNATURE_LEN],
-                                       uint8_t *out) {
+HCP2_HOT_TEXT uint8_t hcp2_frame_build_scan_response(uint8_t slave_id,
+                                                     const uint8_t signature[HCP2_SIGNATURE_LEN], uint8_t *out) {
   out[0] = slave_id;
   out[1] = HCP2_FC_READ_WRITE_MULTIPLE_REGISTERS;
   out[2] = HCP2_SIGNATURE_LEN;
@@ -179,7 +181,8 @@ uint8_t hcp2_frame_build_scan_response(uint8_t slave_id, const uint8_t signature
   return HCP2_SCAN_RESPONSE_LEN;
 }
 
-uint8_t hcp2_frame_build_command_response(uint8_t slave_id, uint8_t counter, uint8_t command, uint8_t *out) {
+HCP2_HOT_TEXT uint8_t hcp2_frame_build_command_response(uint8_t slave_id, uint8_t counter, uint8_t command,
+                                                        uint8_t *out) {
   out[0] = slave_id;
   out[1] = HCP2_FC_READ_WRITE_MULTIPLE_REGISTERS;
   out[2] = 0x04u;
@@ -191,8 +194,8 @@ uint8_t hcp2_frame_build_command_response(uint8_t slave_id, uint8_t counter, uin
   return HCP2_COMMAND_RESPONSE_LEN;
 }
 
-uint8_t hcp2_frame_build_status_response(uint8_t slave_id, uint8_t counter, uint8_t command, hcp2_button_t button,
-                                         uint8_t release_phase, uint8_t *out) {
+HCP2_HOT_TEXT uint8_t hcp2_frame_build_status_response(uint8_t slave_id, uint8_t counter, uint8_t command,
+                                                       hcp2_button_t button, uint8_t release_phase, uint8_t *out) {
   uint8_t phase;
   uint8_t mask_lo;
   uint8_t mask_hi;

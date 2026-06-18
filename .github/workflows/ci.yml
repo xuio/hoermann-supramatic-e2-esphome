@@ -47,6 +47,7 @@ jobs:
           uv run esphome config configs/supramatic-e2-proxy.yaml
           uv run esphome config configs/supramatic-4-dev.yaml
           uv run esphome config configs/supramatic-4-tester.yaml
+          uv run esphome config configs/supramatic-4-c6-hp-realtime.yaml
           uv run esphome config configs/supramatic-4-wokwi.yaml
 
       - name: Compile main firmware
@@ -54,6 +55,11 @@ jobs:
 
       - name: Compile HCP2 ESPHome dev firmware
         run: uv run esphome compile configs/supramatic-4-dev.yaml
+
+      - name: Compile HCP2 ESP32-C6 HP realtime firmware
+        run: |
+          uv run esphome compile configs/supramatic-4-c6-hp-realtime.yaml
+          uv run garage-check-esp32-realtime-build --profile esp32c6
 
       - name: Compile HCP2 ESP32 realtime inert firmware
         run: |
