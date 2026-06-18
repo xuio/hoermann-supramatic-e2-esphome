@@ -113,6 +113,9 @@ def test_esp32_realtime_tx_done_completes_through_tail_fallback_helper() -> None
 
     assert "esp32_realtime_tx_tail_due_us_" in backend
     assert "HCP2BRIDGE_REALTIME_BITS_PER_UART_BYTE" in backend
+    assert "HCP2BRIDGE_REALTIME_TX_TIMER_GUARD_US = 700u" in backend
+    assert "HCP2BRIDGE_REALTIME_INLINE_TX_WAIT_US" not in backend
+    assert "due_us - HCP2BRIDGE_REALTIME_TX_TIMER_GUARD_US" in backend
     assert "esp32_realtime_finish_tx_from_isr_" in backend
     assert "esp32_realtime_schedule_alarm_from_isr_(self, self->esp32_realtime_tx_tail_due_us_)" in backend
     assert "uart_ll_is_tx_idle(self->esp32_realtime_uart_hw_)" in backend

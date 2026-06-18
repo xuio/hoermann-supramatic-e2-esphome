@@ -32,7 +32,7 @@ static constexpr uint32_t HCP2BRIDGE_REALTIME_TASK_TICK_MS = 20;
 static constexpr uint32_t HCP2BRIDGE_REALTIME_C6_TASK_IDLE_MS = 5;
 static constexpr uint32_t HCP2BRIDGE_REALTIME_TIMER_HZ = 1000000u;
 static constexpr uint32_t HCP2BRIDGE_REALTIME_TAIL_MARGIN_US = 250u;
-static constexpr uint32_t HCP2BRIDGE_REALTIME_INLINE_TX_WAIT_US = 6000u;
+static constexpr uint32_t HCP2BRIDGE_REALTIME_TX_TIMER_GUARD_US = 700u;
 static constexpr uint32_t HCP2BRIDGE_REALTIME_RXFIFO_FULL_THR = 1u;
 static constexpr uint32_t HCP2BRIDGE_C6_UHCI_RX_IDLE_BITS = 16u;
 static constexpr uint32_t HCP2BRIDGE_C6_UHCI_RX_BUF_SIZE = 64u;
@@ -93,7 +93,12 @@ void IRAM_ATTR HCP2Bridge::esp32_realtime_schedule_timer_from_isr_(HCP2Bridge *s
   }
   const uint32_t due_us = hcp2_engine_pending_tx_due_us(&self->engine_);
   uint32_t now_us = HCP2Bridge::esp32_realtime_now_us_cb_(self);
-  if ((int32_t) (due_us - now_us) <= (int32_t) HCP2BRIDGE_REALTIME_INLINE_TX_WAIT_US) {
+  const int32_t wait_us = (int32_t) (due_us - now_us);
+  if (wait_us <= 0) {
+    (void) HCP2Bridge::esp32_realtime_send_due_tx_from_isr_(self, now_us);
+    return;
+  }
+  if (wait_us <= (int32_t) HCP2BRIDGE_REALTIME_TX_TIMER_GUARD_US) {
     while ((int32_t) (now_us - due_us) < 0) {
       now_us = HCP2Bridge::esp32_realtime_now_us_cb_(self);
     }
@@ -101,7 +106,7 @@ void IRAM_ATTR HCP2Bridge::esp32_realtime_schedule_timer_from_isr_(HCP2Bridge *s
       return;
     }
   }
-  (void) HCP2Bridge::esp32_realtime_schedule_alarm_from_isr_(self, due_us);
+  (void) HCP2Bridge::esp32_realtime_schedule_alarm_from_isr_(self, due_us - HCP2BRIDGE_REALTIME_TX_TIMER_GUARD_US);
 }
 
 void IRAM_ATTR HCP2Bridge::esp32_realtime_finish_tx_from_isr_(HCP2Bridge *self, uint32_t now_us, bool deadman) {

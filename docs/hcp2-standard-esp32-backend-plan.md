@@ -62,6 +62,9 @@ Closed implementation decisions:
 - Phase E timing internals stay replaceable and HIL-driven: start with GPTimer
   behind an abstraction, then decide direct ISR parsing vs. ISR ring/task and
   GPTimer vs. direct timer-group registers from bench evidence.
+- Current C6 HP realtime and LP timing baselines are tracked in
+  `docs/hcp2-realtime-timing-baseline.md`; use those numbers as guardrails, not
+  as proof that the standard ESP32 path is motor-ready.
 
 Phase A/B/C deliverable boundary: these phases do not implement an active ESP32
 realtime responder. Phase C may add a compile-only inert `esp32_realtime` backend
