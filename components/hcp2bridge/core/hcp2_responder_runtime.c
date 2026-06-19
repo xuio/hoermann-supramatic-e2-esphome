@@ -4,6 +4,15 @@ static uint8_t time_reached_(uint32_t now, uint32_t due) {
   return ((int32_t) (now - due)) >= 0 ? 1u : 0u;
 }
 
+static void clear_pending_command_(hcp2_responder_runtime_t *runtime) {
+  if (runtime == 0) {
+    return;
+  }
+  runtime->pending_command_epoch = 0u;
+  runtime->pending_command_sequence = 0u;
+  runtime->pending_command_due_us = 0u;
+}
+
 static hcp2_button_t button_for_command_(uint8_t command_id) {
   switch (command_id) {
     case HCP2_LP_COMMAND_OPEN:
@@ -48,6 +57,7 @@ void hcp2_responder_runtime_init(hcp2_responder_runtime_t *runtime, hcp2_engine_
   runtime->mailbox = mailbox;
   runtime->active_epoch = 0u;
   runtime->last_command_sequence = 0u;
+  clear_pending_command_(runtime);
   runtime->last_protocol_sequence = 0u;
   runtime->last_status_poll_count = 0u;
   runtime->last_status_poll_us = 0u;
@@ -85,6 +95,7 @@ void hcp2_responder_runtime_begin_from_mailbox(hcp2_responder_runtime_t *runtime
   pending_sequence = mailbox->command_sequence;
   runtime->active_epoch = mailbox->command_epoch;
   runtime->last_command_sequence = pending_sequence;
+  clear_pending_command_(runtime);
   if (pending_sequence != 0u && mailbox->command_ack_sequence != pending_sequence) {
     hcp2_lp_mailbox_ack_command(mailbox, pending_sequence, HCP2_LP_COMMAND_RESULT_EXPIRED);
     hcp2_responder_runtime_trace(runtime, HCP2_LP_TRACE_COMMAND,
@@ -167,12 +178,32 @@ hcp2_lp_command_result_t hcp2_responder_runtime_handle_mailbox_command(hcp2_resp
   if (mailbox->command_sequence == 0u) {
     runtime->active_epoch = mailbox->command_epoch;
     runtime->last_command_sequence = 0u;
+    clear_pending_command_(runtime);
+    return HCP2_LP_COMMAND_RESULT_NONE;
+  }
+  if (mailbox->command_epoch != runtime->active_epoch) {
+    clear_pending_command_(runtime);
+    return HCP2_LP_COMMAND_RESULT_NONE;
+  }
+  if (mailbox->command_sequence == runtime->last_command_sequence) {
+    clear_pending_command_(runtime);
+    return HCP2_LP_COMMAND_RESULT_NONE;
+  }
+  if (mailbox->command_epoch != runtime->pending_command_epoch ||
+      mailbox->command_sequence != runtime->pending_command_sequence) {
+    runtime->pending_command_epoch = mailbox->command_epoch;
+    runtime->pending_command_sequence = mailbox->command_sequence;
+    runtime->pending_command_due_us = now_us + HCP2_RESPONDER_COMMAND_SETTLE_US;
+    return HCP2_LP_COMMAND_RESULT_NONE;
+  }
+  if (!time_reached_(now_us, runtime->pending_command_due_us)) {
     return HCP2_LP_COMMAND_RESULT_NONE;
   }
   if (!hcp2_lp_mailbox_take_command(mailbox, runtime->active_epoch, &runtime->last_command_sequence, now_us,
                                     &command)) {
     return HCP2_LP_COMMAND_RESULT_NONE;
   }
+  clear_pending_command_(runtime);
 
   button = button_for_command_(command.command_id);
   if (button == HCP2_BUTTON_NONE) {

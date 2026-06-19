@@ -9,11 +9,16 @@
 extern "C" {
 #endif
 
+#define HCP2_RESPONDER_COMMAND_SETTLE_US 5000u
+
 typedef struct {
   hcp2_engine_t *engine;
   volatile hcp2_lp_mailbox_t *mailbox;
   uint32_t active_epoch;
   uint32_t last_command_sequence;
+  uint32_t pending_command_epoch;
+  uint32_t pending_command_sequence;
+  uint32_t pending_command_due_us;
   uint32_t last_protocol_sequence;
   uint32_t last_status_poll_count;
   uint32_t last_status_poll_us;
