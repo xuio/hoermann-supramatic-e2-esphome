@@ -163,6 +163,7 @@ jobs:
           --report lp-report.json
 
       - name: Upload LP ISS report
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: hcp2-lp-iss-report
