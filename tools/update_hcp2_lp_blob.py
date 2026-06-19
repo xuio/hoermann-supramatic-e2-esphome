@@ -15,6 +15,8 @@ DEFAULT_BINARY = ROOT / "firmware" / "hcp2-lp" / "build" / "hcp2_lp.bin"
 DEFAULT_OUTPUT = ROOT / "components" / "hcp2bridge" / "lp_blob" / "hcp2_lp_blob.c"
 BYTES_PER_LINE = 12
 EXPECTED_IDF_VERSION = "release-v5.5"
+EXPECTED_IDF_DOCKER_IMAGE = "espressif/idf:release-v5.5"
+EXPECTED_IDF_PATH = "/opt/esp/idf"
 EXPECTED_PROJECT_NAME = "hcp2_lp_loader"
 
 
@@ -64,7 +66,7 @@ def _load_build_description(binary: Path) -> tuple[Path, dict[str, Any]]:
     if not description_path.exists():
         raise OriginCheckError(
             f"{description_path} is missing; refusing to embed an LP blob without ESP-IDF build metadata.\n"
-            f"Build firmware/hcp2-lp with the CI-matching ESP-IDF {EXPECTED_IDF_VERSION} checkout, or "
+            f"Run garage-build-hcp2-lp-blob-ci to build with the CI-matching {EXPECTED_IDF_DOCKER_IMAGE} image, or "
             "pass --skip-idf-origin-check for a deliberate local experiment."
         )
     try:
@@ -91,9 +93,14 @@ def validate_idf_origin(binary: Path) -> None:
     project_name = str(data.get("project_name", ""))
 
     problems: list[str] = []
-    normalized_idf_path = idf_path.replace("\\", "/")
+    normalized_idf_path = idf_path.replace("\\", "/").rstrip("/")
     if not idf_path:
         problems.append("missing idf_path")
+    elif normalized_idf_path != EXPECTED_IDF_PATH:
+        problems.append(
+            f"idf_path is {idf_path!r}; expected {EXPECTED_IDF_PATH!r} from the CI Docker image "
+            f"{EXPECTED_IDF_DOCKER_IMAGE}. Run garage-build-hcp2-lp-blob-ci instead of using a host ESP-IDF checkout"
+        )
     if "/.platformio/" in normalized_idf_path or normalized_idf_path.endswith("/.platformio/packages/framework-espidf"):
         problems.append(
             f"idf_path points at PlatformIO's ESP-IDF package ({idf_path}); use Espressif ESP-IDF "
@@ -124,7 +131,7 @@ def validate_idf_origin(binary: Path) -> None:
         raise OriginCheckError(
             f"{binary} was not built by the expected HCP2 LP ESP-IDF project/toolchain:\n{details}\n"
             "Refusing to refresh the checked-in blob because LP binary bytes are toolchain-sensitive.\n"
-            "Use the firmware/hcp2-lp README build command, or pass --skip-idf-origin-check only for "
+            "Run garage-build-hcp2-lp-blob-ci, or pass --skip-idf-origin-check only for "
             "a deliberate local experiment."
         )
 
@@ -162,7 +169,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.check:
         existing = args.output.read_text(encoding="utf-8") if args.output.exists() else ""
         if existing != content:
-            print(f"{args.output} is stale; run garage-update-hcp2-lp-blob")
+            print(f"{args.output} is stale; run garage-build-hcp2-lp-blob-ci")
             print(f"source: {args.binary} ({len(data)} bytes, sha256={digest})")
             return 1
         print(f"{args.output} is current ({len(data)} bytes, sha256={digest})")

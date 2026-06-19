@@ -56,6 +56,20 @@ def test_update_hcp2_lp_blob_rejects_platformio_idf_metadata(tmp_path: Path, cap
     assert not output.exists()
 
 
+def test_update_hcp2_lp_blob_rejects_host_idf_checkout_metadata(tmp_path: Path, capsys) -> None:
+    metadata = official_metadata()
+    metadata["idf_path"] = "/Users/example/esp/esp-idf"
+    binary = write_binary_with_metadata(tmp_path, metadata)
+    output = tmp_path / "hcp2_lp_blob.c"
+
+    assert main(["--binary", str(binary), "--output", str(output)]) == 2
+
+    captured = capsys.readouterr()
+    assert "garage-build-hcp2-lp-blob-ci" in captured.out
+    assert "CI Docker image" in captured.out
+    assert not output.exists()
+
+
 def test_update_hcp2_lp_blob_rejects_mixed_platformio_cmake_cache(tmp_path: Path, capsys) -> None:
     binary = write_binary_with_metadata(tmp_path, official_metadata())
     (binary.parent / "CMakeCache.txt").write_text(

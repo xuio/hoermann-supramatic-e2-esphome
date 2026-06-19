@@ -19,7 +19,8 @@ This directory contains the Python helpers used to build, test, capture, and cal
 | `uv run garage-hcp2-closeout` | [hcp2_closeout.py](hcp2_closeout.py) | Run scripted HCP2 HIL closeout plans with simulator, load, command, and optional LA verdicts |
 | `uv run garage-hcp2-support-bundle` | [hcp2_support_bundle.py](hcp2_support_bundle.py) | Collect Series 4 tester `/health`, `/support`, `/stats`, and RAM protocol-log files from the ESP HTTP debug port |
 | `uv run garage-hcp2-debug-browser-e2e` | [hcp2_debug_browser_e2e.py](hcp2_debug_browser_e2e.py) | Manual/HIL Playwright browser check for the Series 4 debug web UI, live WebSocket log, reconnect path, frontend cache download, and optional soak |
-| `uv run garage-update-hcp2-lp-blob` | [update_hcp2_lp_blob.py](update_hcp2_lp_blob.py) | Generate or check the checked-in ESPHome HCP2 LP blob from the CI-matching ESP-IDF `firmware/hcp2-lp/build/hcp2_lp.bin` |
+| `uv run garage-build-hcp2-lp-blob-ci` | [build_hcp2_lp_blob_ci.py](build_hcp2_lp_blob_ci.py) | Build `firmware/hcp2-lp` with the same `espressif/idf:release-v5.5` Docker image used by CI and refresh the checked-in ESPHome LP blob |
+| `uv run garage-update-hcp2-lp-blob` | [update_hcp2_lp_blob.py](update_hcp2_lp_blob.py) | Low-level generate/check helper for an already built CI Docker LP binary; use `garage-build-hcp2-lp-blob-ci` for normal updates |
 | `uv run garage-test-wizard` | [garage_test_wizard.py](garage_test_wizard.py) | Guided manual Home Assistant position tests using measured clear-opening height |
 | `uv run garage-generate-aruco-markers` | [generate_aruco_marker_pdfs.py](generate_aruco_marker_pdfs.py) | Generate printable ArUco marker PDFs |
 | `uv run garage-hcp-proxy-client` | [hcp_proxy_client.py](hcp_proxy_client.py) | Laptop-side RS-485 proxy experiments |

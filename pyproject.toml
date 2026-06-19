@@ -18,6 +18,7 @@ dependencies = [
 [project.scripts]
 garage-analyze-aruco-video = "tools.analyze_garage_aruco_video:main"
 garage-analyze-hcp-timing = "tools.analyze_hcp_timing:main"
+garage-build-hcp2-lp-blob-ci = "tools.build_hcp2_lp_blob_ci:main"
 garage-compare-hcp2-traces = "tools.compare_hcp2_traces:main"
 garage-decode-phone-sync-video = "tools.decode_phone_sync_video:main"
 garage-fetch-hcp2-reference = "tools.fetch_hcp2_reference:main"
