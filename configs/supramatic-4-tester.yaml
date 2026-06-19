@@ -66,8 +66,8 @@ hcp2bridge:
   de_pin: ${hcp2_de_pin}
   re_pin: ${hcp2_re_pin}
   uart_num: 1
-  slave_id: 2
-  device_signature: "00000205043010FFA845"
+  slave_id: 69
+  device_signature: "00000005043010000000"
   response_delay: 4200us
   button_press_duration: 100ms
   hp_fallback: false
