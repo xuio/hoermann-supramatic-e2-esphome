@@ -331,7 +331,7 @@ HCP2_HOT_TEXT void hcp2_engine_mark_tx_started(hcp2_engine_t *engine, uint32_t n
 }
 
 HCP2_HOT_TEXT void hcp2_engine_mark_tx_done(hcp2_engine_t *engine, uint32_t now_us) {
-  const uint8_t pending_kind = engine != 0 ? engine->pending_tx_kind : HCP2_PENDING_TX_OTHER;
+  const uint8_t pending_kind = engine != 0 ? engine->pending_tx_kind : (uint8_t) HCP2_PENDING_TX_OTHER;
 
   if (engine == 0 || !engine->pending_tx_ready || !engine->pending_tx_claimed) {
     return;
