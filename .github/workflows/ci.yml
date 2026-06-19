@@ -85,6 +85,7 @@ jobs:
           hcp2bridge:
             id: hcp2_test
             backend: esp32_realtime
+            esp32_realtime_board_profile: esp32_wroom_no_psram
           YAML
           uv run esphome compile "$tmpdir/hcp2-esp32-realtime.yaml"
 
