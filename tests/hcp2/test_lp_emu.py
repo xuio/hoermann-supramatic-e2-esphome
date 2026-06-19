@@ -195,11 +195,19 @@ def test_lp_emulator_uses_mailbox_slave_id_one_for_scan_and_polls() -> None:
 def test_lp_emulator_accepts_reported_bus_scan_tail_variants() -> None:
     emu = require_emulator()
     emu.boot()
+    scan_reg1_variant = bytearray(protocol.bus_scan_request(2))
+    scan_reg1_variant[14] = 0x01
+    scan_reg1_variant = bytearray(protocol.append_crc(bytes(scan_reg1_variant[:-2])))
+    scan_payload_variant = bytearray(protocol.bus_scan_request(2))
+    scan_payload_variant[11:17] = b"\x12\x34\x56\x78\xaa\x55"
+    scan_payload_variant = bytearray(protocol.append_crc(bytes(scan_payload_variant[:-2])))
 
     for frame in (
         protocol.bus_scan_request(2),
         protocol.bus_scan_request(2, scan_state=0x02, scan_value=0x00),
         protocol.bus_scan_request(2, scan_state=0x01, scan_value=0x00),
+        bytes(scan_reg1_variant),
+        bytes(scan_payload_variant),
     ):
         emu.write_uart(frame)
         assert emu.read_uart_available(0.05) == protocol.scan_response(2)

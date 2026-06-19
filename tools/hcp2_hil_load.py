@@ -597,7 +597,6 @@ def classify_device_health(payload: dict[str, Any], *, fault_injection_expected:
 
     for name in (
         "missed_polls",
-        "raw_missed_polls",
         "tx_aborts",
         "collisions",
         "loop_overruns",
@@ -606,6 +605,14 @@ def classify_device_health(payload: dict[str, Any], *, fault_injection_expected:
         value = _nested_int(payload, name)
         if value != 0:
             blocking.append(f"{name}:{value}")
+
+    raw_missed_polls = _nested_int(payload, "raw_missed_polls")
+    pending_response = _nested_bool(payload, "pending_response", False)
+    if raw_missed_polls != 0:
+        if raw_missed_polls == 1 and pending_response and firmware_ok and not blocking:
+            warnings.append("raw_missed_polls_pending:1")
+        else:
+            blocking.append(f"raw_missed_polls:{raw_missed_polls}")
 
     last_poll_age_ms = _nested_int(payload, "last_poll_age_ms", 0)
     if last_poll_age_ms > DEVICE_HEALTH_STALE_POLL_MS:

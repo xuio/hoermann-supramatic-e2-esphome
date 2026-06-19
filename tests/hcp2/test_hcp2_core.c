@@ -233,7 +233,16 @@ static void test_bus_scan_parse_variants(void) {
   frame[14] = 0x01u;
   hcp2_crc16_append(frame, (uint16_t) (len - 2u));
   assert(hcp2_frame_parse_master(frame, len, 2u, &decoded) == HCP2_PARSE_OK);
-  assert(decoded.type == HCP2_FRAME_OTHER_VALID);
+  assert(decoded.type == HCP2_FRAME_BUS_SCAN);
+
+  len = build_bus_scan_tail(2u, 0xAAu, 0x55u, frame);
+  frame[11] = 0x12u;
+  frame[12] = 0x34u;
+  frame[13] = 0x56u;
+  frame[14] = 0x78u;
+  hcp2_crc16_append(frame, (uint16_t) (len - 2u));
+  assert(hcp2_frame_parse_master(frame, len, 2u, &decoded) == HCP2_PARSE_OK);
+  assert(decoded.type == HCP2_FRAME_BUS_SCAN);
 
   len = build_bus_scan(2u, 2u, frame);
   write_be16(&frame[2], HCP2_REG_STATUS_READ + 1u);

@@ -130,7 +130,7 @@ class ReferenceHCP2Responder:
         write_qty = read_be16(frame, 8)
         if read_addr != protocol.REG_STATUS_READ or write_addr != protocol.REG_COMMAND_WRITE:
             return None
-        if read_qty == 5 and write_qty == 3 and frame[10] == 6 and frame[11] == 0 and frame[12] == 2:
+        if read_qty == 5 and write_qty == 3 and frame[10] == 6:
             return scan_response(self.slave_id, bytes(self.signature))
         if read_qty == 8 and write_qty == 2 and frame[10] == 4:
             return status_response(self.slave_id, frame[11], frame[12], self._next_button_phase())
@@ -187,6 +187,28 @@ def compare_transaction(dut: SocketPairHostTransport, ref: ReferenceHCP2Responde
     return actual
 
 
+def scan_with_payload(payload: bytes, *, slave_id: int = protocol.SLAVE_ID) -> bytes:
+    assert len(payload) == 6
+    return protocol.append_crc(
+        bytes(
+            [
+                slave_id,
+                protocol.FC_READ_WRITE_MULTIPLE_REGISTERS,
+                0x9C,
+                0xB9,
+                0x00,
+                0x05,
+                0x9C,
+                0x41,
+                0x00,
+                0x03,
+                len(payload),
+            ]
+        )
+        + payload
+    )
+
+
 def test_reference_emulator_matches_our_responder_scan_and_idle_polls() -> None:
     ref = ReferenceHCP2Responder()
     with SocketPairHostTransport(response_delay_us=0) as dut:
@@ -194,6 +216,8 @@ def test_reference_emulator_matches_our_responder_scan_and_idle_polls() -> None:
         assert ref.command(f"set signature {REFERENCE_SIGNATURE.hex()}") == "OK set signature"
 
         scan = compare_transaction(dut, ref, protocol.bus_scan_request())
+        assert scan == bytes.fromhex("02170A00000205043010FFA8450EDF")
+        scan = compare_transaction(dut, ref, scan_with_payload(bytes.fromhex("12345678AA55")))
         assert scan == bytes.fromhex("02170A00000205043010FFA8450EDF")
 
         for counter in (0x00, 0x01, 0x3E, 0x70, 0xFF):

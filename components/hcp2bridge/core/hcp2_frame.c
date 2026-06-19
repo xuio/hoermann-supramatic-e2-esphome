@@ -57,16 +57,6 @@ static HCP2_HOT_TEXT uint8_t is_hcp2_readwrite_request_(uint16_t read_addr, uint
              : 0u;
 }
 
-static HCP2_HOT_TEXT uint8_t is_bus_scan_payload_(const uint8_t *data) {
-  const uint16_t scan_reg0 = read_be16_(&data[11]);
-  const uint16_t scan_reg1 = read_be16_(&data[13]);
-  /*
-   * The third scan write register carries variant-dependent scan state/candidate
-   * bytes, so only the two invariant scan registers are checked here.
-   */
-  return scan_reg0 == 0x0002u && scan_reg1 == 0x0000u ? 1u : 0u;
-}
-
 void hcp2_default_signature(uint8_t signature[HCP2_SIGNATURE_LEN]) {
   static const uint8_t default_signature[HCP2_SIGNATURE_LEN] = {
       0x00u, 0x00u, 0x02u, 0x05u, 0x04u, 0x30u, 0x10u, 0xFFu, 0xA8u, 0x45u};
@@ -176,10 +166,8 @@ HCP2_HOT_TEXT hcp2_parse_result_t hcp2_frame_parse_master(const uint8_t *data, u
       out->argument = (uint16_t) (((uint16_t) data[14] << 8) | data[13]);
     }
   } else if (is_hcp2_readwrite_request_(read_addr, read_qty, write_addr, write_qty, data[10], 5u, 3u, 6u) &&
-             data[0] != 0u && data[0] == configured_slave_id) {
-    if (is_bus_scan_payload_(data)) {
-      out->type = HCP2_FRAME_BUS_SCAN;
-    }
+             data[0] == configured_slave_id) {
+    out->type = HCP2_FRAME_BUS_SCAN;
   } else if (is_hcp2_readwrite_request_(read_addr, read_qty, write_addr, write_qty, data[10], 2u, 2u, 4u)) {
     if (data[0] == configured_slave_id) {
       out->type = HCP2_FRAME_COMMAND_ARG;

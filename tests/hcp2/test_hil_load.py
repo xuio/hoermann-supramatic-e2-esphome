@@ -262,6 +262,7 @@ def health_payload(**checks):
             "polls_answered": 100,
             "missed_polls": 0,
             "raw_missed_polls": 0,
+            "pending_response": False,
             "health_flags": 0,
             "tx_aborts": 0,
             "collisions": 0,
@@ -323,6 +324,17 @@ def test_hil_load_accepts_legacy_unsafe_ota_verdict_when_continuity_is_clean() -
     assert report["verdict"] == "ok"
     assert report["continuity_verdict"] == "ok"
     assert report["blocking_reasons"] == []
+
+
+def test_hil_load_treats_raw_pending_response_as_warning() -> None:
+    report = classify_device_health(
+        health_payload(raw_missed_polls=1, pending_response=True),
+        fault_injection_expected=False,
+    )
+
+    assert report["verdict"] == "warn"
+    assert report["continuity_verdict"] == "ok"
+    assert report["warnings"] == ["raw_missed_polls_pending:1"]
 
 
 def test_hil_load_health_classifier_never_hides_real_continuity_failures() -> None:
