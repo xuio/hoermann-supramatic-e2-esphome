@@ -81,6 +81,11 @@ static uint8_t parse_hex(const char *hex, uint8_t *out) {
   return len;
 }
 
+static void write_be16(uint8_t *out, uint16_t value) {
+  out[0] = (uint8_t) (value >> 8);
+  out[1] = (uint8_t) (value & 0xFFu);
+}
+
 static void expect_hex(const uint8_t *actual, uint8_t actual_len, const char *expected_hex) {
   uint8_t expected[HCP2_MAX_FRAME_LEN];
   const uint8_t expected_len = parse_hex(expected_hex, expected);
@@ -226,6 +231,30 @@ static void test_bus_scan_parse_variants(void) {
 
   len = build_bus_scan_tail(2u, 0x01u, 0x00u, frame);
   frame[14] = 0x01u;
+  hcp2_crc16_append(frame, (uint16_t) (len - 2u));
+  assert(hcp2_frame_parse_master(frame, len, 2u, &decoded) == HCP2_PARSE_OK);
+  assert(decoded.type == HCP2_FRAME_OTHER_VALID);
+
+  len = build_bus_scan(2u, 2u, frame);
+  write_be16(&frame[2], HCP2_REG_STATUS_READ + 1u);
+  hcp2_crc16_append(frame, (uint16_t) (len - 2u));
+  assert(hcp2_frame_parse_master(frame, len, 2u, &decoded) == HCP2_PARSE_OK);
+  assert(decoded.type == HCP2_FRAME_OTHER_VALID);
+
+  len = build_bus_scan(2u, 2u, frame);
+  write_be16(&frame[6], HCP2_REG_COMMAND_WRITE + 1u);
+  hcp2_crc16_append(frame, (uint16_t) (len - 2u));
+  assert(hcp2_frame_parse_master(frame, len, 2u, &decoded) == HCP2_PARSE_OK);
+  assert(decoded.type == HCP2_FRAME_OTHER_VALID);
+
+  len = build_bus_scan(2u, 2u, frame);
+  write_be16(&frame[4], 0x0004u);
+  hcp2_crc16_append(frame, (uint16_t) (len - 2u));
+  assert(hcp2_frame_parse_master(frame, len, 2u, &decoded) == HCP2_PARSE_OK);
+  assert(decoded.type == HCP2_FRAME_OTHER_VALID);
+
+  len = build_bus_scan(2u, 2u, frame);
+  write_be16(&frame[8], 0x0002u);
   hcp2_crc16_append(frame, (uint16_t) (len - 2u));
   assert(hcp2_frame_parse_master(frame, len, 2u, &decoded) == HCP2_PARSE_OK);
   assert(decoded.type == HCP2_FRAME_OTHER_VALID);
