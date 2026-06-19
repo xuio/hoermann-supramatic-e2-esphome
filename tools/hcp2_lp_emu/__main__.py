@@ -5,13 +5,19 @@ import json
 import sys
 from pathlib import Path
 
-from tools.supramatic_sim.simulator import DEFAULT_MISSED_POLL_THRESHOLD, SupraMaticSimulator
+from tools.supramatic_sim.simulator import (
+    COUNTER_PROFILES,
+    DEFAULT_COUNTER_PROFILE,
+    DEFAULT_MISSED_POLL_THRESHOLD,
+    SupraMaticSimulator,
+)
 
 from .emulator import LPEmuError, LPEmuTransport, rvc_smoke, write_report
 from .dual_iss import run_mailbox_suite
 
 
 FAULTS = {"corrupt-crc", "truncated", "duplicate", "jitter", "garbage", "split"}
+STARTUP_COMMANDS = {"open", "close", "stop", "vent", "half", "light"}
 DEFAULT_LP_BLOB = Path(__file__).resolve().parents[2] / "firmware" / "hcp2-lp" / "build" / "hcp2_lp.bin"
 
 
@@ -21,10 +27,27 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cycles", type=int, default=1000, help="Steady-state SupraMatic cycles to run")
     parser.add_argument("--speed-factor", type=float, default=1_000_000.0)
     parser.add_argument("--missed-poll-threshold", type=int, default=DEFAULT_MISSED_POLL_THRESHOLD)
+    parser.add_argument(
+        "--counter-profile",
+        choices=sorted(COUNTER_PROFILES),
+        default=DEFAULT_COUNTER_PROFILE,
+        help="Status-poll counter profile used by the virtual master",
+    )
     parser.add_argument("--report", type=Path)
     parser.add_argument("--trace", type=Path, help="Write canonical ISS trace JSONL")
     parser.add_argument("--fault", action="append", choices=sorted(FAULTS), default=[])
     parser.add_argument("--command", choices=["open", "close", "light"])
+    parser.add_argument(
+        "--startup-command",
+        choices=sorted(STARTUP_COMMANDS),
+        help="Queue one mailbox command before the virtual master starts, matching Wokwi bring-up self-tests",
+    )
+    parser.add_argument(
+        "--startup-idle-us",
+        type=int,
+        default=0,
+        help="Advance LP virtual time after --startup-command and before the virtual master starts",
+    )
     parser.add_argument("--rvc-smoke", action="store_true", help="Run a compressed-instruction smoke test and exit")
     parser.add_argument("--dual", action="store_true", help="Run the Phase 0d dual-ISS harness")
     parser.add_argument("--interleave", type=int, default=64, help="Instruction slice for each dual-ISS engine")
@@ -35,10 +58,17 @@ def build_parser() -> argparse.ArgumentParser:
 def run_closed_loop(args: argparse.Namespace) -> dict[str, object]:
     transport = LPEmuTransport(args.blob)
     try:
+        if args.startup_command:
+            ack = transport.command(f"press {args.startup_command}")
+            if not ack.startswith("OK"):
+                raise LPEmuError(f"startup command {args.startup_command!r} failed: {ack}")
+            if args.startup_idle_us > 0:
+                transport.advance_time_us(args.startup_idle_us)
         simulator = SupraMaticSimulator(
             transport,
             speed_factor=args.speed_factor,
             missed_poll_threshold=args.missed_poll_threshold,
+            counter_profile=args.counter_profile,
         )
         sim_report = simulator.run(args.cycles, faults=set(args.fault), command=args.command)
         payload = {

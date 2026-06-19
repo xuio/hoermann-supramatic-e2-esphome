@@ -44,8 +44,14 @@ LP_SRAM_MAP_SIZE = 0x10000
 MAILBOX_ADDR = 0x50002400
 MAILBOX_SIZE = 1280
 MAILBOX_MAGIC = 0x32435048
-MAILBOX_ABI_VERSION = 7
-MAILBOX_FIRMWARE_VERSION = 15
+MAILBOX_ABI_VERSION = 8
+MAILBOX_FIRMWARE_VERSION = 16
+MAILBOX_CONFIG_SEQUENCE = 1156
+MAILBOX_CONFIG_SLAVE_ID = 1160
+MAILBOX_CONFIG_SIGNATURE = 1161
+MAILBOX_CONFIG_RESPONSE_DELAY_US = 1172
+MAILBOX_CONFIG_BUTTON_PRESS_US = 1176
+DEFAULT_SCAN_SIGNATURE = bytes.fromhex("00000205043010FFA845")
 
 LP_UART_BASE = 0x600B1400
 LP_UART_FIFO = LP_UART_BASE + 0x00
@@ -367,6 +373,28 @@ class LPEmulator:
         _write_u32(self.uc, MAILBOX_ADDR + 28, self.epoch)
         _write_u32(self.uc, MAILBOX_ADDR + 32, 0)
 
+    def configure_hcp2(
+        self,
+        *,
+        slave_id: int = 2,
+        signature: bytes = DEFAULT_SCAN_SIGNATURE,
+        response_delay_us: int = 4200,
+        button_press_us: int = 100_000,
+    ) -> None:
+        if len(signature) != 10:
+            raise ValueError("signature must contain exactly 10 bytes")
+
+        sequence = _read_u32(self.uc, MAILBOX_ADDR + MAILBOX_CONFIG_SEQUENCE) + 1
+        if sequence % 2 == 0:
+            sequence += 1
+        _write_u32(self.uc, MAILBOX_ADDR + MAILBOX_CONFIG_SEQUENCE, sequence)
+        _write_u8(self.uc, MAILBOX_ADDR + MAILBOX_CONFIG_SLAVE_ID, slave_id)
+        self.uc.mem_write(MAILBOX_ADDR + MAILBOX_CONFIG_SIGNATURE, signature)
+        _write_u8(self.uc, MAILBOX_ADDR + MAILBOX_CONFIG_SIGNATURE + len(signature), 0)
+        _write_u32(self.uc, MAILBOX_ADDR + MAILBOX_CONFIG_RESPONSE_DELAY_US, response_delay_us)
+        _write_u32(self.uc, MAILBOX_ADDR + MAILBOX_CONFIG_BUTTON_PRESS_US, button_press_us)
+        _write_u32(self.uc, MAILBOX_ADDR + MAILBOX_CONFIG_SEQUENCE, sequence + 1)
+
     def _install_hooks(self) -> None:
         self.uc.hook_add(UC_HOOK_MEM_READ, self._hook_mem_read)
         self.uc.hook_add(UC_HOOK_MEM_WRITE, self._hook_mem_write)
@@ -421,6 +449,16 @@ class LPEmulator:
         self._move_wire_to_rx()
         self._drain_tx()
         self._sync_uart_regs()
+
+    def _serial_quiescent(self) -> bool:
+        self._service_serial()
+        return (
+            not self.rx_wire
+            and not self.rx_fifo
+            and not self.tx_fifo
+            and self.tx_next_due_cycle is None
+            and not self.de_enabled
+        )
 
     def _move_wire_to_rx(self) -> None:
         while self.rx_wire and self.rx_wire[0][0] <= self.cycles:
@@ -585,6 +623,21 @@ class LPEmulator:
             self.run(step)
             remaining -= step
         return condition()
+
+    def advance_time_us(self, gap_us: int) -> None:
+        if gap_us <= 0:
+            return
+        self.boot()
+        target_cycle = self.cycles + int(gap_us * LP_CLOCK_HZ / 1_000_000)
+        if not self._serial_quiescent():
+            if not self.run_until(self._serial_quiescent, instruction_budget=4_000_000, slice_instructions=4096):
+                raise LPEmuError("LP UART work did not quiesce before idle fast-forward")
+            self.run(4096)
+        if self.cycles < target_cycle:
+            self.fast_forward_cycles += target_cycle - self.cycles
+            self.cycles = target_cycle
+            self._write_cycle_regs()
+            self._service_serial()
 
     def boot(self) -> None:
         if self.running:
@@ -784,6 +837,9 @@ class LPEmuTransport:
 
     def read_available(self, timeout: float) -> bytes:
         return self.emulator.read_uart_available(timeout)
+
+    def advance_time_us(self, gap_us: int) -> None:
+        self.emulator.advance_time_us(gap_us)
 
     def command(self, line: str) -> str:
         parts = line.strip().split()

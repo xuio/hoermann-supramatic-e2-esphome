@@ -51,6 +51,10 @@ The tester config exposes the normal Home Assistant garage-door cover and light,
 plus explicit command buttons for `open`, `close`, `stop`, `half`, `vent`, and
 `light`.
 
+The public Series 4 tester image uses HCP2 slave ID `2`, matching the generic
+component default. Set `slave_id` explicitly for any motor that registered a
+different accessory ID.
+
 ## First Registration
 
 1. Power the ESP32-C6 and confirm it joins Wi-Fi.

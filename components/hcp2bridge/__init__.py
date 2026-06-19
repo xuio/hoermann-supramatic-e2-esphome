@@ -420,7 +420,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_RE_PIN): pins.gpio_output_pin_schema,
             cv.Optional(CONF_UART_NUM, default=1): cv.int_range(min=0, max=2),
             cv.Optional(CONF_SLAVE_ID, default=2): cv.int_range(min=1, max=247),
-            cv.Optional(CONF_DEVICE_SIGNATURE, default="00000205043010FFA855"): validate_signature,
+            cv.Optional(CONF_DEVICE_SIGNATURE, default="00000205043010FFA845"): validate_signature,
             cv.Optional(CONF_RESPONSE_DELAY, default="4200us"): cv.positive_time_period_microseconds,
             cv.Optional(CONF_BUTTON_PRESS_DURATION, default="100ms"): cv.positive_time_period_microseconds,
             cv.Optional(CONF_HP_FALLBACK, default=False): cv.boolean,

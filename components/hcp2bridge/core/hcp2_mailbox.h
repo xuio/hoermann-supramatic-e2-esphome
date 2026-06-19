@@ -16,8 +16,8 @@ extern "C" {
 #define HCP2_LP_MAILBOX_ADDR (HCP2_LP_SRAM_BASE + HCP2_LP_MAILBOX_OFFSET)
 
 #define HCP2_LP_MAILBOX_MAGIC 0x32435048u
-#define HCP2_LP_MAILBOX_ABI_VERSION 7u
-#define HCP2_LP_FIRMWARE_VERSION 0x0000000Fu
+#define HCP2_LP_MAILBOX_ABI_VERSION 8u
+#define HCP2_LP_FIRMWARE_VERSION 0x00000010u
 #define HCP2_LP_PROTOCOL_EVENT_CAPACITY 16u
 #define HCP2_LP_TRACE_CAPACITY 32u
 
@@ -192,7 +192,13 @@ typedef struct {
   volatile uint32_t trace_head;
   volatile uint32_t trace_tail;
   hcp2_lp_trace_entry_t trace[HCP2_LP_TRACE_CAPACITY];
-  uint8_t reserved1[124];
+  volatile uint32_t config_sequence;
+  volatile uint8_t config_slave_id;
+  volatile uint8_t config_signature[HCP2_SIGNATURE_LEN];
+  volatile uint8_t config_reserved0;
+  volatile uint32_t config_response_delay_us;
+  volatile uint32_t config_button_press_us;
+  uint8_t reserved1[100];
 } hcp2_lp_mailbox_t;
 
 #define HCP2_LP_MAILBOX_SIZE ((uint16_t) sizeof(hcp2_lp_mailbox_t))
@@ -269,9 +275,23 @@ HCP2_STATIC_ASSERT(offsetof(hcp2_lp_mailbox_t, protocol_events) == 188u,
 HCP2_STATIC_ASSERT(offsetof(hcp2_lp_mailbox_t, trace_head) == 892u,
                    hcp2_lp_mailbox_trace_head_offset);
 HCP2_STATIC_ASSERT(offsetof(hcp2_lp_mailbox_t, trace) == 900u, hcp2_lp_mailbox_trace_offset);
+HCP2_STATIC_ASSERT(offsetof(hcp2_lp_mailbox_t, config_sequence) == 1156u,
+                   hcp2_lp_mailbox_config_sequence_offset);
+HCP2_STATIC_ASSERT(offsetof(hcp2_lp_mailbox_t, config_slave_id) == 1160u,
+                   hcp2_lp_mailbox_config_slave_id_offset);
+HCP2_STATIC_ASSERT(offsetof(hcp2_lp_mailbox_t, config_signature) == 1161u,
+                   hcp2_lp_mailbox_config_signature_offset);
+HCP2_STATIC_ASSERT(offsetof(hcp2_lp_mailbox_t, config_response_delay_us) == 1172u,
+                   hcp2_lp_mailbox_config_response_delay_offset);
+HCP2_STATIC_ASSERT(offsetof(hcp2_lp_mailbox_t, config_button_press_us) == 1176u,
+                   hcp2_lp_mailbox_config_button_press_offset);
 
 void hcp2_lp_mailbox_init(volatile hcp2_lp_mailbox_t *mailbox);
 void hcp2_lp_mailbox_repair_header(volatile hcp2_lp_mailbox_t *mailbox);
+void hcp2_lp_mailbox_write_config(volatile hcp2_lp_mailbox_t *mailbox,
+                                  const hcp2_engine_config_t *config);
+uint8_t hcp2_lp_mailbox_read_config(const volatile hcp2_lp_mailbox_t *mailbox,
+                                    hcp2_engine_config_t *out);
 void hcp2_lp_mailbox_publish_state(volatile hcp2_lp_mailbox_t *mailbox, const hcp2_drive_status_t *state,
                                    uint32_t now_us);
 void hcp2_lp_mailbox_publish_counters(volatile hcp2_lp_mailbox_t *mailbox,

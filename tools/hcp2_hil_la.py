@@ -659,14 +659,14 @@ def decode_uart_stream(
 def status_counter_gaps(counters: list[int]) -> list[dict[str, Any]]:
     gaps: list[dict[str, Any]] = []
     for index, (previous, current) in enumerate(zip(counters, counters[1:]), start=1):
-        expected = (previous + 1) & 0xFF
+        expected = 0x01 if previous == 0x7F else (previous + 1) & 0xFF
         if current == expected:
             continue
         missing: list[int] = []
         value = expected
         while value != current and len(missing) < 256:
             missing.append(value)
-            value = (value + 1) & 0xFF
+            value = 0x01 if value == 0x7F else (value + 1) & 0xFF
         gaps.append(
             {
                 "index": index,

@@ -5,4 +5,4 @@ author: garage-door-controller
 steps:
   - wait-serial: "HCP2_BRINGUP_MODE hp-fallback"
   - wait-serial: "HCP2_BRINGUP_READY"
-  - delay: 20s
+  - delay: 24s

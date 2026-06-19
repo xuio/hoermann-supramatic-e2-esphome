@@ -18,6 +18,7 @@ uv run garage-supramatic-sim --socketpair --cycles 1000 --fault corrupt-crc --fa
 uv run garage-supramatic-sim --socketpair --scenario open-from-closed --door-travel-cycles 40 --cycles 80
 uv run garage-supramatic-sim --socketpair --scenario closing-obstruction --obstruction-cycle 8 --cycles 80
 uv run garage-supramatic-sim --socketpair --scenario goto-position --goto-position-raw 80 --cycles 120
+uv run garage-supramatic-sim --socketpair --slave-id 1 --counter-profile official-7bit --cycles 1000
 uv run garage-supramatic-sim --serial /dev/serial/by-id/usb-1a86_USB_Single_Serial_5ACC032762-if00 --cycles 1000 --report hil.json
 uv run garage-supramatic-sim --serial /dev/serial/by-id/usb-1a86_USB_Single_Serial_5ACC032762-if00 --cycles 1000 --trace hil-trace.jsonl --report hil.json
 uv run garage-supramatic-sim --serial /dev/serial/by-id/usb-1a86_USB_Single_Serial_5ACC032762-if00 \
@@ -34,6 +35,12 @@ measured during HIL/real-motor phases.
 The optional JSONL trace writes every bus scan, status poll, command, reply, and
 miss with a relative timestamp. Use it to correlate simulator poll numbers with
 logic-analyzer DE windows and decoded UART counters.
+
+By default the simulator uses the official-accessory status counter profile observed in
+the Series-4 capture: `1..127`, wrapping from `0x7f` back to `0x01`. Use
+`--counter-profile zero-based-8bit` only for legacy fixtures or regression comparisons.
+`--slave-id 1` exercises the official-accessory ID seen in the same capture; the project
+default remains ID 2 unless configured otherwise.
 
 For HIL command-path checks, `--expect-button NAME` requires at least one decoded
 status response for each expected virtual button. Valid names currently match the

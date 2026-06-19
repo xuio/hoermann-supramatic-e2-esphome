@@ -18,6 +18,10 @@ This project is released under The Unlicense. It also contains code and protocol
   The canonical original investigation is `hkiam/HCPBridge` under `Investigation/`.
   The repository uses only protocol facts and capture bytes from this corpus, not
   GPL-family implementation code.
+- HCP2 Series-4 ID 1 behavior, 1..127 counter wrapping, and movement/light status
+  vectors from a user-provided decoded official Hörmann accessory capture
+  (`log_2026-06-18_20-22-23.log`). Only curated frame bytes and derived protocol facts
+  are committed; the full local capture is not included.
 
 The original upstream license text kept from the `hoermann_door` lineage is in [LICENSE.upstream-hoermann_door](LICENSE.upstream-hoermann_door).
 

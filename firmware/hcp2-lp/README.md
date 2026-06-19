@@ -47,9 +47,13 @@ Important limits:
   live heartbeat proves the LP responder is stale. Poll counters are diagnostics;
   an isolated missed poll must never trigger an HP-driven LP reload.
 
-The mailbox ABI is currently version 7. In addition to the state seqlock and
+The mailbox ABI is currently version 8. In addition to the config seqlock,
+state seqlock, and
 command epoch/sequence fields, it publishes:
 
+- the HCP2 responder config (`slave_id`, device signature, response delay, and
+  button-press duration) so a surviving LP responder adopts HP/ESPHome config
+  without requiring a reload.
 - command deadlines and an ack result (`executed`, `expired`, `unknown`,
   `busy`) so HP resets cannot replay stale commands silently.
 - an armed stop-trigger block (`epoch`, target position, hard TTL) so the LP can

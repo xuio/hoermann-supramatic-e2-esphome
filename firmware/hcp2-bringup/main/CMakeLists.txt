@@ -30,6 +30,7 @@ set(ulp_lp_core_sources
   "${HCP2_CORE_DIR}/hcp2_frame.c"
   "${HCP2_CORE_DIR}/hcp2_engine.c"
   "${HCP2_CORE_DIR}/hcp2_mailbox.c"
+  "${HCP2_CORE_DIR}/hcp2_responder_runtime.c"
 )
 set(ulp_exp_dep_srcs "hcp2_bringup_main.c")
 

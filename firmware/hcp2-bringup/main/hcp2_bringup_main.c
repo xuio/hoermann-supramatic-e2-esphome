@@ -272,6 +272,10 @@ static bool healthy_lp_running_(hcp2_lp_health_sample_t *before, hcp2_lp_health_
   return probe_lp_health_(before, after) == HCP2_LP_RELOAD_SKIP;
 }
 
+static void write_default_lp_config_(void) {
+  hcp2_lp_mailbox_write_config(lp_mailbox_(), NULL);
+}
+
 static esp_err_t load_and_start_lp_(void) {
   volatile hcp2_lp_mailbox_t *mailbox = lp_mailbox_();
   const size_t blob_size = (size_t) (hcp2_lp_bin_end - hcp2_lp_bin_start);
@@ -284,6 +288,7 @@ static esp_err_t load_and_start_lp_(void) {
   ESP_RETURN_ON_ERROR(init_lp_bus_io_(), TAG, "LP bus IO init failed");
   ESP_RETURN_ON_ERROR(ulp_lp_core_load_binary(hcp2_lp_bin_start, blob_size), TAG, "LP binary load failed");
   hcp2_lp_mailbox_init(mailbox);
+  write_default_lp_config_();
   hcp2_hp_supervisor_begin_session(&s_lp_supervisor, fresh_epoch_());
   ESP_RETURN_ON_ERROR(ulp_lp_core_run(&cfg), TAG, "LP core start failed");
   ESP_LOGI(TAG, "HCP2_LP_LOAD_RELOAD bytes=%u mailbox=0x%08x epoch=%" PRIu32, (unsigned) blob_size,
@@ -301,20 +306,25 @@ static esp_err_t start_or_skip_lp_(void) {
   return load_and_start_lp_();
 #endif
 
+  write_default_lp_config_();
   decision = probe_lp_health_(&before, &after);
   if (decision == HCP2_LP_RELOAD_SKIP) {
+    hcp2_hp_supervisor_begin_session(&s_lp_supervisor, fresh_epoch_());
+    write_default_lp_config_();
     ESP_LOGI(TAG,
              "HCP2_LP_SKIP_RELOAD heartbeat_before=%" PRIu32 " heartbeat_after=%" PRIu32
-             " polls_seen=%" PRIu32 " polls_answered=%" PRIu32,
-             before.heartbeat, after.heartbeat, after.polls_seen, after.polls_answered);
+             " polls_seen=%" PRIu32 " polls_answered=%" PRIu32 " epoch=%" PRIu32,
+             before.heartbeat, after.heartbeat, after.polls_seen, after.polls_answered, s_lp_supervisor.epoch);
     return ESP_OK;
   }
   if (decision == HCP2_LP_RELOAD_DEFER) {
+    hcp2_hp_supervisor_begin_session(&s_lp_supervisor, fresh_epoch_());
+    write_default_lp_config_();
     ESP_LOGW(TAG,
              "HCP2_LP_RELOAD_DEFER heartbeat_before=%" PRIu32 " heartbeat_after=%" PRIu32
-             " state=0x%02" PRIx8 " command=%" PRIu32 "/%" PRIu32,
+             " state=0x%02" PRIx8 " command=%" PRIu32 "/%" PRIu32 " epoch=%" PRIu32,
              before.heartbeat, after.heartbeat, after.drive_state, after.command_ack_sequence,
-             after.command_sequence);
+             after.command_sequence, s_lp_supervisor.epoch);
     return ESP_OK;
   }
 

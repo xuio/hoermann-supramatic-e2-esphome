@@ -250,6 +250,9 @@ jobs:
           uv run garage-hcp2-lp-emu
           --blob firmware/hcp2-bringup/build/esp-idf/main/hcp2_lp/hcp2_lp.bin
           --cycles 200
+          --counter-profile zero-based-8bit
+          --startup-command stop
+          --startup-idle-us 2500000
           --report iss-wokwi-baseline.json
           --trace iss-wokwi-trace.jsonl
 
@@ -407,8 +410,9 @@ jobs:
         if: ${{ env.WOKWI_CLI_TOKEN != '' }}
         run: >
           uv run garage-compare-hcp2-traces
-          --wokwi-log emulation/wokwi/steady-state.full.log
+          --wokwi-log emulation/wokwi/lp-uart-steady-state.full.log
           --iss-report iss-wokwi-baseline.json
+          --optional-event-type de
           --latency-tolerance-us 100000
           --output trace-compare.json
 

@@ -14,7 +14,12 @@ from pathlib import Path
 from tools.supramatic_sim.__main__ import run_once, selftest
 from tools.supramatic_sim import protocol
 from tools.supramatic_sim.door_model import DEFAULT_HALF_POSITION, DEFAULT_VENT_POSITION
-from tools.supramatic_sim.simulator import DEFAULT_MISSED_POLL_THRESHOLD, SupraMaticSimulator
+from tools.supramatic_sim.simulator import (
+    DEFAULT_COUNTER_PROFILE,
+    DEFAULT_MISSED_POLL_THRESHOLD,
+    SupraMaticSimulator,
+    status_counter_for_cycle,
+)
 from tools.supramatic_sim.transport import HOST_RESPONDER, build_host_responder
 
 
@@ -26,6 +31,8 @@ def scenario(**kwargs: object) -> Namespace:
         "cycles": 100,
         "duration_hours": None,
         "speed_factor": 50.0,
+        "slave_id": protocol.SLAVE_ID,
+        "counter_profile": DEFAULT_COUNTER_PROFILE,
         "dut_response_delay_us": 4200,
         "missed_poll_threshold": DEFAULT_MISSED_POLL_THRESHOLD,
         "report": None,
@@ -85,9 +92,48 @@ def test_simulator_writes_per_poll_trace(tmp_path: Path) -> None:
     assert result["verdict"] == "ok"
     events = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()]
     assert any(event["event"] == "bus_scan_tx" for event in events)
-    assert [event["counter"] for event in events if event["event"] == "poll_tx"] == [0, 1, 2]
-    assert [event["counter"] for event in events if event["event"] == "poll_rx"] == [0, 1, 2]
+    assert [event["counter"] for event in events if event["event"] == "poll_tx"] == [1, 2, 3]
+    assert [event["counter"] for event in events if event["event"] == "poll_rx"] == [1, 2, 3]
     assert all("host_rtt_ms" in event for event in events if event["event"] == "poll_rx")
+
+
+def test_simulator_official_counter_profile_wraps_1_to_127(tmp_path: Path) -> None:
+    assert [status_counter_for_cycle(cycle) for cycle in (0, 1, 125, 126, 127, 128)] == [1, 2, 126, 127, 1, 2]
+
+    trace_path = tmp_path / "wrap-trace.jsonl"
+    result = run_once(scenario(pty=False, socketpair=True, cycles=130, speed_factor=5000.0, trace=trace_path))
+
+    assert result["verdict"] == "ok"
+    counters = [
+        event["counter"]
+        for event in (json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines())
+        if event["event"] == "poll_tx"
+    ]
+    assert counters[:3] == [1, 2, 3]
+    assert counters[125:130] == [126, 127, 1, 2, 3]
+
+
+def test_simulator_can_run_official_slave_id_one(tmp_path: Path) -> None:
+    trace_path = tmp_path / "id1-trace.jsonl"
+    result = run_once(
+        scenario(pty=False, socketpair=True, cycles=5, speed_factor=5000.0, slave_id=1, trace=trace_path)
+    )
+
+    assert result["verdict"] == "ok"
+    events = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()]
+    assert next(event for event in events if event["event"] == "bus_scan_tx")["request"].startswith("0117")
+    assert next(event for event in events if event["event"] == "bus_scan_rx")["response"].startswith("0117")
+    assert all(event["request"].startswith("0117") for event in events if event["event"] == "poll_tx")
+    assert all(event["response"].startswith("0117") for event in events if event["event"] == "poll_rx")
+
+
+def test_simulator_keeps_legacy_zero_based_counter_profile(tmp_path: Path) -> None:
+    trace_path = tmp_path / "zero-based-trace.jsonl"
+    result = run_once(scenario(cycles=3, trace=trace_path, counter_profile="zero-based-8bit"))
+
+    assert result["verdict"] == "ok"
+    events = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()]
+    assert [event["counter"] for event in events if event["event"] == "poll_tx"] == [0, 1, 2]
 
 
 def test_simulator_writes_low_volume_progress(tmp_path: Path) -> None:

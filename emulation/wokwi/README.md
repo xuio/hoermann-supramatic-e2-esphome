@@ -154,20 +154,24 @@ records the official-example control run, IDF rebuild, minimal LP shared-variabl
 probe, HP-UART positive control, and LP-UART register probe in a form suitable
 for `wokwi/wokwi-features`.
 
-Run the HP-fallback steady-state scenario and ISS frame comparison:
+Run the native LP-UART steady-state scenario and ISS frame comparison:
 
 ```sh
 uv run garage-hcp2-lp-emu \
   --blob firmware/hcp2-bringup/build/esp-idf/main/hcp2_lp/hcp2_lp.bin \
   --cycles 200 \
+  --counter-profile zero-based-8bit \
+  --startup-command stop \
+  --startup-idle-us 2500000 \
   --report iss-wokwi-baseline.json \
   --trace iss-wokwi-trace.jsonl
 wokwi-cli emulation/wokwi \
-  --scenario steady-state.yaml \
-  --fail-text HCP2_WOKWI_VERDICT_FAIL | tee emulation/wokwi/steady-state.full.log
+  --scenario lp-uart-steady-state.yaml \
+  --fail-text HCP2_WOKWI_VERDICT_FAIL | tee emulation/wokwi/lp-uart-steady-state.full.log
 uv run garage-compare-hcp2-traces \
-  --wokwi-log emulation/wokwi/steady-state.full.log \
+  --wokwi-log emulation/wokwi/lp-uart-steady-state.full.log \
   --iss-report iss-wokwi-baseline.json \
+  --optional-event-type de \
   --latency-tolerance-us 100000 \
   --output trace-compare.json
 ```

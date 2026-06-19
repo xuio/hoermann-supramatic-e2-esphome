@@ -9,4 +9,4 @@ steps:
   - wait-serial: "HCP2_RESTART_NOW"
   - wait-serial: "HCP2_BRINGUP_MODE hp-fallback"
   - wait-serial: "HCP2_BRINGUP_READY"
-  - delay: 18s
+  - delay: 24s

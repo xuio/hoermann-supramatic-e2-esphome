@@ -41,7 +41,7 @@ hcp2bridge:
   re_pin: ${hcp2_re_pin}
   uart_num: 1
   slave_id: 2
-  device_signature: "00000205043010FFA855"
+  device_signature: "00000205043010FFA845"
   response_delay: 4200us
   button_press_duration: 100ms
   hp_fallback: false

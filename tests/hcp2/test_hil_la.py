@@ -352,6 +352,17 @@ def test_logic_analyzer_rejects_status_counter_gap(tmp_path: Path) -> None:
     assert report["status_counter_gaps"][0]["missing"] == [1]
 
 
+def test_logic_analyzer_accepts_official_7bit_status_counter_wrap(tmp_path: Path) -> None:
+    capture = tmp_path / "official-wrap.csv"
+    write_csv(capture, uart_8e1_multi_frame_rows([status_response(0x7E), status_response(0x7F), status_response(0x01)]))
+
+    windows = decode_uart_windows(load_samples(capture, {"de": "de", "re": "re", "tx": "tx", "rx": "rx"}))
+    report = summarize_decoded_uart(windows, ignore_before_us=0.0, baud=57600)
+
+    assert report["verdict"] == "ok"
+    assert report["status_counter_gap_count"] == 0
+
+
 def test_logic_analyzer_verify_combines_electrical_and_uart_verdict(tmp_path: Path) -> None:
     capture = tmp_path / "verify.csv"
     write_csv(capture, uart_8e1_multi_frame_rows([status_response(0), status_response(1)]))

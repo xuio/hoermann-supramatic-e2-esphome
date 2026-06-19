@@ -12,11 +12,7 @@ REG_STATUS_READ = 0x9CB9
 REG_COMMAND_WRITE = 0x9C41
 REG_BROADCAST_STATUS = 0x9D31
 
-SCAN_RESPONSE = bytes.fromhex("02170A00000205043010FFA8550F13")
-COMMAND_RESPONSE_BY_COUNTER = {
-    0x02: bytes.fromhex("021704020004FD08DE"),
-    0x1C: bytes.fromhex("0217041C0004FD0EF6"),
-}
+DEFAULT_SCAN_SIGNATURE = bytes.fromhex("00000205043010FFA845")
 BUTTON_STATUS_PHASES = {
     "open": {"press": (0x02, 0x10, 0x00), "release": (0x01, 0x10, 0x00)},
     "close": {"press": (0x02, 0x20, 0x00), "release": (0x01, 0x20, 0x00)},
@@ -90,6 +86,10 @@ def bus_scan_request(slave_id: int = SLAVE_ID) -> bytes:
     return append_crc(payload)
 
 
+def scan_response(slave_id: int = SLAVE_ID, signature: bytes = DEFAULT_SCAN_SIGNATURE) -> bytes:
+    return append_crc(bytes([slave_id, FC_READ_WRITE_MULTIPLE_REGISTERS, len(signature)]) + signature)
+
+
 def status_poll(counter: int, slave_id: int = SLAVE_ID) -> bytes:
     payload = bytes(
         [
@@ -134,6 +134,29 @@ def light_command(counter: int, enabled: bool, slave_id: int = SLAVE_ID) -> byte
         ]
     )
     return append_crc(payload)
+
+
+def command_response(slave_id: int = SLAVE_ID, counter: int = 0, command: int = 0x04) -> bytes:
+    return append_crc(
+        bytes(
+            [
+                slave_id,
+                FC_READ_WRITE_MULTIPLE_REGISTERS,
+                0x04,
+                counter & 0xFF,
+                0x00,
+                command & 0xFF,
+                0xFD,
+            ]
+        )
+    )
+
+
+SCAN_RESPONSE = scan_response(SLAVE_ID)
+COMMAND_RESPONSE_BY_COUNTER = {
+    0x02: command_response(SLAVE_ID, 0x02),
+    0x1C: command_response(SLAVE_ID, 0x1C),
+}
 
 
 def broadcast_status(state: BroadcastState) -> bytes:

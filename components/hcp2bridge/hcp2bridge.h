@@ -199,6 +199,7 @@ class HCP2Bridge : public Component {
   static void IRAM_ATTR esp32_realtime_finish_tx_from_isr_(HCP2Bridge *self, uint32_t now_us, bool deadman);
   bool setup_lp_core_();
   esp_err_t init_lp_bus_io_();
+  void write_lp_config_();
   esp_err_t load_and_start_lp_();
   esp_err_t start_or_skip_lp_();
   hcp2_lp_reload_decision_t probe_lp_health_(hcp2_lp_health_sample_t *before, hcp2_lp_health_sample_t *after);

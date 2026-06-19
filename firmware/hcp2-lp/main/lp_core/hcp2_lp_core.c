@@ -76,22 +76,25 @@ static void trace_(uint16_t event, uint16_t value) {
   hcp2_responder_runtime_trace(&runtime, event, value, port_now_us_(NULL));
 }
 
-static uint64_t cycle_count_(void) {
-  uint32_t high_before;
-  uint32_t low;
-  uint32_t high_after;
-
-  do {
-    high_before = RV_READ_CSR(mcycleh);
-    low = RV_READ_CSR(mcycle);
-    high_after = RV_READ_CSR(mcycleh);
-  } while (high_before != high_after);
-
-  return ((uint64_t) high_before << 32) | low;
-}
-
 __attribute__((noinline)) uint32_t hcp2_lp_now_us(void) {
-  return (uint32_t) (cycle_count_() / HCP2_LP_CPU_CYCLES_PER_US);
+  static uint32_t last_cycle;
+  static uint32_t now_us;
+  static uint8_t cycle_remainder;
+  static uint8_t initialized;
+  const uint32_t cycle = RV_READ_CSR(mcycle);
+
+  if (!initialized) {
+    last_cycle = cycle;
+    initialized = 1u;
+    return now_us;
+  }
+
+  const uint32_t delta = cycle - last_cycle;
+  const uint32_t elapsed_cycles = delta + cycle_remainder;
+  last_cycle = cycle;
+  now_us += elapsed_cycles / HCP2_LP_CPU_CYCLES_PER_US;
+  cycle_remainder = (uint8_t) (elapsed_cycles % HCP2_LP_CPU_CYCLES_PER_US);
+  return now_us;
 }
 
 static uint32_t port_now_us_(void *user) {
@@ -223,6 +226,52 @@ static void repair_mailbox_header_if_needed_(void) {
   mailbox_repair_count++;
   health_flags = (uint16_t) (health_flags | HCP2_LP_HEALTH_FLAG_MAILBOX_REPAIR);
   trace_(HCP2_LP_TRACE_HEALTH, 0xA000u);
+}
+
+static uint8_t read_mailbox_config_(hcp2_engine_config_t *out) {
+  volatile hcp2_lp_mailbox_t *mailbox = mailbox_();
+  hcp2_engine_config_t snapshot;
+  uint32_t before;
+  uint32_t after;
+  uint8_t attempt;
+  uint8_t i;
+
+  if (out == NULL) {
+    return 0u;
+  }
+
+  for (attempt = 0u; attempt < 4u; attempt++) {
+    uint8_t any_signature = 0u;
+    before = mailbox->config_sequence;
+    if (before == 0u || (before & 1u) != 0u) {
+      continue;
+    }
+
+    snapshot.slave_id = mailbox->config_slave_id;
+    for (i = 0u; i < HCP2_SIGNATURE_LEN; i++) {
+      snapshot.signature[i] = mailbox->config_signature[i];
+      any_signature = (uint8_t) (any_signature | snapshot.signature[i]);
+    }
+    snapshot.response_delay_us = mailbox->config_response_delay_us;
+    snapshot.button_press_us = mailbox->config_button_press_us;
+
+    after = mailbox->config_sequence;
+    if (before == after && (after & 1u) == 0u && snapshot.slave_id != 0u &&
+        any_signature != 0u && snapshot.response_delay_us != 0u && snapshot.button_press_us != 0u) {
+      *out = snapshot;
+      return 1u;
+    }
+  }
+
+  return 0u;
+}
+
+static void sync_mailbox_config_(void) {
+  hcp2_engine_config_t config;
+
+  if (read_mailbox_config_(&config)) {
+    engine.config = config;
+  }
 }
 
 static void sample_rx_fifo_health_(void) {
@@ -408,6 +457,7 @@ static void init_(void) {
   port.de_set = port_de_set_;
 
   hcp2_engine_config_default(&config);
+  (void) read_mailbox_config_(&config);
   hcp2_engine_init(&engine, &port, &config);
   hcp2_responder_runtime_init(&runtime, &engine, mailbox);
   ulp_lp_core_gpio_init(HCP2_LP_DE_IO);
@@ -433,6 +483,7 @@ int main(void) {
     const uint32_t loop_start_us = port_now_us_(NULL);
     mailbox->heartbeat++;
     repair_mailbox_header_if_needed_();
+    sync_mailbox_config_();
     trace_rx_gpio_(loop_start_us);
     drain_uart_();
     hcp2_responder_runtime_note_status_poll(&runtime, port_now_us_(NULL));

@@ -27,6 +27,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Legacy alias for --right-trace with label 'iss'",
     )
     parser.add_argument("--latency-tolerance-us", type=float, default=2500.0)
+    parser.add_argument(
+        "--optional-event-type",
+        action="append",
+        choices=REQUIRED_TYPES,
+        default=[],
+        help="Do not require or count-compare this event type; useful for traces that cannot expose DE",
+    )
     parser.add_argument("--output", type=Path, help="Write a JSON comparison report")
     args = parser.parse_args(argv)
 
@@ -113,6 +120,7 @@ def compare(args: argparse.Namespace) -> tuple[bool, dict[str, Any]]:
     right_label = str(args.right_label)
     left_counts = count_by_type(left)
     right_counts = count_by_type(right)
+    optional_types = set(args.optional_event_type or [])
     failures: list[str] = []
 
     if not left:
@@ -121,6 +129,8 @@ def compare(args: argparse.Namespace) -> tuple[bool, dict[str, Any]]:
         failures.append(f"{right_label} trace is empty")
 
     for event_type in REQUIRED_TYPES:
+        if event_type in optional_types:
+            continue
         if left_counts[event_type] == 0:
             failures.append(f"{left_label} missing {event_type} events")
         if right_counts[event_type] == 0:
@@ -166,6 +176,7 @@ def compare(args: argparse.Namespace) -> tuple[bool, dict[str, Any]]:
         "right_latency_us": right_latency,
         "latency_delta_us": latency_delta,
         "latency_tolerance_us": args.latency_tolerance_us,
+        "optional_event_types": sorted(optional_types),
     }
     return not failures, report
 

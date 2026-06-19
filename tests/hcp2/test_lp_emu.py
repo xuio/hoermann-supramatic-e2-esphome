@@ -111,6 +111,31 @@ def read_u16(emu: LPEmulator, offset: int) -> int:
     return struct.unpack("<H", emu.uc.mem_read(MAILBOX_ADDR + offset, 2))[0]
 
 
+def broadcast_scan_request(candidate_slave_id: int) -> bytes:
+    payload = bytes(
+        [
+            0x00,
+            protocol.FC_READ_WRITE_MULTIPLE_REGISTERS,
+            0x9C,
+            0xB9,
+            0x00,
+            0x05,
+            0x9C,
+            0x41,
+            0x00,
+            0x03,
+            0x06,
+            0x00,
+            0x02,
+            0x00,
+            0x00,
+            0x01,
+            candidate_slave_id & 0xFF,
+        ]
+    )
+    return protocol.append_crc(payload)
+
+
 def inject_command(emu: LPEmulator, *, epoch: int, sequence: int, command_id: int) -> None:
     write_u32(emu, OFF_COMMAND_EPOCH, epoch)
     write_u8(emu, OFF_COMMAND_ID, command_id)
@@ -154,6 +179,39 @@ def test_lp_emulator_health_counters_have_headroom_on_normal_poll() -> None:
     assert read_u32(emu, OFF_STUCK_DE_COUNT) == 0
     assert read_u32(emu, OFF_MAX_RESPONSE_SCHEDULE_TO_TX_START_US) >= 4200
     assert read_u32(emu, OFF_MAX_RESPONSE_TX_US) > 0
+
+
+def test_lp_emulator_uses_mailbox_slave_id_one_for_scan_and_polls() -> None:
+    emu = require_emulator()
+    emu.configure_hcp2(slave_id=1)
+    emu.boot()
+
+    emu.write_uart(protocol.bus_scan_request(1))
+    response = emu.read_uart_available(0.05)
+    assert response == protocol.scan_response(1)
+
+    emu.write_uart(protocol.status_poll(0x21, slave_id=1))
+    assert emu.run_until(lambda: read_u32(emu, OFF_POLLS_ANSWERED) >= 1, instruction_budget=4_000_000)
+    response = emu.read_uart_available(0.05)
+    assert protocol.crc_ok(response)
+    assert protocol.decode_response_kind(response) == "status"
+    assert protocol.response_counter(response) == 0x21
+    assert response[0] == 1
+
+    polls_seen = read_u32(emu, OFF_POLLS_SEEN)
+    polls_answered = read_u32(emu, OFF_POLLS_ANSWERED)
+    emu.write_uart(protocol.status_poll(0x22, slave_id=2))
+    emu.run(250_000)
+    assert emu.read_uart_available(0.01) == b""
+    assert read_u32(emu, OFF_POLLS_SEEN) == polls_seen
+    assert read_u32(emu, OFF_POLLS_ANSWERED) == polls_answered
+
+    emu.write_uart(broadcast_scan_request(2))
+    assert emu.read_uart_available(0.02) == b""
+
+    emu.write_uart(broadcast_scan_request(1))
+    response = emu.read_uart_available(0.05)
+    assert response == protocol.scan_response(1)
 
 
 def test_lp_emulator_repairs_mailbox_header_without_clearing_session() -> None:

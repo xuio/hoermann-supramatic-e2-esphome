@@ -11,6 +11,8 @@ from .door_model import (
     DoorModel,
 )
 from .simulator import (
+    COUNTER_PROFILES,
+    DEFAULT_COUNTER_PROFILE,
     DEFAULT_DOOR_TRAVEL_CYCLES,
     DEFAULT_MISSED_POLL_THRESHOLD,
     DEFAULT_SPEED_FACTOR,
@@ -18,6 +20,7 @@ from .simulator import (
     SupraMaticSimulator,
     cycles_for_duration_hours,
 )
+from . import protocol
 from .transport import PtyHostTransport, SerialTransport, SocketPairHostTransport
 
 
@@ -47,6 +50,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run for this approximate wall-clock duration at the selected speed factor; use --speed-factor 1 for real-time HIL",
     )
     parser.add_argument("--speed-factor", type=float, default=DEFAULT_SPEED_FACTOR)
+    parser.add_argument("--slave-id", type=int, default=protocol.SLAVE_ID, help="HCP2 accessory slave ID")
+    parser.add_argument(
+        "--counter-profile",
+        choices=sorted(COUNTER_PROFILES),
+        default=DEFAULT_COUNTER_PROFILE,
+        help="Motor status counter sequence to emit",
+    )
     parser.add_argument("--dut-response-delay-us", type=int, default=4200)
     parser.add_argument("--missed-poll-threshold", type=int, default=DEFAULT_MISSED_POLL_THRESHOLD)
     parser.add_argument("--report", type=Path)
@@ -114,11 +124,13 @@ def run_once(args: argparse.Namespace) -> dict[str, object]:
         transport = SocketPairHostTransport(
             response_delay_us=args.dut_response_delay_us,
             button_press_us=scaled_button_press_us(args.speed_factor),
+            slave_id=args.slave_id,
         )
     else:
         transport = PtyHostTransport(
             response_delay_us=args.dut_response_delay_us,
             button_press_us=scaled_button_press_us(args.speed_factor),
+            slave_id=args.slave_id,
         )
 
     try:
@@ -136,6 +148,7 @@ def run_once(args: argparse.Namespace) -> dict[str, object]:
         )
         simulator = SupraMaticSimulator(
             transport,
+            slave_id=args.slave_id,
             speed_factor=args.speed_factor,
             missed_poll_threshold=args.missed_poll_threshold,
             expected_buttons=set(args.expect_button),
@@ -155,6 +168,7 @@ def run_once(args: argparse.Namespace) -> dict[str, object]:
             fault_cycles=set(getattr(args, "fault_cycle", [])),
             goto_position=getattr(args, "goto_position_raw", 80),
             emulate_commands=getattr(args, "emulate_esphome_commands", False),
+            counter_profile=getattr(args, "counter_profile", DEFAULT_COUNTER_PROFILE),
         )
         report = simulator.run(cycles, faults=set(args.fault), command=args.command, duration_s=duration_s)
         if args.report:
@@ -175,6 +189,8 @@ def selftest() -> int:
             cycles=50,
             duration_hours=None,
             speed_factor=50.0,
+            slave_id=protocol.SLAVE_ID,
+            counter_profile=DEFAULT_COUNTER_PROFILE,
             dut_response_delay_us=4200,
             missed_poll_threshold=DEFAULT_MISSED_POLL_THRESHOLD,
             report=None,
@@ -209,6 +225,8 @@ def selftest() -> int:
             cycles=50,
             duration_hours=None,
             speed_factor=50.0,
+            slave_id=protocol.SLAVE_ID,
+            counter_profile=DEFAULT_COUNTER_PROFILE,
             dut_response_delay_us=4200,
             missed_poll_threshold=DEFAULT_MISSED_POLL_THRESHOLD,
             report=None,
@@ -262,6 +280,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--cycles must be positive")
     if args.speed_factor <= 0:
         parser.error("--speed-factor must be positive")
+    if not 1 <= args.slave_id <= 247:
+        parser.error("--slave-id must be in Modbus range 1..247")
     if args.dut_response_delay_us < 0:
         parser.error("--dut-response-delay-us must not be negative")
     if args.progress_interval_s < 0:

@@ -15,6 +15,64 @@ static void zero_memory_(void *dest, size_t len) {
   }
 }
 
+static void copy_memory_(void *dest, const void *src, size_t len) {
+  uint8_t *out = (uint8_t *) dest;
+  const uint8_t *in = (const uint8_t *) src;
+  while (len-- > 0u) {
+    *out++ = *in++;
+  }
+}
+
+static uint8_t signature_is_zero_(const uint8_t signature[HCP2_SIGNATURE_LEN]) {
+  uint8_t i;
+
+  if (signature == 0) {
+    return 1u;
+  }
+  for (i = 0u; i < HCP2_SIGNATURE_LEN; i++) {
+    if (signature[i] != 0u) {
+      return 0u;
+    }
+  }
+  return 1u;
+}
+
+static void default_config_(hcp2_engine_config_t *out) {
+  static const uint8_t default_signature[HCP2_SIGNATURE_LEN] = {
+      0x00u, 0x00u, 0x02u, 0x05u, 0x04u, 0x30u, 0x10u, 0xFFu, 0xA8u, 0x45u};
+
+  if (out == 0) {
+    return;
+  }
+  out->slave_id = HCP2_DEFAULT_SLAVE_ID;
+  copy_memory_(out->signature, default_signature, HCP2_SIGNATURE_LEN);
+  out->response_delay_us = HCP2_DEFAULT_RESPONSE_DELAY_US;
+  out->button_press_us = HCP2_DEFAULT_BUTTON_PRESS_US;
+}
+
+static void normalize_config_(const hcp2_engine_config_t *config, hcp2_engine_config_t *out) {
+  if (out == 0) {
+    return;
+  }
+
+  default_config_(out);
+  if (config == 0) {
+    return;
+  }
+  if (config->slave_id != 0u) {
+    out->slave_id = config->slave_id;
+  }
+  if (!signature_is_zero_(config->signature)) {
+    copy_memory_(out->signature, config->signature, HCP2_SIGNATURE_LEN);
+  }
+  if (config->response_delay_us != 0u) {
+    out->response_delay_us = config->response_delay_us;
+  }
+  if (config->button_press_us != 0u) {
+    out->button_press_us = config->button_press_us;
+  }
+}
+
 void hcp2_lp_mailbox_init(volatile hcp2_lp_mailbox_t *mailbox) {
   if (mailbox == 0) {
     return;
@@ -34,6 +92,70 @@ void hcp2_lp_mailbox_repair_header(volatile hcp2_lp_mailbox_t *mailbox) {
   mailbox->struct_size = HCP2_LP_MAILBOX_SIZE;
   mailbox->firmware_version = HCP2_LP_FIRMWARE_VERSION;
   memory_barrier_();
+}
+
+void hcp2_lp_mailbox_write_config(volatile hcp2_lp_mailbox_t *mailbox,
+                                  const hcp2_engine_config_t *config) {
+  hcp2_engine_config_t normalized;
+  uint32_t sequence;
+  uint8_t i;
+
+  if (mailbox == 0) {
+    return;
+  }
+
+  normalize_config_(config, &normalized);
+  sequence = mailbox->config_sequence + 1u;
+  if ((sequence & 1u) == 0u) {
+    sequence++;
+  }
+
+  mailbox->config_sequence = sequence;
+  memory_barrier_();
+  mailbox->config_slave_id = normalized.slave_id;
+  for (i = 0u; i < HCP2_SIGNATURE_LEN; i++) {
+    mailbox->config_signature[i] = normalized.signature[i];
+  }
+  mailbox->config_reserved0 = 0u;
+  mailbox->config_response_delay_us = normalized.response_delay_us;
+  mailbox->config_button_press_us = normalized.button_press_us;
+  memory_barrier_();
+  mailbox->config_sequence = sequence + 1u;
+}
+
+uint8_t hcp2_lp_mailbox_read_config(const volatile hcp2_lp_mailbox_t *mailbox,
+                                    hcp2_engine_config_t *out) {
+  hcp2_engine_config_t snapshot;
+  uint32_t before;
+  uint32_t after;
+  uint8_t attempt;
+  uint8_t i;
+
+  if (mailbox == 0 || out == 0) {
+    return 0u;
+  }
+
+  for (attempt = 0u; attempt < 4u; attempt++) {
+    before = mailbox->config_sequence;
+    if (before == 0u || (before & 1u) != 0u) {
+      continue;
+    }
+    memory_barrier_();
+    snapshot.slave_id = mailbox->config_slave_id;
+    for (i = 0u; i < HCP2_SIGNATURE_LEN; i++) {
+      snapshot.signature[i] = mailbox->config_signature[i];
+    }
+    snapshot.response_delay_us = mailbox->config_response_delay_us;
+    snapshot.button_press_us = mailbox->config_button_press_us;
+    memory_barrier_();
+    after = mailbox->config_sequence;
+    if (before == after && (after & 1u) == 0u) {
+      normalize_config_(&snapshot, out);
+      return 1u;
+    }
+  }
+
+  return 0u;
 }
 
 void hcp2_lp_mailbox_publish_state(volatile hcp2_lp_mailbox_t *mailbox, const hcp2_drive_status_t *state,

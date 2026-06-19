@@ -109,6 +109,16 @@ static uint8_t build_status_poll(uint8_t counter, uint8_t *out) {
   return 17;
 }
 
+static uint8_t build_bus_scan(uint8_t address, uint8_t candidate_slave_id, uint8_t *out) {
+  static const uint8_t template_frame[] = {
+      0x02, 0x17, 0x9C, 0xB9, 0x00, 0x05, 0x9C, 0x41, 0x00, 0x03, 0x06, 0x00, 0x02, 0x00, 0x00, 0x01, 0x02};
+  memcpy(out, template_frame, sizeof(template_frame));
+  out[0] = address;
+  out[16] = candidate_slave_id;
+  hcp2_crc16_append(out, 17);
+  return 19;
+}
+
 static uint8_t build_broadcast_status(uint8_t target, uint8_t current, uint8_t state, uint8_t state_detail,
                                       uint8_t light_raw, uint8_t *out) {
   memset(out, 0, HCP2_MAX_FRAME_LEN);
@@ -179,7 +189,7 @@ static void test_builders(void) {
   hcp2_default_signature(signature);
 
   assert(hcp2_frame_build_scan_response(2, signature, out) == HCP2_SCAN_RESPONSE_LEN);
-  expect_hex(out, HCP2_SCAN_RESPONSE_LEN, "02170A00000205043010FFA8550F13");
+  expect_hex(out, HCP2_SCAN_RESPONSE_LEN, "02170A00000205043010FFA8450EDF");
 
   assert(hcp2_frame_build_status_response(2, 0x3E, 0x03, HCP2_BUTTON_NONE, 0, out) ==
          HCP2_STATUS_RESPONSE_LEN);
@@ -194,6 +204,8 @@ static void test_bus_scan_response(void) {
   hcp2_port_t port;
   hcp2_engine_config_t config;
   hcp2_engine_t engine;
+  uint8_t frame[HCP2_MAX_FRAME_LEN];
+  uint8_t len;
 
   memset(&test_port, 0, sizeof(test_port));
   port = make_port(&test_port);
@@ -208,10 +220,37 @@ static void test_bus_scan_response(void) {
   test_port.now_us = HCP2_DEFAULT_RESPONSE_DELAY_US;
   hcp2_engine_poll(&engine);
   assert(test_port.tx_count == 1);
-  expect_hex(test_port.tx[0], test_port.tx_len[0], "02170A00000205043010FFA8550F13");
+  expect_hex(test_port.tx[0], test_port.tx_len[0], "02170A00000205043010FFA8450EDF");
   assert(test_port.de_event_count == 2);
   assert(test_port.de_events[0] == 1);
   assert(test_port.de_events[1] == 0);
+
+  hcp2_engine_init(&engine, &port, &config);
+  memset(&test_port, 0, sizeof(test_port));
+  len = build_bus_scan(0u, 2u, frame);
+  feed_bytes(&engine, frame, len);
+  test_port.now_us = HCP2_DEFAULT_RESPONSE_DELAY_US;
+  hcp2_engine_poll(&engine);
+  assert(test_port.tx_count == 1);
+  expect_hex(test_port.tx[0], test_port.tx_len[0], "02170A00000205043010FFA8450EDF");
+
+  hcp2_engine_init(&engine, &port, &config);
+  memset(&test_port, 0, sizeof(test_port));
+  len = build_bus_scan(0u, 1u, frame);
+  feed_bytes(&engine, frame, len);
+  test_port.now_us = HCP2_DEFAULT_RESPONSE_DELAY_US;
+  hcp2_engine_poll(&engine);
+  assert(test_port.tx_count == 0);
+
+  hcp2_engine_config_default(&config);
+  config.slave_id = 1u;
+  config.response_delay_us = 0u;
+  hcp2_engine_init(&engine, &port, &config);
+  len = build_bus_scan(0u, 1u, frame);
+  feed_bytes(&engine, frame, len);
+  hcp2_engine_poll(&engine);
+  assert(test_port.tx_count == 1);
+  expect_hex(test_port.tx[0], test_port.tx_len[0], "01170A00000205043010FFA8450B1C");
 }
 
 static void test_status_poll_idle_response(void) {
@@ -577,6 +616,8 @@ static void test_mailbox_layout_and_reload_decision(void) {
   hcp2_lp_mailbox_t mailbox;
   hcp2_lp_health_sample_t before;
   hcp2_lp_health_sample_t after;
+  hcp2_engine_config_t config;
+  hcp2_engine_config_t read_config;
 
   hcp2_lp_mailbox_init(&mailbox);
   assert(HCP2_LP_MAILBOX_ADDR == 0x50002400u);
@@ -585,6 +626,28 @@ static void test_mailbox_layout_and_reload_decision(void) {
   assert(mailbox.abi_version == HCP2_LP_MAILBOX_ABI_VERSION);
   assert(mailbox.struct_size == HCP2_LP_MAILBOX_SIZE);
   assert(mailbox.firmware_version == HCP2_LP_FIRMWARE_VERSION);
+  assert(!hcp2_lp_mailbox_read_config(&mailbox, &read_config));
+
+  hcp2_engine_config_default(&config);
+  config.slave_id = 1u;
+  config.signature[9] = 0x44u;
+  config.response_delay_us = 4300u;
+  config.button_press_us = 125000u;
+  hcp2_lp_mailbox_write_config(&mailbox, &config);
+  assert((mailbox.config_sequence & 1u) == 0u);
+  assert(hcp2_lp_mailbox_read_config(&mailbox, &read_config));
+  assert(read_config.slave_id == 1u);
+  assert(read_config.signature[9] == 0x44u);
+  assert(read_config.response_delay_us == 4300u);
+  assert(read_config.button_press_us == 125000u);
+
+  memset(&config, 0, sizeof(config));
+  hcp2_lp_mailbox_write_config(&mailbox, &config);
+  assert(hcp2_lp_mailbox_read_config(&mailbox, &read_config));
+  assert(read_config.slave_id == HCP2_DEFAULT_SLAVE_ID);
+  assert(read_config.signature[9] == 0x45u);
+  assert(read_config.response_delay_us == HCP2_DEFAULT_RESPONSE_DELAY_US);
+  assert(read_config.button_press_us == HCP2_DEFAULT_BUTTON_PRESS_US);
 
   hcp2_lp_mailbox_sample_health(&mailbox, &before);
   after = before;

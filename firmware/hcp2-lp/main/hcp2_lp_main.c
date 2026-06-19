@@ -55,6 +55,8 @@ static bool healthy_lp_running_(void) {
   hcp2_lp_health_sample_t before;
   hcp2_lp_health_sample_t after;
 
+  hcp2_lp_mailbox_write_config(mailbox, NULL);
+
   hcp2_lp_mailbox_sample_health(mailbox, &before);
   vTaskDelay(pdMS_TO_TICKS(20));
   hcp2_lp_mailbox_sample_health(mailbox, &after);
@@ -74,6 +76,7 @@ static esp_err_t load_and_start_lp_(void) {
   ESP_RETURN_ON_ERROR(init_bus_io_(), TAG, "bus IO init failed");
   ESP_RETURN_ON_ERROR(ulp_lp_core_load_binary(hcp2_lp_bin_start, blob_size), TAG, "LP binary load failed");
   hcp2_lp_mailbox_init(mailbox);
+  hcp2_lp_mailbox_write_config(mailbox, NULL);
   ESP_RETURN_ON_ERROR(ulp_lp_core_run(&cfg), TAG, "LP core start failed");
   ESP_LOGI(TAG, "loaded hcp2_lp blob (%u bytes), mailbox=0x%08x", (unsigned) blob_size,
            (unsigned) HCP2_LP_MAILBOX_ADDR);

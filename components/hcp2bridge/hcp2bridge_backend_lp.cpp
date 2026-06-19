@@ -101,6 +101,11 @@ esp_err_t HCP2Bridge::init_lp_bus_io_() {
   return lp_core_uart_init(&uart_cfg);
 }
 
+void HCP2Bridge::write_lp_config_() {
+  volatile hcp2_lp_mailbox_t *mailbox = (volatile hcp2_lp_mailbox_t *) HCP2_LP_MAILBOX_ADDR;
+  hcp2_lp_mailbox_write_config(mailbox, &this->config_);
+}
+
 hcp2_lp_reload_decision_t HCP2Bridge::probe_lp_health_(hcp2_lp_health_sample_t *before,
                                                        hcp2_lp_health_sample_t *after) {
   hcp2_lp_health_sample_t before_local;
@@ -134,6 +139,7 @@ esp_err_t HCP2Bridge::load_and_start_lp_() {
   err = ulp_lp_core_load_binary((const uint8_t *) hcp2_lp_blob_data, (size_t) hcp2_lp_blob_data_len);
   if (err != ESP_OK) return err;
   hcp2_lp_mailbox_init(mailbox);
+  this->write_lp_config_();
   hcp2_hp_supervisor_begin_session(&this->lp_supervisor_, this->fresh_epoch_());
   err = ulp_lp_core_run(&cfg);
   if (err != ESP_OK) return err;
@@ -145,9 +151,11 @@ esp_err_t HCP2Bridge::load_and_start_lp_() {
 esp_err_t HCP2Bridge::start_or_skip_lp_() {
   hcp2_lp_health_sample_t before;
   hcp2_lp_health_sample_t after;
+  this->write_lp_config_();
   const hcp2_lp_reload_decision_t decision = this->probe_lp_health_(&before, &after);
   if (decision == HCP2_LP_RELOAD_SKIP) {
     hcp2_hp_supervisor_begin_session(&this->lp_supervisor_, this->fresh_epoch_());
+    this->write_lp_config_();
     ESP_LOGI(TAG,
              "HCP2_LP_SKIP_RELOAD heartbeat_before=%" PRIu32 " heartbeat_after=%" PRIu32
              " polls_seen=%" PRIu32 " polls_answered=%" PRIu32 " epoch=%" PRIu32,
@@ -157,6 +165,7 @@ esp_err_t HCP2Bridge::start_or_skip_lp_() {
   }
   if (decision == HCP2_LP_RELOAD_DEFER) {
     hcp2_hp_supervisor_begin_session(&this->lp_supervisor_, this->fresh_epoch_());
+    this->write_lp_config_();
     ESP_LOGW(TAG,
              "HCP2_LP_RELOAD_DEFER heartbeat_before=%" PRIu32 " heartbeat_after=%" PRIu32
              " state=0x%02" PRIx8 " command=%" PRIu32 "/%" PRIu32 " epoch=%" PRIu32,
@@ -189,6 +198,8 @@ bool HCP2Bridge::setup_lp_core_() {
 }
 
 esp_err_t HCP2Bridge::init_lp_bus_io_() { return ESP_FAIL; }
+
+void HCP2Bridge::write_lp_config_() {}
 
 esp_err_t HCP2Bridge::load_and_start_lp_() { return ESP_FAIL; }
 

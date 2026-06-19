@@ -13,6 +13,10 @@ Provenance:
 - SHA-256: `9130bf43f433d95bf9dc32f1449b854355e5fd5a94c63b0d79b54e556eeb1567`
 - Original corpus path inside the zip: `Investigation/records/dump.zip` -> `dump2.txt`
 - Canonical original investigation repository: `hkiam/HCPBridge`
+- Local official-accessory capture: user-provided decoded Hörmann Series-4 accessory log
+  `/Users/moritz/Downloads/log_2026-06-18_20-22-23.log`. Only a curated subset is
+  committed in `official_accessory_series4_frames.jsonl`; the full local log is not
+  committed.
 
 The bytes here are used as protocol facts and captures only. Do not copy GPL-family
 reference implementation code into this repository.
@@ -24,3 +28,5 @@ Fixture coverage:
 - light on/off command requests and responses
 - virtual button press/release encodings for open, close, stop, vent, half-open, and light
 - representative broadcast status frames for light state and door open/close ramps
+- official Series-4 ID 1 traffic, 1..127 status-counter behavior, light command frames,
+  and vent/open/close/light movement/status vectors

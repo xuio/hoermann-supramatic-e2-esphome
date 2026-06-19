@@ -27,6 +27,8 @@ DEFAULT_MISSED_POLL_THRESHOLD = 5
 DEFAULT_SPEED_FACTOR = 20.0
 DEFAULT_RESPONSE_TIMEOUT_S = 0.03
 DEFAULT_DOOR_TRAVEL_CYCLES = 260
+DEFAULT_COUNTER_PROFILE = "official-7bit"
+COUNTER_PROFILES = {"official-7bit", "zero-based-8bit"}
 
 
 SCENARIOS = {
@@ -179,6 +181,16 @@ def cycles_for_duration_hours(duration_hours: float, speed_factor: float) -> int
     return max(1, math.ceil((duration_hours * 3600.0 / cycle_s) * speed_factor))
 
 
+def status_counter_for_cycle(cycle: int, profile: str = DEFAULT_COUNTER_PROFILE) -> int:
+    if cycle < 0:
+        raise ValueError("cycle must not be negative")
+    if profile == "official-7bit":
+        return (cycle % 127) + 1
+    if profile == "zero-based-8bit":
+        return cycle & 0xFF
+    raise ValueError(f"unknown counter profile: {profile}")
+
+
 class SupraMaticSimulator:
     def __init__(
         self,
@@ -203,9 +215,13 @@ class SupraMaticSimulator:
         goto_position: int = 80,
         strict_scenario_verdict: bool = True,
         emulate_commands: bool = False,
+        counter_profile: str = DEFAULT_COUNTER_PROFILE,
     ) -> None:
+        if counter_profile not in COUNTER_PROFILES:
+            raise ValueError(f"unknown counter profile: {counter_profile}")
         self.transport = transport
         self.slave_id = slave_id
+        self.counter_profile = counter_profile
         self.speed_factor = speed_factor
         self.missed_poll_threshold = missed_poll_threshold
         self.response_timeout_s = response_timeout_s
@@ -330,6 +346,10 @@ class SupraMaticSimulator:
 
     def scaled_sleep(self, gap_us: int, jitter: bool = False) -> None:
         factor = self.rng.uniform(0.25, 1.75) if jitter else 1.0
+        advanced_gap_us = max(0, int(round(gap_us * factor)))
+        advance_time_us = getattr(self.transport, "advance_time_us", None)
+        if callable(advance_time_us):
+            advance_time_us(advanced_gap_us)
         delay_s = (gap_us / 1_000_000.0) * factor / max(self.speed_factor, 1.0)
         if delay_s >= 0.0001:
             time.sleep(delay_s)
@@ -487,13 +507,14 @@ class SupraMaticSimulator:
     def run_bus_scan(self) -> None:
         start = time.monotonic()
         request = protocol.bus_scan_request(self.slave_id)
+        expected = protocol.scan_response(self.slave_id)
         self.trace("bus_scan_tx", request=request.hex())
         self.write_frame(request)
         frame = self.read_response(
-            match=lambda response: response == protocol.SCAN_RESPONSE,
+            match=lambda response: response == expected,
             context="bus scan",
         )
-        if frame == protocol.SCAN_RESPONSE:
+        if frame == expected:
             self.report.scan_ok = True
             latency_ms = (time.monotonic() - start) * 1000.0
             self.report.record_latency(latency_ms)
@@ -515,7 +536,7 @@ class SupraMaticSimulator:
         self.write_frame(protocol.broadcast_status(state))
         self.scaled_sleep(BROADCAST_TO_POLL_GAP_US, jitter="jitter" in faults)
 
-        counter = cycle & 0xFF
+        counter = status_counter_for_cycle(cycle, self.counter_profile)
         if self.should_inject_faults(cycle):
             self.inject_faults(faults, counter)
 
@@ -649,9 +670,9 @@ class SupraMaticSimulator:
         request = protocol.light_command(counter, enabled, self.slave_id)
         self.trace("command_tx", counter=counter, request=request.hex(), command="light", enabled=enabled)
         self.write_frame(request)
-        expected = protocol.COMMAND_RESPONSE_BY_COUNTER.get(counter)
+        expected = protocol.command_response(self.slave_id, counter)
         response = self.read_response(
-            match=lambda reply: expected is not None and reply == expected,
+            match=lambda reply: reply == expected,
             context=f"light command {counter:02x}",
         )
         if response == expected:

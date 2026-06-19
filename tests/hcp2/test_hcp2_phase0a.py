@@ -27,14 +27,19 @@ def crc16_modbus(data: bytes) -> int:
 
 
 def test_committed_vectors_are_crc_clean() -> None:
-    vector_path = HCP2_DIR / "vectors" / "reference_frames.jsonl"
-    count = 0
-    for line in vector_path.read_text().splitlines():
-        record = json.loads(line)
-        raw = bytes.fromhex(record["raw"])
-        assert crc16_modbus(raw) == 0, record["name"]
-        count += 1
-    assert count == 34
+    vector_files = sorted((HCP2_DIR / "vectors").glob("*.jsonl"))
+    assert vector_files
+    total_count = 0
+    for vector_path in vector_files:
+        file_count = 0
+        for line in vector_path.read_text().splitlines():
+            record = json.loads(line)
+            raw = bytes.fromhex(record["raw"])
+            assert crc16_modbus(raw) == 0, record["name"]
+            file_count += 1
+            total_count += 1
+        assert file_count > 0, vector_path.name
+    assert total_count >= 34
 
 
 def test_c_unit_and_fuzz_smoke() -> None:

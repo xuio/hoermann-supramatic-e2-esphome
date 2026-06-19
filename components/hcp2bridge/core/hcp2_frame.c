@@ -47,7 +47,7 @@ static HCP2_HOT_TEXT void button_encoding_(hcp2_button_t button, uint8_t release
 
 void hcp2_default_signature(uint8_t signature[HCP2_SIGNATURE_LEN]) {
   static const uint8_t default_signature[HCP2_SIGNATURE_LEN] = {
-      0x00u, 0x00u, 0x02u, 0x05u, 0x04u, 0x30u, 0x10u, 0xFFu, 0xA8u, 0x55u};
+      0x00u, 0x00u, 0x02u, 0x05u, 0x04u, 0x30u, 0x10u, 0xFFu, 0xA8u, 0x45u};
   memcpy(signature, default_signature, HCP2_SIGNATURE_LEN);
 }
 
@@ -149,23 +149,24 @@ HCP2_HOT_TEXT hcp2_parse_result_t hcp2_frame_parse_master(const uint8_t *data, u
   if (read_addr != HCP2_REG_STATUS_READ || write_addr != HCP2_REG_COMMAND_WRITE) {
     return HCP2_PARSE_OK;
   }
-  if (data[0] != configured_slave_id) {
-    return HCP2_PARSE_OK;
-  }
-
   if (read_qty == 8u && write_qty == 2u && data[10] == 4u) {
-    out->type = HCP2_FRAME_STATUS_POLL;
-    out->counter = data[11];
-    out->command = data[12];
-    out->argument = (uint16_t) (((uint16_t) data[14] << 8) | data[13]);
+    if (data[0] == configured_slave_id) {
+      out->type = HCP2_FRAME_STATUS_POLL;
+      out->counter = data[11];
+      out->command = data[12];
+      out->argument = (uint16_t) (((uint16_t) data[14] << 8) | data[13]);
+    }
   } else if (read_qty == 5u && write_qty == 3u && data[10] == 6u && data[11] == 0x00u && data[12] == 0x02u &&
-             data[15] == 0x01u && data[16] == configured_slave_id) {
+             data[15] == 0x01u && data[16] == configured_slave_id &&
+             (data[0] == configured_slave_id || data[0] == 0u)) {
     out->type = HCP2_FRAME_BUS_SCAN;
   } else if (read_qty == 2u && write_qty == 2u && data[10] == 4u) {
-    out->type = HCP2_FRAME_COMMAND_ARG;
-    out->counter = data[11];
-    out->command = data[12];
-    out->argument = (uint16_t) (((uint16_t) data[14] << 8) | data[13]);
+    if (data[0] == configured_slave_id) {
+      out->type = HCP2_FRAME_COMMAND_ARG;
+      out->counter = data[11];
+      out->command = data[12];
+      out->argument = (uint16_t) (((uint16_t) data[14] << 8) | data[13]);
+    }
   }
 
   return HCP2_PARSE_OK;
