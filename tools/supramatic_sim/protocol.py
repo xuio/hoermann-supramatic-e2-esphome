@@ -61,7 +61,9 @@ def crc_ok(frame: bytes) -> bool:
     return len(frame) >= 3 and crc16_modbus(frame) == 0
 
 
-def bus_scan_request(slave_id: int = SLAVE_ID) -> bytes:
+def bus_scan_request(slave_id: int = SLAVE_ID, scan_state: int = 0x01, scan_value: int | None = None) -> bytes:
+    if scan_value is None:
+        scan_value = slave_id
     payload = bytes(
         [
             slave_id,
@@ -79,8 +81,8 @@ def bus_scan_request(slave_id: int = SLAVE_ID) -> bytes:
             0x02,
             0x00,
             0x00,
-            0x01,
-            slave_id,
+            scan_state & 0xFF,
+            scan_value & 0xFF,
         ]
     )
     return append_crc(payload)

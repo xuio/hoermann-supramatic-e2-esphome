@@ -109,14 +109,19 @@ static uint8_t build_status_poll(uint8_t counter, uint8_t *out) {
   return 17;
 }
 
-static uint8_t build_bus_scan(uint8_t address, uint8_t candidate_slave_id, uint8_t *out) {
+static uint8_t build_bus_scan_tail(uint8_t address, uint8_t scan_state, uint8_t scan_value, uint8_t *out) {
   static const uint8_t template_frame[] = {
       0x02, 0x17, 0x9C, 0xB9, 0x00, 0x05, 0x9C, 0x41, 0x00, 0x03, 0x06, 0x00, 0x02, 0x00, 0x00, 0x01, 0x02};
   memcpy(out, template_frame, sizeof(template_frame));
   out[0] = address;
-  out[16] = candidate_slave_id;
+  out[15] = scan_state;
+  out[16] = scan_value;
   hcp2_crc16_append(out, 17);
   return 19;
+}
+
+static uint8_t build_bus_scan(uint8_t address, uint8_t candidate_slave_id, uint8_t *out) {
+  return build_bus_scan_tail(address, 0x01u, candidate_slave_id, out);
 }
 
 static uint8_t build_broadcast_status(uint8_t target, uint8_t current, uint8_t state, uint8_t state_detail,
@@ -199,6 +204,33 @@ static void test_builders(void) {
   expect_hex(out, HCP2_COMMAND_RESPONSE_LEN, "021704020004FD08DE");
 }
 
+static void expect_bus_scan_parse(const char *hex, uint8_t configured_slave_id, hcp2_frame_type_t expected_type) {
+  uint8_t frame[HCP2_MAX_FRAME_LEN];
+  hcp2_decoded_frame_t decoded;
+  const uint8_t len = parse_hex(hex, frame);
+
+  assert(hcp2_frame_parse_master(frame, len, configured_slave_id, &decoded) == HCP2_PARSE_OK);
+  assert(decoded.type == expected_type);
+}
+
+static void test_bus_scan_parse_variants(void) {
+  uint8_t frame[HCP2_MAX_FRAME_LEN];
+  hcp2_decoded_frame_t decoded;
+  uint8_t len;
+
+  expect_bus_scan_parse("02179CB900059C41000306000200000102F835", 2u, HCP2_FRAME_BUS_SCAN);
+  expect_bus_scan_parse("02179CB900059C410003060002000002007904", 2u, HCP2_FRAME_BUS_SCAN);
+  expect_bus_scan_parse("02179CB900059C4100030600020000010079F4", 2u, HCP2_FRAME_BUS_SCAN);
+  expect_bus_scan_parse("01179CB900059C4100030600020000020089F4", 2u, HCP2_FRAME_OTHER_VALID);
+  expect_bus_scan_parse("01179CB900059C410003060002000001008904", 1u, HCP2_FRAME_BUS_SCAN);
+
+  len = build_bus_scan_tail(2u, 0x01u, 0x00u, frame);
+  frame[14] = 0x01u;
+  hcp2_crc16_append(frame, (uint16_t) (len - 2u));
+  assert(hcp2_frame_parse_master(frame, len, 2u, &decoded) == HCP2_PARSE_OK);
+  assert(decoded.type == HCP2_FRAME_OTHER_VALID);
+}
+
 static void test_bus_scan_response(void) {
   test_port_t test_port;
   hcp2_port_t port;
@@ -227,7 +259,7 @@ static void test_bus_scan_response(void) {
 
   hcp2_engine_init(&engine, &port, &config);
   memset(&test_port, 0, sizeof(test_port));
-  len = build_bus_scan(0u, 2u, frame);
+  len = build_bus_scan_tail(2u, 0x02u, 0x00u, frame);
   feed_bytes(&engine, frame, len);
   test_port.now_us = HCP2_DEFAULT_RESPONSE_DELAY_US;
   hcp2_engine_poll(&engine);
@@ -236,7 +268,7 @@ static void test_bus_scan_response(void) {
 
   hcp2_engine_init(&engine, &port, &config);
   memset(&test_port, 0, sizeof(test_port));
-  len = build_bus_scan(0u, 1u, frame);
+  len = build_bus_scan(0u, 2u, frame);
   feed_bytes(&engine, frame, len);
   test_port.now_us = HCP2_DEFAULT_RESPONSE_DELAY_US;
   hcp2_engine_poll(&engine);
@@ -246,7 +278,7 @@ static void test_bus_scan_response(void) {
   config.slave_id = 1u;
   config.response_delay_us = 0u;
   hcp2_engine_init(&engine, &port, &config);
-  len = build_bus_scan(0u, 1u, frame);
+  len = build_bus_scan_tail(1u, 0x01u, 0x00u, frame);
   feed_bytes(&engine, frame, len);
   hcp2_engine_poll(&engine);
   assert(test_port.tx_count == 1);
@@ -1181,6 +1213,7 @@ int main(void) {
   test_vector_crc_file();
   test_crc_known_frame();
   test_builders();
+  test_bus_scan_parse_variants();
   test_bus_scan_response();
   test_status_poll_idle_response();
   test_light_command_response();

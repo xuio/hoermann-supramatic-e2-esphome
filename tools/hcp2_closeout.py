@@ -92,24 +92,24 @@ def console_command(name: str) -> list[str]:
     return ["uv", "run", name]
 
 
-def load_api_key(*, api_key: str | None, secrets_file: Path, secret_name: str) -> str:
-    if api_key:
-        return api_key
-    env_key = os.environ.get("ESPHOME_API_KEY")
-    if env_key:
-        return env_key
-    text = secrets_file.read_text(encoding="utf-8")
-    match = re.search(rf"^{re.escape(secret_name)}:\s*[\"']?([^\"'\n#]+)", text, re.MULTILINE)
-    if not match:
-        raise SystemExit(f"Could not find {secret_name!r} in {secrets_file}")
-    return match.group(1).strip()
+def load_api_key(*, api_key: str | None, secrets_file: Path, secret_name: str) -> str | None:
+  if api_key:
+    return api_key
+  env_key = os.environ.get("ESPHOME_API_KEY")
+  if env_key:
+    return env_key
+  if not secrets_file.exists():
+    return None
+  text = secrets_file.read_text(encoding="utf-8")
+  match = re.search(rf"^{re.escape(secret_name)}:\s*[\"']?([^\"'\n#]+)", text, re.MULTILINE)
+  return match.group(1).strip() if match else None
 
 
 async def api_restart_async(
     *,
     host: str,
     port: int,
-    api_key: str,
+    api_key: str | None,
     expected_name: str,
     restart_object_id: str,
 ) -> dict[str, Any]:
@@ -147,8 +147,9 @@ async def api_restart_async(
         return {
             "host": host,
             "port": port,
-            "expected_name": expected_name,
-            "restart_object_id": restart_object_id,
+        "expected_name": expected_name,
+        "api_encryption": "noise" if api_key else "plaintext",
+        "restart_object_id": restart_object_id,
             "button_key": restart_key,
             "device_id": restart_device_id,
             "verdict": "sent",

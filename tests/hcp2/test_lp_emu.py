@@ -112,28 +112,7 @@ def read_u16(emu: LPEmulator, offset: int) -> int:
 
 
 def broadcast_scan_request(candidate_slave_id: int) -> bytes:
-    payload = bytes(
-        [
-            0x00,
-            protocol.FC_READ_WRITE_MULTIPLE_REGISTERS,
-            0x9C,
-            0xB9,
-            0x00,
-            0x05,
-            0x9C,
-            0x41,
-            0x00,
-            0x03,
-            0x06,
-            0x00,
-            0x02,
-            0x00,
-            0x00,
-            0x01,
-            candidate_slave_id & 0xFF,
-        ]
-    )
-    return protocol.append_crc(payload)
+    return protocol.bus_scan_request(0, scan_state=0x01, scan_value=candidate_slave_id)
 
 
 def inject_command(emu: LPEmulator, *, epoch: int, sequence: int, command_id: int) -> None:
@@ -210,8 +189,23 @@ def test_lp_emulator_uses_mailbox_slave_id_one_for_scan_and_polls() -> None:
     assert emu.read_uart_available(0.02) == b""
 
     emu.write_uart(broadcast_scan_request(1))
-    response = emu.read_uart_available(0.05)
-    assert response == protocol.scan_response(1)
+    assert emu.read_uart_available(0.02) == b""
+
+
+def test_lp_emulator_accepts_reported_bus_scan_tail_variants() -> None:
+    emu = require_emulator()
+    emu.boot()
+
+    for frame in (
+        protocol.bus_scan_request(2),
+        protocol.bus_scan_request(2, scan_state=0x02, scan_value=0x00),
+        protocol.bus_scan_request(2, scan_state=0x01, scan_value=0x00),
+    ):
+        emu.write_uart(frame)
+        assert emu.read_uart_available(0.05) == protocol.scan_response(2)
+
+    emu.write_uart(protocol.bus_scan_request(1, scan_state=0x02, scan_value=0x00))
+    assert emu.read_uart_available(0.02) == b""
 
 
 def test_lp_emulator_repairs_mailbox_header_without_clearing_session() -> None:

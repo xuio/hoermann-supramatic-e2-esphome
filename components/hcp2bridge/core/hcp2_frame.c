@@ -156,10 +156,14 @@ HCP2_HOT_TEXT hcp2_parse_result_t hcp2_frame_parse_master(const uint8_t *data, u
       out->command = data[12];
       out->argument = (uint16_t) (((uint16_t) data[14] << 8) | data[13]);
     }
-  } else if (read_qty == 5u && write_qty == 3u && data[10] == 6u && data[11] == 0x00u && data[12] == 0x02u &&
-             data[15] == 0x01u && data[16] == configured_slave_id &&
-             (data[0] == configured_slave_id || data[0] == 0u)) {
-    out->type = HCP2_FRAME_BUS_SCAN;
+  } else if (read_qty == 5u && write_qty == 3u && data[10] == 6u && data[0] != 0u &&
+             data[0] == configured_slave_id) {
+    const uint16_t scan_reg0 = read_be16_(&data[11]);
+    const uint16_t scan_reg1 = read_be16_(&data[13]);
+    /* The third scan write register is variant-dependent and intentionally ignored. */
+    if (scan_reg0 == 0x0002u && scan_reg1 == 0x0000u) {
+      out->type = HCP2_FRAME_BUS_SCAN;
+    }
   } else if (read_qty == 2u && write_qty == 2u && data[10] == 4u) {
     if (data[0] == configured_slave_id) {
       out->type = HCP2_FRAME_COMMAND_ARG;
